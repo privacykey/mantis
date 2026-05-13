@@ -77,7 +77,7 @@ const program = new Command();
 program
   .name("mantis")
   .description("Mantis key CLI — self-hostable tripwires.")
-  .version(CLI_VERSION)
+  .version(CLI_VERSION, "-v, --version", "output the version number")
   .option("--base-url <url>", "override stored base URL")
   .option("--key <key>", "override stored API key")
   .option("-p, --profile <name>", "use a named profile (env: MANTIS_PROFILE)")
