@@ -1,12 +1,17 @@
-# Builds the mantis CLI as standalone binaries (bun cross-compile),
-# publishes them as a GitHub release, and opens a PR on
+# Builds the mantis CLI as standalone binaries (one bun --compile per
+# target on its own native runner — this is required because the CLI
+# depends on @napi-rs/keyring, whose platform-specific .node files are
+# published as separate npm packages and only resolve correctly on a
+# matching host).
+#
+# Publishes the four tarballs as a GitHub release and opens a PR on
 # privacykey/homebrew-tap to bump Formula/mantis.rb.
 #
 # Trigger: push a tag matching `cli-v*` (e.g. `cli-v0.1.0`) or run the
 # workflow manually from the Actions tab.
 #
 # Requires repo secret HOMEBREW_TAP_TOKEN — a fine-grained PAT with
-# Contents: read & write on privacykey/homebrew-tap. See cli/homebrew/README.md.
+# Contents + Pull requests read & write on privacykey/homebrew-tap.
 
 name: Release CLI
 
@@ -24,10 +29,80 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build + publish CLI binaries
-    runs-on: ubuntu-latest
+  build:
+    name: Build mantis-${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-latest
+          - target: darwin-x64
+            runner: macos-13
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Derive version
+        id: meta
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ "$TAG" != cli-v* ]]; then
+            echo "::error::Tag must start with 'cli-v' (got: $TAG)"
+            exit 1
+          fi
+          VERSION="${TAG#cli-v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Pin CLI_VERSION to release version
+        shell: bash
+        run: |
+          printf 'export const CLI_VERSION = "%s";\n' "${{ steps.meta.outputs.version }}" > cli/src/version.ts
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install CLI dependencies (host-native bindings)
+        working-directory: cli
+        run: npm ci
+
+      - name: Compile binary for ${{ matrix.target }}
+        working-directory: cli
+        shell: bash
+        run: |
+          mkdir -p dist/bin
+          bun build \
+            --compile \
+            --minify \
+            --sourcemap=none \
+            --target=bun-${{ matrix.target }} \
+            --outfile dist/bin/mantis \
+            src/index.ts
+
+      - name: Package tarball
+        working-directory: cli/dist/bin
+        shell: bash
+        run: tar -czf "mantis-${{ matrix.target }}.tar.gz" mantis
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mantis-${{ matrix.target }}
+          path: cli/dist/bin/mantis-${{ matrix.target }}.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
@@ -36,8 +111,6 @@ jobs:
       sha_linux_arm64: ${{ steps.shas.outputs.linux_arm64 }}
       sha_linux_x64: ${{ steps.shas.outputs.linux_x64 }}
     steps:
-      - uses: actions/checkout@v5
-
       - name: Derive tag + version
         id: meta
         run: |
@@ -50,35 +123,18 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Pin CLI_VERSION to release version
-        run: |
-          printf 'export const CLI_VERSION = "%s";\n' "${{ steps.meta.outputs.version }}" > cli/src/version.ts
-
-      - uses: oven-sh/setup-bun@v2
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          bun-version: latest
+          path: artifacts
+          merge-multiple: true
 
-      - name: Install CLI dependencies
-        working-directory: cli
-        run: npm ci
-
-      - name: Build binaries (bun cross-compile)
-        run: bash cli/scripts/build-bin.sh
-
-      - name: Package per-platform tarballs
-        working-directory: cli/dist/bin
-        run: |
-          for f in mantis-darwin-arm64 mantis-darwin-x64 mantis-linux-arm64 mantis-linux-x64; do
-            cp "$f" mantis
-            tar -czf "${f}.tar.gz" mantis
-            rm mantis
-          done
-          shasum -a 256 mantis-*.tar.gz | tee SHA256SUMS-tarballs
-
-      - name: Capture tarball SHAs for the bump job
+      - name: Compute SHA256s
         id: shas
-        working-directory: cli/dist/bin
+        working-directory: artifacts
         run: |
+          ls -la
+          shasum -a 256 mantis-*.tar.gz | tee SHA256SUMS
           for tgt in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
             sha=$(shasum -a 256 "mantis-${tgt}.tar.gz" | awk '{print $1}')
             key="${tgt//-/_}"
@@ -88,11 +144,12 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
           NOTES=$(cat <<'EOF'
-          Cross-compiled standalone CLI binaries for macOS and Linux on arm64 / x86_64.
+          Standalone CLI binaries for macOS and Linux on arm64 / x86_64. Each binary is built on its own native runner so the bundled native modules (`@napi-rs/keyring`) match the target.
 
           ### Install via Homebrew
 
@@ -108,11 +165,11 @@ jobs:
           gh release create "$TAG" \
             --title "mantis CLI $VERSION" \
             --notes "$NOTES" \
-            cli/dist/bin/mantis-darwin-arm64.tar.gz \
-            cli/dist/bin/mantis-darwin-x64.tar.gz \
-            cli/dist/bin/mantis-linux-arm64.tar.gz \
-            cli/dist/bin/mantis-linux-x64.tar.gz \
-            cli/dist/bin/SHA256SUMS-tarballs
+            artifacts/mantis-darwin-arm64.tar.gz \
+            artifacts/mantis-darwin-x64.tar.gz \
+            artifacts/mantis-linux-arm64.tar.gz \
+            artifacts/mantis-linux-x64.tar.gz \
+            artifacts/SHA256SUMS
 
   bump-homebrew:
     name: Bump Homebrew formula
