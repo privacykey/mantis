@@ -95,9 +95,16 @@ jobs:
             src/index.ts
 
       - name: Package tarball
-        working-directory: cli/dist/bin
+        working-directory: cli
         shell: bash
-        run: tar -czf "mantis-${{ matrix.target }}.tar.gz" mantis
+        run: |
+          STAGE="$(mktemp -d)"
+          mkdir -p "$STAGE/share/man/man1"
+          cp dist/bin/mantis "$STAGE/mantis"
+          # Substitute the version placeholder in the man page header.
+          sed "s/__MANTIS_VERSION__/${{ steps.meta.outputs.version }}/g" \
+            share/man/man1/mantis.1 > "$STAGE/share/man/man1/mantis.1"
+          tar -C "$STAGE" -czf "dist/bin/mantis-${{ matrix.target }}.tar.gz" mantis share
 
       - uses: actions/upload-artifact@v7.0.1
         with:
@@ -249,6 +256,7 @@ jobs:
 
             def install
               bin.install "mantis"
+              man1.install "share/man/man1/mantis.1"
 
               # Shell completions — \`mantis completion <shell>\` writes a ready-to-source
               # script. Homebrew adds these directories to fpath / bash-completion / fish
@@ -261,6 +269,7 @@ jobs:
             test do
               assert_match version.to_s, shell_output("#{bin}/mantis --version")
               assert_match "#compdef mantis", (zsh_completion/"_mantis").read
+              assert_match "MANTIS 1", (man1/"mantis.1").read
             end
           end
           EOF

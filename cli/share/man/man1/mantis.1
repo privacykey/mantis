@@ -1,0 +1,371 @@
+.\" mantis(1) — keep in sync with src/index.ts when commands/options change.
+.\" The cli-release workflow substitutes __MANTIS_VERSION__ with the release
+.\" version before tarballing. Local builds see the literal placeholder.
+.TH MANTIS 1 "May 2026" "mantis __MANTIS_VERSION__" "User Commands"
+
+.SH NAME
+mantis \- self-hostable tripwires CLI
+
+.SH SYNOPSIS
+.B mantis
+[\fIGLOBAL-OPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]...
+
+.SH DESCRIPTION
+.B mantis
+is the command-line client for Mantis, a self-hostable canary / tripwire
+service. It creates trigger URLs (\fIkeys\fR) that fire notifications when
+accessed, inspects hits, manages notification destinations, generates
+honey-file artifacts (Office docs, PDFs, SVGs, ICS, vCard, etc.), and embeds
+host-event installers into systems for tamper detection.
+.PP
+API keys are stored in the operating-system keychain (Keychain Access on
+macOS, Secret Service on Linux). Non-sensitive profile metadata lives in
+.IR ~/.config/mantis/config.json .
+.PP
+The CLI supports multiple profiles \(em one per Mantis server \(em selectable
+via
+.BR \-\-profile ,
+the
+.B MANTIS_PROFILE
+environment variable, or
+.BR "mantis profile use" .
+
+.SH GLOBAL OPTIONS
+.TP
+.BR \-v ", " \-\-version
+Print the CLI version and exit.
+
+.TP
+.B \-\-help
+Show usage. Works at every level (\fBmantis --help\fR, \fBmantis profile --help\fR,
+\fBmantis edge mint --help\fR, ...).
+
+.TP
+.BI \-\-base\-url " url"
+Override the stored base URL for one invocation (skips profile lookup).
+
+.TP
+.BI \-\-key " key"
+Override the stored API key for one invocation.
+
+.TP
+.BI \-p " name" ", " \-\-profile " name"
+Use a named profile instead of the active one. Also reads
+.BR MANTIS_PROFILE .
+
+.TP
+.B \-\-json
+Emit machine-readable JSON to stdout (where supported).
+
+.TP
+.BI \-\-output " mode"
+Output mode for table commands:
+.BR table ", " json ", or " wide .
+
+.TP
+.BR \-q ", " \-\-quiet
+Suppress human-readable stdout. Useful in scripts.
+
+.TP
+.B \-\-no\-headers
+Hide table headers.
+
+.TP
+.BI \-\-timeout " duration"
+Request timeout. Accepts forms like
+.BR 500ms ", " 5s ", " 1m .
+
+.TP
+.BI \-\-retries " n"
+Retry count for transient GET failures (0\-5).
+
+.SH COMMANDS
+.SS Authentication & profiles
+.TP
+.B mantis login [\-u URL] [\-\-no\-switch]
+Prompt for a Mantis server URL and API key, then store the key in the OS
+keychain. Use
+.B \-\-profile <name>
+to save under a named profile;
+.B \-\-no\-switch
+keeps the current profile active.
+
+.TP
+.B mantis logout [\-\-all]
+Clear stored credentials for the current profile, or every profile with
+.BR \-\-all .
+
+.TP
+.B mantis whoami
+Show the active profile: server URL, key prefix, Cloudflare Access state,
+linked mantis-edge worker.
+
+.TP
+.B "mantis profile {list,current,use,show,rm,set-edge} [args]"
+Manage profiles. Each profile is a (URL, API key, optional Cloudflare Access
+mode, optional default mantis-edge worker URL) tuple.
+
+.TP
+.B "mantis cloudflare {login,logout,set-service-auth,status}"
+Authenticate the CLI against Cloudflare Access (SSO via the
+.B cloudflared
+binary, or headless Service-Auth client id / secret) for Mantis servers behind
+Access.
+
+.SS Keys: create, inspect, lifecycle
+.TP
+.B mantis new [memo] [opts]
+Create a new key. Without
+.IR memo
+runs an interactive flow. Notable options:
+.BR \-w / \-\-notify\-webhook ,
+.BR \-e / \-\-notify\-email ,
+.BR \-N / \-\-notify
+.IR channel:target ,
+.BR \-r / \-\-response\-kind ,
+.BR \-\-expires\-at ,
+.BR \-\-copy ,
+.BR \-\-qr
+.IR file ,
+and file-artifact flags
+.RB ( \-\-docx ", " \-\-xlsx ", " \-\-pptx ", " \-\-pdf ", " \-\-folder ", " \-\-svg ", " \-\-html ", " \-\-md ", " \-\-eml ", " \-\-ics ", " \-\-vcf ).
+
+.TP
+.B mantis bulk-create \-\-csv FILE \-\-out FILE [opts]
+Create many keys from a CSV, writing an output CSV with generated URLs.
+Aliased as
+.BR "mantis import-csv" .
+
+.TP
+.B mantis list [\-n N] [\-a] [\-\-id\-only|\-\-url\-only]
+List keys, most recent first. Aliased as
+.BR "mantis ls" .
+
+.TP
+.B mantis show <id> [\-\-copy] [\-\-qr\-terminal] [\-\-id\-only|\-\-url\-only]
+Show one key. Any
+.IR id
+accepts a prefix of \(>=\& 4 hex chars or the literal
+.B last
+(most recent key).
+
+.TP
+.B mantis last
+Print the id of the most-recently-created key.
+
+.TP
+.B mantis open [id] [\-\-dashboard|\-\-trigger]
+Open the key's dashboard page in the browser. No id opens the dashboard root;
+.B \-\-trigger
+opens the trigger URL (fires the canary).
+
+.TP
+.B "mantis disable <id> / mantis enable <id>"
+Toggle a key without losing hit history.
+
+.TP
+.B mantis rm <id> [\-y]
+Delete a key and cascade its hits. Aliased as
+.BR "mantis delete" .
+
+.SS Hits & monitoring
+.TP
+.B mantis hits <id> [opts]
+Show recent hits for a key. Filters:
+.BR \-\-since
+.IR duration ,
+.BR \-\-ip
+.IR addr ,
+.BR \-\-bot\-only .
+Use
+.BR \-f / \-\-follow
+to stream live (default poll interval 3s).
+
+.TP
+.B mantis watch [\-\-id ID] [\-i SECONDS]
+Poll across all keys (or one) and print new hits as they arrive.
+
+.TP
+.B mantis status [id] [\-w] [\-\-tripped\-only] [\-i N]
+Show monitor state. Without
+.IR id :
+summary across all monitored keys. With
+.IR id :
+detail (window: hits + expiry; latch: hits since reset).
+.BR \-w / \-\-watch
+refreshes continuously.
+
+.TP
+.B mantis monitor <id> \-m {off,latch,window} [\-w SECONDS]
+Configure the Uptime Kuma status endpoint for a key.
+
+.TP
+.B mantis reset <id>
+Reset a key's tripped (latched) monitor state.
+
+.SS Notifications
+.TP
+.B "mantis destinations {list,add,rm,test,rotate-secret} <key-id> [args]"
+Incrementally manage notification destinations on a key. Channels:
+.BR webhook ", " email ", " slack ", " discord ", " teams .
+.B add
+fires an activation ping;
+.B test
+fires a synthetic hit and reports which destinations succeeded.
+Aliased as
+.BR "mantis dest" .
+
+.SS Audit
+.TP
+.B mantis audit log [opts]
+Read the append-only audit log (admin keys only). Filters:
+.BR \-\-since ", " \-\-type ", " \-\-actor .
+
+.SS File artifacts
+.TP
+.B mantis download <id> \-\-FORMAT FILE
+Download a generated honey-file artifact for an existing key. One of:
+.BR \-\-docx ", " \-\-xlsx ", " \-\-pptx ", " \-\-pdf ", " \-\-folder
+(zip bundle of pre-baited files),
+.BR \-\-svg ", " \-\-html ", " \-\-md ", " \-\-eml ", " \-\-ics ", " \-\-vcf ", " \-\-nfc\-label
+(PDF QR fallback),
+.BR \-\-apple\-wallet
+(signed .pkpass).
+
+.SS Host-event installers
+.TP
+.B mantis install <id> \-\-type TYPE [\-o FILE]
+Generate a host-install or web-embed snippet. Built-in types include
+.BR shell ", " shell-sudo ", " macos-login ", " macos-boot ", " macos-wake ", " macos-network ", " linux-boot ", " linux-wake ", " linux-network ", " windows-logon ", " windows-wake ", " windows-network ", " css-background ", " js-clone-detector ", and " nfc-ndef ,
+plus any plugin-contributed types. Run
+.B "mantis install"
+with no
+.B \-\-type
+to list every available type.
+
+.SS mantis-edge (stateless Cloudflare Worker)
+.TP
+.B "mantis edge {keygen,set-key,delete-key,mint} [opts]"
+Manage stateless mantis-edge keys (no server round-trip; pure local crypto).
+.B keygen
+generates an AES key,
+.B set\-key
+stores it in the OS keychain, and
+.B mint
+produces a trigger URL.
+
+.SS Other
+.TP
+.B mantis doctor [\-\-public\-url URL]
+Health-check CLI config, server health, auth, Cloudflare state, and split
+public/private hosts.
+
+.TP
+.B mantis detect [\-\-scope user|system|all] [\-\-deep] [\-\-verbose]
+Offline self-audit for mantis-style installer artifacts on the local machine.
+
+.TP
+.B "mantis completion {bash,zsh,fish}"
+Print a shell completion script. The Homebrew formula already installs these in
+the right paths.
+
+.TP
+.B "mantis plugin {add,list,remove,upgrade} [args]"
+Manage CLI plugins (third-party installer types and file formats; installed
+locally, never on the server). Specs accept
+.IR owner/repo ", " owner/repo@v1.0.0 ", " owner/repo@<sha> ,
+or a local directory.
+
+.SH ENVIRONMENT
+.TP
+.B MANTIS_PROFILE
+Default profile when
+.B \-\-profile
+isn't supplied.
+
+.SH FILES
+.TP
+.I ~/.config/mantis/config.json
+Non-sensitive profile metadata (base URL, key prefix, Cloudflare Access mode).
+File mode 0600.
+
+.TP
+.IR ~/.config/mantis/plugins/ ", " ~/.local/share/mantis/plugins/
+Installed CLI plugins.
+
+.TP
+.I OS keychain
+API keys (service
+.BR mantis-cli ,
+account = base URL) and Cloudflare Access Service-Auth credentials (service
+.BR mantis-cli-cf ).
+
+.TP
+.I ~/.cloudflared/
+Short-lived JWTs cached by the external
+.B cloudflared
+binary. Managed by cloudflared, not mantis.
+
+.SH EXAMPLES
+.PP
+Log in to a Mantis server and create a key with a webhook destination:
+.PP
+.RS
+.EX
+mantis login
+mantis new "billing-spreadsheet" \-\-notify\-webhook https://example.com/hook \-\-copy
+.EE
+.RE
+.PP
+Tail hits live for the most-recently-created key:
+.PP
+.RS
+.EX
+mantis hits last \-\-follow
+.EE
+.RE
+.PP
+Watch monitor state across all keys, refreshing every 5s:
+.PP
+.RS
+.EX
+mantis status \-\-watch
+.EE
+.RE
+.PP
+Generate a honey-PDF and an Apple Wallet pass for the last key:
+.PP
+.RS
+.EX
+mantis new "pos-receipt" \-\-pdf decoy.pdf
+mantis download last \-\-apple\-wallet decoy.pkpass
+.EE
+.RE
+.PP
+Bulk-create keys from a CSV:
+.PP
+.RS
+.EX
+mantis bulk-create \-\-csv users.csv \-\-out users-with-urls.csv \\
+    \-\-memo-template "{{name}} ({{site}})" \-\-notify\-email alerts@example.com
+.EE
+.RE
+.PP
+Run the local self-audit for mantis-style installer artifacts:
+.PP
+.RS
+.EX
+mantis detect \-\-scope all \-\-deep
+.EE
+.RE
+
+.SH SEE ALSO
+Project README at
+.UR https://github.com/privacykey/mantis
+.UE
+\(em full architecture, server install, plugin API.
+
+.SH AUTHOR
+Mantis is developed at
+.UR https://github.com/privacykey/mantis
+.UE .

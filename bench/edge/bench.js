@@ -11,7 +11,7 @@
  *   --pipelining=<n>         default 1
  *   --write-baseline         append summary to baseline.md after each run
  *
- * Pre-req: wrangler dev running on --worker (default port 8787) with a valid
+ * Pre-req: `npx wrangler dev` running on --worker (default port 8787) with a valid
  * MANTIS_EDGE_KEY in mantis-edge/.dev.vars OR exported in this process.
  */
 import minimist from "minimist";
@@ -89,7 +89,7 @@ if (!reachable) {
   console.error(
     `worker at ${baseOpts.workerUrl} did not return 404 for an invalid blob.`,
   );
-  console.error(`is \`wrangler dev\` running? (cd mantis-edge && wrangler dev)`);
+  console.error(`is \`npx wrangler dev\` running? (cd mantis-edge && npx wrangler dev)`);
   process.exit(3);
 }
 console.error("worker reachable.\n");
@@ -193,7 +193,7 @@ Options:
   --pipelining=<n>         default 1
 
 Prerequisites:
-  cd mantis-edge && wrangler dev          (worker on 8787)
+  cd mantis-edge && npx wrangler dev      (worker on 8787)
   MANTIS_EDGE_KEY=...                     OR mantis-edge/.dev.vars MANTIS_EDGE_KEY=…
 `);
 }

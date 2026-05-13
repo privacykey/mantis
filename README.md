@@ -1,11 +1,23 @@
-# mantis
+<p align="center">
+  <img src=".github/assets/banner.png" alt="mantis" width="640">
+</p>
+
+<p align="center">
+  <a href="https://github.com/privacykey/mantis/releases?q=cli-v"><img alt="CLI release" src="https://img.shields.io/github/v/release/privacykey/mantis?filter=cli-v*&label=CLI&color=2f7df0"></a>
+  <a href="https://github.com/privacykey/homebrew-tap"><img alt="Homebrew tap" src="https://img.shields.io/badge/brew-privacykey%2Ftap%2Fmantis-FBB040?logo=homebrew&logoColor=white"></a>
+  <a href="https://github.com/privacykey/mantis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/privacykey/mantis/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="./mantis-edge/"><img alt="Cloudflare Workers edge" src="https://img.shields.io/badge/edge-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white"></a>
+</p>
+
+> [!WARNING]
+> **Beta — v0.1.0.** APIs, DB schema, and CLI flags may still change before v1.0. Pin a release tag for stability.
 
 Self-hostable mantis key service. API-first.
 
 You mint a unique URL; when something fetches it, you get notified through the destinations you configure.
 Useful for catching insider snooping, leaked credentials, opened "honeypot" docs, etc.
 
-This is **v0.1.0** — the first release. Includes:
+v0.1.0 ships:
 - HTTP API + public trigger endpoint
 - Terminal CLI in [`cli/`](./cli/README.md)
 - Web dashboard at `/login` → `/keys`
@@ -79,7 +91,7 @@ not CI-gated:
 
 ```bash
 npm run bench:cli                  # CLI startup/rendering overhead
-npm run bench:edge                 # mantis-edge worker, requires wrangler dev
+npm run bench:edge                 # mantis-edge worker, requires `npx wrangler dev` running
 MANTIS_BENCH_KEY=mantis_live_... npm run bench:server
 ```
 

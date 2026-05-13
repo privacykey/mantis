@@ -24,7 +24,7 @@ investigating a regression, commit the resulting numbers to the tier's
 # CLI overhead; uses a local mock API
 npm run bench:cli
 
-# Cloudflare Worker edge benchmark; requires wrangler dev
+# Cloudflare Worker edge benchmark; requires `npx wrangler dev` running
 npm run bench:edge
 
 # Main server/container benchmark; requires a running server and API key

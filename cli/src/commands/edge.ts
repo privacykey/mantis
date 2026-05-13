@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { createInterface } from "node:readline/promises";
 import { getCurrentProfileName, getProfile } from "../lib/config.js";
 import { b64urlDecode, b64urlEncode, seal } from "../lib/edge-crypto.js";
 import { copyToClipboard } from "../lib/clipboard.js";
@@ -37,27 +38,47 @@ export function keygenCmd(): void {
       process.stdout.write(key + "\n");
       process.stderr.write(
         `\n${c.dim("# Set on the worker:")}\n` +
-          `  cd mantis-edge && wrangler secret put MANTIS_EDGE_KEY\n` +
+          `  cd mantis-edge && npx wrangler secret put MANTIS_EDGE_KEY\n` +
           `  ${c.dim("# paste the value above when prompted")}\n\n` +
           `${c.dim("# Save locally for minting:")}\n` +
-          `  mantis edge set-key --worker <worker-url> --key ${c.dim("<paste>")}\n`,
+          `  mantis edge set-key <worker-url>\n` +
+          `  ${c.dim("# paste the key above when prompted")}\n`,
       );
     },
     { key },
   );
 }
 
-export function setKeyCmd(opts: { worker?: string; key?: string }): void {
+export async function setKeyCmd(opts: {
+  worker?: string;
+  key?: string;
+}): Promise<void> {
   const worker = opts.worker;
-  const key = opts.key;
   if (!worker || !URL_RE.test(worker)) {
-    fail("--worker <url> is required (https://…)");
+    fail(
+      "worker URL is required (https://…). Pass it as the first argument or via --worker.",
+    );
+  }
+  const workerUrl = normalizeWorker(worker);
+
+  let key = opts.key;
+  if (!key) {
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stderr,
+    });
+    try {
+      key = (
+        await rl.question(`edge key for ${workerUrl} (base64url, paste): `)
+      ).trim();
+    } finally {
+      rl.close();
+    }
   }
   if (!key) {
-    fail("--key <base64url> is required");
+    fail("key is required");
   }
   decodeKey(key);
-  const workerUrl = normalizeWorker(worker);
   setEdgeKey(workerUrl, key);
   emit(
     () => {
@@ -121,7 +142,7 @@ export async function mintCmd(opts: {
   const keyStr = opts.key ?? getEdgeKey(workerUrl);
   if (!keyStr) {
     fail(
-      `no edge key for ${workerUrl}. Run \`mantis edge set-key --worker ${workerUrl} --key <key>\` or pass --key.`,
+      `no edge key for ${workerUrl}. Run \`mantis edge set-key ${workerUrl}\` or pass --edge-key.`,
     );
   }
   const keyRaw = decodeKey(keyStr);

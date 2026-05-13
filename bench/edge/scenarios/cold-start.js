@@ -5,7 +5,7 @@
  * Wrangler dev keeps the isolate warm during the run, so this approximates
  * "first request after script-eval" rather than a true CF colocation cold
  * start. Useful as a relative-cost baseline; for deployed numbers a manual
- * `wrangler tail` after extended idle is the reference.
+ * `npx wrangler tail` after extended idle is the reference.
  */
 import { mintEdgeUrl, resolveEdgeKey } from "../setup.js";
 import { runAutocannon } from "./_lib.js";

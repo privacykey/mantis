@@ -359,9 +359,9 @@ flowchart TD
 | Command | Key Options |
 |---|---|
 | `edge keygen` | none |
-| `edge set-key` | `--worker <url>`, `--key <base64url>` |
+| `edge set-key` | positional `[worker] [key]`, or `--worker <url>` (prompts for key if omitted) |
 | `edge delete-key` | `--worker <url>` |
-| `edge mint` | `--worker <url>`, `--webhook <url>`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--key`, `--copy` |
+| `edge mint` | `--worker <url>`, `--webhook <url>`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy` |
 
 ### Shell Completion
 

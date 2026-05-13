@@ -38,7 +38,7 @@ AES-256-GCM gives confidentiality + integrity. Tamper any byte → decrypt throw
 
 ## Deploy
 
-Prereq: a Cloudflare account, `wrangler` (installed via `npm install` below), the mantis CLI (one directory up at `cli/`).
+Prereq: a Cloudflare account and the mantis CLI (one directory up at `cli/`). Wrangler is bundled as a dev dependency — `npm install` (or `pnpm install` at the repo root) installs it locally, and the snippets below invoke it via `npx wrangler` so no global install is needed.
 
 See [deploy.md](./deploy.md) for custom domains, CI deploys, allowlisting, local dev, and verification. The short path:
 
@@ -51,22 +51,22 @@ mantis edge keygen
 # → prints a base64url key on stdout, save it
 # → also prints the two next commands to stderr
 
-# 2. Set it on the worker as a secret
-wrangler secret put MANTIS_EDGE_KEY
-# (paste the key when prompted)
+# 2. Set it on the worker as a secret.
+# Wrangler prompts: paste the base64url key that `mantis edge keygen` just printed.
+npx wrangler secret put MANTIS_EDGE_KEY
 
 # Optional defense-in-depth: restrict where edge URLs can POST.
-wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
-# e.g. hooks.slack.com,discord.com,*.example.com
+# When wrangler prompts, paste a comma-separated allowlist
+# (e.g. hooks.slack.com,discord.com,*.example.com).
+npx wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
 
 # 3. Deploy
-wrangler deploy
+npx wrangler deploy
 # → prints your worker URL, e.g. https://mantis-edge.<your-subdomain>.workers.dev
 
-# 4. Save the key locally so the CLI can mint URLs against it
-mantis edge set-key \
-  --worker https://mantis-edge.<your-subdomain>.workers.dev \
-  --key <paste>
+# 4. Save the same key locally so the CLI can mint URLs against it.
+# This prompts for the key — paste the value from `mantis edge keygen` again.
+mantis edge set-key https://mantis-edge.<your-subdomain>.workers.dev
 ```
 
 For local dev:

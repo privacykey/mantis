@@ -287,7 +287,7 @@ Each profile can optionally remember a default `mantis-edge` Cloudflare Worker U
 mantis --profile=prod login -u https://mantis.example.com
 
 # Store the edge worker's AES key (one-time, per worker URL)
-mantis edge set-key --worker=https://edge.example.workers.dev --key=$(mantis edge keygen | head -1)
+mantis edge set-key https://edge.example.workers.dev "$(mantis edge keygen | head -1)"
 
 # Link the edge worker to the prod profile
 mantis profile set-edge prod --worker=https://edge.example.workers.dev
@@ -371,7 +371,7 @@ Three separate keychain services, each keyed by URL (not profile name), so multi
 |---|---|---|---|---|
 | `mantis-cli` | mantis server base URL | Full `mantis_live_…` API key | `mantis login`, `mantis --profile=<name> login` | `mantis logout`, `mantis profile rm` |
 | `mantis-cli-cf` | mantis server base URL | JSON `{"client_id": "…", "client_secret": "…"}` (Cloudflare Access Service Auth) | `mantis cloudflare set-service-auth` | `mantis cloudflare logout`, `mantis logout` |
-| `mantis-cli-edge` | edge worker base URL | 32-byte AES-GCM key, base64url-encoded | `mantis edge set-key --worker <url> --key <key>` | `mantis edge delete-key --worker <url>` |
+| `mantis-cli-edge` | edge worker base URL | 32-byte AES-GCM key, base64url-encoded | `mantis edge set-key <url> [key]` (prompts if `[key]` omitted) | `mantis edge delete-key --worker <url>` |
 
 Backing keystore by platform (via [`@napi-rs/keyring`](https://www.npmjs.com/package/@napi-rs/keyring)):
 
@@ -424,7 +424,7 @@ Remove-StoredCredential -Target "mantis-cli/https://mantis.example.com"
 |---|---|---|
 | Cloudflare Access SSO JWTs | `cloudflared` binary | `~/.cloudflared/` — short-lived (24h default); mantis shells out to `cloudflared access token` to read |
 | Browser cookies for the dashboard | Your browser | Per-profile cookie store; cleared by `mantis logout` only on the server side |
-| `wrangler dev` `MANTIS_EDGE_KEY` | `wrangler` | `mantis-edge/.dev.vars` — plaintext, gitignored; only present on dev machines |
+| `npx wrangler dev` `MANTIS_EDGE_KEY` | `wrangler` | `mantis-edge/.dev.vars` — plaintext, gitignored; only present on dev machines |
 | Git config / SSH keys | git / OpenSSH | Untouched |
 
 ### Reset everything

@@ -4,13 +4,13 @@ compatibility_date = "2026-05-01"
 
 # Secret: 32 raw bytes, base64url-encoded.
 # Generate with `mantis edge keygen`, then:
-#   wrangler secret put MANTIS_EDGE_KEY
+#   npx wrangler secret put MANTIS_EDGE_KEY
 # (paste the value when prompted)
 #
 # For local dev, copy .dev.vars.example to .dev.vars and put the key there.
 #
 # Optional defense-in-depth secret:
-#   wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
+#   npx wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
 # Example value:
 #   hooks.slack.com,discord.com,*.example.com
 

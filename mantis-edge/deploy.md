@@ -21,28 +21,28 @@ Generate one 32-byte base64url key:
 mantis edge keygen
 ```
 
-Set it as a Worker secret:
+Set it as a Worker secret. Wrangler prompts for the value — paste the base64url key from the previous step:
 
 ```bash
-wrangler secret put MANTIS_EDGE_KEY
+npx wrangler secret put MANTIS_EDGE_KEY
 ```
 
-Save the same key locally so the CLI can mint URLs:
+Save the same key locally so the CLI can mint URLs. The CLI also prompts; paste the key again:
 
 ```bash
-mantis edge set-key \
-  --worker https://mantis-edge.<your-subdomain>.workers.dev \
-  --key <paste-key>
+mantis edge set-key https://mantis-edge.<your-subdomain>.workers.dev
 ```
+
+(You can also pass the key as a second positional argument for non-interactive use: `mantis edge set-key <url> <key>`.)
 
 The key is the minting authority. Anyone with it can create valid edge URLs, so keep it in the OS keychain via the CLI and avoid putting it in shell history or CI logs.
 
 ## 2. Restrict webhook destinations
 
-For defense-in-depth, set an optional comma-separated allowlist:
+For defense-in-depth, set an optional comma-separated allowlist. Wrangler prompts for the value:
 
 ```bash
-wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
+npx wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
 ```
 
 Examples:
@@ -62,7 +62,7 @@ When the allowlist is set, encrypted URLs with non-matching webhook hosts return
 ## 3. Deploy
 
 ```bash
-wrangler deploy
+npx wrangler deploy
 ```
 
 Wrangler prints the deployed Worker URL, usually:
@@ -82,7 +82,7 @@ zone_name = "example.com"
 Then deploy again and store the custom URL locally:
 
 ```bash
-mantis edge set-key --worker https://edge.example.com --key <paste-key>
+mantis edge set-key https://edge.example.com <paste-key>
 mantis profile set-edge prod --worker https://edge.example.com
 ```
 
@@ -112,7 +112,7 @@ Expected:
 For failure debugging:
 
 ```bash
-wrangler tail
+npx wrangler tail
 ```
 
 Webhook failures are logged with the target origin only, not the full webhook path or query.
@@ -134,7 +134,7 @@ http://localhost:8787
 Store the local worker URL if you want to mint against it:
 
 ```bash
-mantis edge set-key --worker http://localhost:8787 --key <paste-key>
+mantis edge set-key http://localhost:8787 <paste-key>
 mantis edge mint --worker http://localhost:8787 --webhook http://localhost:3000/inbox/edge
 ```
 
@@ -149,8 +149,8 @@ CLOUDFLARE_API_TOKEN=<token> npm run deploy
 Set Worker secrets outside the deploy command. For hosted CI, prefer Cloudflare dashboard secrets or a one-time setup step:
 
 ```bash
-printf '%s' "$MANTIS_EDGE_KEY" | wrangler secret put MANTIS_EDGE_KEY
-printf '%s' "$MANTIS_EDGE_WEBHOOK_ALLOWLIST" | wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
+printf '%s' "$MANTIS_EDGE_KEY" | npx wrangler secret put MANTIS_EDGE_KEY
+printf '%s' "$MANTIS_EDGE_WEBHOOK_ALLOWLIST" | npx wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
 ```
 
 Keep the minting key out of repository variables that broad groups can read.
@@ -160,8 +160,8 @@ Keep the minting key out of repository variables that broad groups can read.
 Rotating `MANTIS_EDGE_KEY` immediately invalidates all existing edge URLs. A practical rotation:
 
 1. Generate a new key with `mantis edge keygen`.
-2. Update the Worker secret with `wrangler secret put MANTIS_EDGE_KEY`.
-3. Update the local CLI key with `mantis edge set-key --worker <url> --key <new-key>`.
+2. Update the Worker secret with `npx wrangler secret put MANTIS_EDGE_KEY` (paste the new key when prompted).
+3. Update the local CLI key with `mantis edge set-key <url>` (paste the new key when prompted).
 4. Re-mint any URLs that should keep working.
 
 Use `--expires-at` when minting short-lived URLs so old URLs naturally age out.

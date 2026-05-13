@@ -36,6 +36,7 @@ import { disableCmd, enableCmd } from "./commands/toggle.js";
 import { watchCmd } from "./commands/watch.js";
 import { whoamiCmd } from "./commands/whoami.js";
 import { CLI_VERSION } from "./version.js";
+import { readConfig } from "./lib/config.js";
 import {
   c,
   fail,
@@ -96,6 +97,42 @@ program
     if (opts.json) setJsonMode(true);
     setQuiet(!!opts.quiet);
     setNoHeaders(opts.headers === false);
+  })
+  .action(async () => {
+    const stored = await readConfig();
+    const hasProfile = !!stored && Object.keys(stored.profiles).length > 0;
+
+    if (!hasProfile) {
+      process.stdout.write(
+        `${c.bold("Welcome to mantis.")} ${c.dim("Self-hostable tripwires for the terminal.")}
+
+You haven't logged in yet. Point the CLI at a Mantis server to get started:
+
+  ${c.cyan("mantis login")}
+
+Or skip the prompt by passing the URL directly:
+
+  ${c.cyan("mantis login --url https://mantis.example.com")}
+
+Then explore: ${c.dim("mantis --help")}
+`,
+      );
+      return;
+    }
+
+    const profileName = stored.currentProfile;
+    const entry = stored.profiles[profileName];
+    process.stdout.write(
+      `${c.dim("Logged in as")} ${c.bold(profileName)} ${c.dim("→")} ${entry?.baseUrl ?? "?"}
+
+${c.dim("Quick start:")}
+  ${c.cyan('mantis new "my first key"')}    ${c.dim("# create a key")}
+  ${c.cyan("mantis list")}                   ${c.dim("# see all keys")}
+  ${c.cyan("mantis hits last --follow")}     ${c.dim("# tail hits live")}
+
+`,
+    );
+    program.outputHelp();
   });
 
 program
@@ -277,11 +314,26 @@ edge
 edge
   .command("set-key")
   .description("store an edge AES key in the OS keychain for a given worker URL")
+  .argument("[worker]", "worker base URL (https://…); alternative to --worker")
+  .argument(
+    "[key]",
+    "base64url-encoded 32-byte AES key. Prompts for paste if omitted.",
+  )
   .option("--worker <url>", "worker base URL (https://…)")
-  .option("--key <base64url>", "32-byte AES key, base64url-encoded")
-  .action((opts) => {
-    edgeSetKeyCmd(opts);
-  });
+  // No `--key` flag: it collides with the global `--key` (which overrides the
+  // mantis API key). Use the positional argument or the interactive prompt.
+  .action(
+    async (
+      workerArg: string | undefined,
+      keyArg: string | undefined,
+      opts: { worker?: string },
+    ) => {
+      await edgeSetKeyCmd({
+        worker: opts.worker ?? workerArg,
+        key: keyArg,
+      });
+    },
+  );
 
 edge
   .command("delete-key")
@@ -303,11 +355,17 @@ edge
   .option("--response-payload <json>", "payload for json/redirect/html responses (JSON)")
   .option("--memo <text>", "memo, forwarded to the webhook for context")
   .option("--expires-at <iso>", "ISO timestamp after which the URL stops working")
-  .option("--key <base64url>", "override stored AES key for one mint")
+  // Renamed from --key to avoid colliding with the global --key (API-key
+  // override). Maps to the internal `key` field below.
+  .option("--edge-key <base64url>", "override stored AES key for one mint")
   .option("--copy", "copy the minted edge URL to the clipboard")
-  .action(async (opts, cmd: Command) => {
+  .action(async (opts: { edgeKey?: string }, cmd: Command) => {
     const globals = cmd.parent!.parent!.opts<GlobalRaw>();
-    await edgeMintCmd({ ...opts, profile: globals.profile });
+    await edgeMintCmd({
+      ...opts,
+      key: opts.edgeKey,
+      profile: globals.profile,
+    });
   });
 
 program

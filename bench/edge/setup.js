@@ -139,7 +139,7 @@ export function startWebhookListener({ port = 0 } = {}) {
   });
 }
 
-/** Probe a worker URL once to verify wrangler dev is up. */
+/** Probe a worker URL once to verify `npx wrangler dev` is up. */
 export async function probeWorker(workerUrl) {
   try {
     const res = await fetch(`${workerUrl.replace(/\/$/, "")}/c/invalid-blob`, {
