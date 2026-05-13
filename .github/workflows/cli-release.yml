@@ -58,6 +58,10 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
+
       - name: Build binaries (bun cross-compile)
         run: bash cli/scripts/build-bin.sh
 
