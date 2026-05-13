@@ -1,0 +1,16 @@
+{
+  "name": "@mantis/iot-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "mantis-iot-helper": "./bin/mantis-iot-helper.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "check": "node --check bin/mantis-iot-helper.js",
+    "start": "node bin/mantis-iot-helper.js --config config.example.json"
+  }
+}

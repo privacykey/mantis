@@ -1,0 +1,3 @@
+MANTIS_EDGE_KEY=paste-32-byte-base64url-key-here
+# Optional. Comma-separated exact hosts or wildcards.
+# MANTIS_EDGE_WEBHOOK_ALLOWLIST=hooks.slack.com,discord.com,*.example.com

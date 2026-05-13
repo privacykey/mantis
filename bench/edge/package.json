@@ -1,0 +1,14 @@
+{
+  "name": "@mantis/bench-edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node bench.js",
+    "bench:all": "node bench.js --all"
+  },
+  "dependencies": {
+    "autocannon": "^8.0.0",
+    "minimist": "^1.2.8"
+  }
+}

@@ -1,0 +1,43 @@
+# Render blueprint for mantis.
+# Usage:
+#   1. Fork or clone this repo to a GitHub account Render can read.
+#   2. cp deploy/render.yaml.example render.yaml  (Render reads from the repo root)
+#   3. Edit "name:" fields and any region you prefer.
+#   4. Go to https://dashboard.render.com/blueprints and "New Blueprint" → point at the repo.
+#   5. Render provisions both the web service and a Postgres database; it injects DATABASE_URL.
+#   6. Add BOOTSTRAP_API_KEY in the dashboard so you have a known first key.
+#
+# Free-tier caveat: Render free web services spin down after 15 min of inactivity.
+# That means the FIRST mantis trigger after idle will be slow (cold start, 30–60s).
+# For real mantis use, upgrade the service to Starter ($7/mo) or self-host elsewhere.
+#
+# Public edge limits:
+#   Render includes DDoS protection, but app-layer URL/rate abuse is still yours.
+#   For public Mantis URLs, use a Cloudflare-proxied custom domain and the
+#   rules in deploy/edge-limits.md#render.
+
+services:
+  - type: web
+    name: mantis
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    plan: starter   # change to "free" if you accept cold-start latency
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: PUBLIC_BASE_URL
+        value: https://mantis.onrender.com   # change to your mantis's URL after first deploy
+      - key: AUTO_MIGRATE
+        value: "1"
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mantis-db
+          property: connectionString
+
+databases:
+  - name: mantis-db
+    plan: starter   # free tier expires after 90 days
+    postgresMajorVersion: 16
+    ipAllowList: []   # block public ingress; only Render services in the same region can connect

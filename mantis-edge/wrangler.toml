@@ -1,0 +1,21 @@
+name = "mantis-edge"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+# Secret: 32 raw bytes, base64url-encoded.
+# Generate with `mantis edge keygen`, then:
+#   wrangler secret put MANTIS_EDGE_KEY
+# (paste the value when prompted)
+#
+# For local dev, copy .dev.vars.example to .dev.vars and put the key there.
+#
+# Optional defense-in-depth secret:
+#   wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
+# Example value:
+#   hooks.slack.com,discord.com,*.example.com
+
+# Custom domain (optional). Replace with your own zone, or delete this section
+# and use the default *.workers.dev URL.
+# [[routes]]
+# pattern = "mantis-edge.example.com/*"
+# zone_name = "example.com"

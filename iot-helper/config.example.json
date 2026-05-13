@@ -1,0 +1,26 @@
+{
+  "interval_seconds": 30,
+  "cooldown_seconds": 900,
+  "interface": "br0",
+  "devices": [
+    {
+      "name": "garage-camera",
+      "mac": "aa:bb:cc:dd:ee:ff",
+      "ip": "192.168.1.50",
+      "mantis_url": "https://mantis-public.example/c/replace-me",
+      "allowed": [
+        { "days": ["mon", "tue", "wed", "thu", "fri"], "start": "07:00", "end": "23:00" }
+      ]
+    }
+  ],
+  "log_watchers": [
+    {
+      "name": "camera-admin-login",
+      "path": "/var/log/syslog",
+      "pattern": "garage-camera.*(login|logged in|auth).*success",
+      "event": "device-login",
+      "device": "garage-camera",
+      "mantis_url": "https://mantis-public.example/c/replace-me"
+    }
+  ]
+}

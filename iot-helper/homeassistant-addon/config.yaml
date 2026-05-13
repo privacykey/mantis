@@ -1,0 +1,44 @@
+name: Mantis IoT Helper
+slug: mantis_iot_helper
+version: "0.1.0"
+description: Watch IoT network/log events and fire Mantis canaries.
+url: "https://github.com/example/mantis"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: services
+boot: auto
+host_network: true
+privileged:
+  - NET_ADMIN
+map:
+  - config:rw
+options:
+  interval_seconds: 30
+  cooldown_seconds: 900
+  interface: "br0"
+  devices: []
+  log_watchers: []
+schema:
+  interval_seconds: int
+  cooldown_seconds: int
+  interface: str
+  devices:
+    - name: str
+      mac: str?
+      ip: str?
+      ping: bool?
+      mantis_url: url
+      allowed:
+        - days:
+            - str
+          start: str
+          end: str
+  log_watchers:
+    - name: str
+      path: str
+      pattern: str
+      event: str?
+      device: str?
+      mantis_url: url

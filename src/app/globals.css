@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --color-mantis: #facc15;
+}
+
+html,
+body {
+  background: var(--color-neutral-950);
+  color: var(--color-neutral-200);
+  font-family: var(--font-mono);
+}
+
+a {
+  color: var(--color-blue-400);
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Reset default <details> marker */
+summary {
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}

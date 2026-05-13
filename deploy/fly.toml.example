@@ -1,0 +1,49 @@
+# Fly.io app config for mantis.
+# Usage:
+#   cp deploy/fly.toml.example fly.toml
+#   # edit `app =` to a unique name
+#   fly launch --no-deploy --copy-config
+#   fly postgres create --name <db-name>
+#   fly postgres attach <db-name>
+#   fly secrets set PUBLIC_BASE_URL=https://<app-name>.fly.dev BOOTSTRAP_API_KEY=mantis_live_...
+#   fly deploy
+#
+# Public edge limits:
+#   Fly concurrency protects Machines from overload, but it is not a WAF.
+#   For public Mantis URLs, use a Cloudflare-proxied custom domain and the
+#   rules in deploy/edge-limits.md#flyio.
+
+app = "mantis-CHANGE-ME"
+primary_region = "iad"
+
+[build]
+  dockerfile = "docker/Dockerfile"
+
+[env]
+  PUBLIC_BASE_URL = "https://mantis-CHANGE-ME.fly.dev"
+  AUTO_MIGRATE = "1"
+  LOG_LEVEL = "info"
+  PORT = "3000"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  # Long-running notify worker lives in this process. Keep at least 1 machine warm
+  # so retries happen on schedule. (Auto-stop after the first hit batch is fine.)
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+# DATABASE_URL is set by `fly postgres attach`.
+# To use an external Postgres (Neon, Supabase, etc.) instead:
+#   fly secrets set DATABASE_URL=postgres://...

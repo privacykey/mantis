@@ -1,0 +1,143 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mantis
+      POSTGRES_PASSWORD: mantis
+      POSTGRES_DB: mantis
+    volumes:
+      - mantis-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mantis -d mantis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mantis:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://mantis:mantis@postgres:5432/mantis
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      PUBLIC_ONLY_HOSTS: ${PUBLIC_ONLY_HOSTS:-}
+      PUBLIC_ONLY_ALLOW_HEALTH: ${PUBLIC_ONLY_ALLOW_HEALTH:-0}
+      PUBLIC_ONLY_ALLOW_INBOX: ${PUBLIC_ONLY_ALLOW_INBOX:-0}
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      AUTO_MIGRATE: "1"
+    # Bind to localhost by default. The tunnel sidecars (tailscale, cloudflared)
+    # reach mantis via the docker network — they don't need the published port.
+    # Set MANTIS_BIND_HOST=0.0.0.0 to expose to LAN when running without a tunnel.
+    ports:
+      - "${MANTIS_BIND_HOST:-127.0.0.1}:${MANTIS_HOST_PORT:-3000}:3000"
+
+  # --- Tailscale profile -----------------------------------------------------
+  # Enables: docker compose --profile tailscale up
+  # Requires: TS_AUTHKEY env var (from https://login.tailscale.com/admin/settings/keys)
+  # Result:   mantis reachable at https://<TS_HOSTNAME>.<your-tailnet>.ts.net
+  #           Funnel (public exposure) opt-in via Tailscale admin → DNS → HTTPS + Funnel
+  tailscale:
+    image: tailscale/tailscale:stable
+    profiles: ["tailscale"]
+    hostname: ${TS_HOSTNAME:-mantis}
+    restart: unless-stopped
+    depends_on:
+      mantis:
+        condition: service_started
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-mantis}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+    volumes:
+      - ts-state:/var/lib/tailscale
+      - ./docker/tailscale/serve.json:/config/serve.json:ro
+    cap_add:
+      - net_admin
+      - sys_module
+    devices:
+      - /dev/net/tun
+
+  # --- Tailscale split profile ---------------------------------------------
+  # Enables: docker compose --profile tailscale-split up
+  # Result:   private dashboard/API at https://<TS_PRIVATE_HOSTNAME>.<tailnet>.ts.net
+  #           public triggers/status/wallet at https://<TS_PUBLIC_HOSTNAME>.<tailnet>.ts.net
+  # Set PUBLIC_BASE_URL + PUBLIC_ONLY_HOSTS to the public hostname, and
+  # DASHBOARD_HOSTS to the private hostname.
+  tailscale-private:
+    image: tailscale/tailscale:stable
+    profiles: ["tailscale-split"]
+    hostname: ${TS_PRIVATE_HOSTNAME:-mantis-private}
+    restart: unless-stopped
+    depends_on:
+      mantis:
+        condition: service_started
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_PRIVATE_HOSTNAME:-mantis-private}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+      TS_SERVE_CONFIG: /config/serve-private.json
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+    volumes:
+      - ts-private-state:/var/lib/tailscale
+      - ./docker/tailscale/serve-private.json:/config/serve-private.json:ro
+    cap_add:
+      - net_admin
+      - sys_module
+    devices:
+      - /dev/net/tun
+
+  tailscale-public:
+    image: tailscale/tailscale:stable
+    profiles: ["tailscale-split"]
+    hostname: ${TS_PUBLIC_HOSTNAME:-mantis-public}
+    restart: unless-stopped
+    depends_on:
+      mantis:
+        condition: service_started
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_PUBLIC_HOSTNAME:-mantis-public}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+      TS_SERVE_CONFIG: /config/serve-public.json
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+    volumes:
+      - ts-public-state:/var/lib/tailscale
+      - ./docker/tailscale/serve-public.json:/config/serve-public.json:ro
+    cap_add:
+      - net_admin
+      - sys_module
+    devices:
+      - /dev/net/tun
+
+  # --- Cloudflare Tunnel profile --------------------------------------------
+  # Enables: docker compose --profile cloudflared up
+  # Requires: CLOUDFLARE_TUNNEL_TOKEN env var (from Cloudflare Zero Trust → Networks → Tunnels)
+  # Tunnel routing (hostname → http://mantis:3000) is configured in the CF dashboard.
+  # Dashboard access policies via Cloudflare Access also live in the CF dashboard.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["cloudflared"]
+    restart: unless-stopped
+    depends_on:
+      mantis:
+        condition: service_started
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+volumes:
+  mantis-pg:
+  ts-state:
+  ts-private-state:
+  ts-public-state:
