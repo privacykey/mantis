@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. cli-v0.1.0). Created on the current commit if it doesn't exist."
+        description: "Tag to release (e.g. cli-v0.1.x). Created on the current commit if it doesn't exist."
         required: true
 
 permissions:
@@ -38,7 +38,7 @@ jobs:
           - target: darwin-arm64
             runner: macos-latest
           - target: darwin-x64
-            runner: macos-13
+            runner: macos-15-intel
           - target: linux-x64
             runner: ubuntu-latest
           - target: linux-arm64
@@ -46,7 +46,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.8.0"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Derive version
         id: meta
@@ -70,8 +79,7 @@ jobs:
           bun-version: latest
 
       - name: Install CLI dependencies (host-native bindings)
-        working-directory: cli
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Compile binary for ${{ matrix.target }}
         working-directory: cli
@@ -91,7 +99,7 @@ jobs:
         shell: bash
         run: tar -czf "mantis-${{ matrix.target }}.tar.gz" mantis
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: mantis-${{ matrix.target }}
           path: cli/dist/bin/mantis-${{ matrix.target }}.tar.gz
@@ -124,7 +132,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7.0.0
         with:
           path: artifacts
           merge-multiple: true
@@ -193,7 +201,7 @@ jobs:
           fi
 
       - name: Checkout privacykey/homebrew-tap
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: privacykey/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

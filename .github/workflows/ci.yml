@@ -19,23 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
-          node-version: "24"
-          cache: "npm"
-          cache-dependency-path: |
-            package-lock.json
-            cli/package-lock.json
-            mantis-edge/package-lock.json
-      - name: install (root)
-        run: npm ci
-      - name: install (cli)
-        run: npm --prefix cli ci || npm --prefix cli install --package-lock-only && npm --prefix cli ci
-      - name: install (mantis-edge)
-        run: npm --prefix mantis-edge ci || npm --prefix mantis-edge install --package-lock-only && npm --prefix mantis-edge ci
-      - name: typecheck all three
-        run: npm run check
+          version: 11.1.1
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.8.0"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+      - name: install
+        run: pnpm install --frozen-lockfile
+      - name: typecheck all packages
+        run: pnpm run check
 
   test:
     name: unit + integration tests
@@ -59,17 +56,22 @@ jobs:
       DATABASE_URL: postgres://mantis:mantis@localhost:5432/mantis_test
       PUBLIC_BASE_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
-          node-version: "24"
-          cache: "npm"
+          version: 11.1.1
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.8.0"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
       - name: install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: migrate
-        run: npm run db:migrate
+        run: pnpm run db:migrate
       - name: test
-        run: npm test
+        run: pnpm test
 
   build:
     name: next build (catches lint/build-time errors)
@@ -80,12 +82,45 @@ jobs:
       DATABASE_URL: postgres://placeholder/placeholder
       PUBLIC_BASE_URL: http://localhost:3000
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
         with:
-          node-version: "24"
-          cache: "npm"
+          version: 11.1.1
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.8.0"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
       - name: install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: build
-        run: npm run build
+        run: pnpm run build
+
+  cli-artifact:
+    name: CLI build artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.1.1
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "25.8.0"
+          cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
+      - name: install
+        run: pnpm install --frozen-lockfile
+      - name: build CLI
+        run: pnpm --filter @mantis/cli run build
+      - name: smoke test CLI
+        run: node cli/dist/index.js --version
+      - name: upload CLI artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: mantis-cli-dist
+          path: cli/dist/
+          if-no-files-found: error

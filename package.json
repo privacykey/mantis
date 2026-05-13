@@ -3,24 +3,25 @@
   "version": "0.1.0",
   "license": "MIT",
   "private": true,
+  "packageManager": "pnpm@11.1.1",
   "type": "module",
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=25.8.0"
   },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm --prefix cli run typecheck && npm --prefix mantis-edge run typecheck && npm --prefix iot-helper run check",
+    "check": "pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
     "build:cli-bin": "bash cli/scripts/build-bin.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:hooks": "bash scripts/install-hooks.sh",
-    "bench": "npm run bench:cli",
-    "bench:all": "npm run bench:cli && npm run bench:edge && npm run bench:server",
-    "bench:cli": "npm --prefix cli run build && node bench/cli/bench.js --all",
-    "bench:edge": "npm --prefix bench/edge run bench:all",
+    "bench": "pnpm run bench:cli",
+    "bench:all": "pnpm run bench:cli && pnpm run bench:edge && pnpm run bench:server",
+    "bench:cli": "pnpm --filter @mantis/cli run build && node bench/cli/bench.js --all",
+    "bench:edge": "pnpm --filter @mantis/bench-edge run bench:all",
     "bench:server": "node bench/server/bench.js --all",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -47,7 +48,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^24.12.4",
+    "@types/node": "^25.7.0",
     "@types/nodemailer": "^8.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.14",

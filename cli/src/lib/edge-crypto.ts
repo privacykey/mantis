@@ -7,7 +7,7 @@ export async function seal(
 ): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey(
     "raw",
-    keyRaw,
+    keyRaw as NodeJS.BufferSource,
     { name: "AES-GCM" },
     false,
     ["encrypt"],
@@ -17,7 +17,7 @@ export async function seal(
     await crypto.subtle.encrypt(
       { name: "AES-GCM", iv: nonce },
       key,
-      new TextEncoder().encode(plaintext),
+      new TextEncoder().encode(plaintext) as NodeJS.BufferSource,
     ),
   );
   const out = new Uint8Array(1 + NONCE_LEN + ctTag.length);

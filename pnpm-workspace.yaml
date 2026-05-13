@@ -1,3 +1,11 @@
+packages:
+  - "."
+  - "cli"
+  - "mantis-edge"
+  - "iot-helper"
+  - "bench/edge"
+
 allowBuilds:
-  esbuild: set this to true or false
-  sharp: set this to true or false
+  esbuild: true
+  sharp: true
+  workerd: true

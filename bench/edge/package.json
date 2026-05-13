@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=25.8.0"
+  },
   "scripts": {
     "bench": "node bench.js",
     "bench:all": "node bench.js --all"

@@ -7,7 +7,7 @@
     "mantis-iot-helper": "./bin/mantis-iot-helper.js"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=25.8.0"
   },
   "scripts": {
     "check": "node --check bin/mantis-iot-helper.js",
