@@ -1,0 +1,213 @@
+# Builds the mantis CLI as standalone binaries (bun cross-compile),
+# publishes them as a GitHub release, and opens a PR on
+# privacykey/homebrew-tap to bump Formula/mantis.rb.
+#
+# Trigger: push a tag matching `cli-v*` (e.g. `cli-v0.1.0`) or run the
+# workflow manually from the Actions tab.
+#
+# Requires repo secret HOMEBREW_TAP_TOKEN — a fine-grained PAT with
+# Contents: read & write on privacykey/homebrew-tap. See cli/homebrew/README.md.
+
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. cli-v0.1.0). Created on the current commit if it doesn't exist."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build + publish CLI binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      sha_darwin_arm64: ${{ steps.shas.outputs.darwin_arm64 }}
+      sha_darwin_x64: ${{ steps.shas.outputs.darwin_x64 }}
+      sha_linux_arm64: ${{ steps.shas.outputs.linux_arm64 }}
+      sha_linux_x64: ${{ steps.shas.outputs.linux_x64 }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Derive tag + version
+        id: meta
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          if [[ "$TAG" != cli-v* ]]; then
+            echo "::error::Tag must start with 'cli-v' (got: $TAG)"
+            exit 1
+          fi
+          VERSION="${TAG#cli-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Pin CLI_VERSION to release version
+        run: |
+          printf 'export const CLI_VERSION = "%s";\n' "${{ steps.meta.outputs.version }}" > cli/src/version.ts
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build binaries (bun cross-compile)
+        run: bash cli/scripts/build-bin.sh
+
+      - name: Package per-platform tarballs
+        working-directory: cli/dist/bin
+        run: |
+          for f in mantis-darwin-arm64 mantis-darwin-x64 mantis-linux-arm64 mantis-linux-x64; do
+            cp "$f" mantis
+            tar -czf "${f}.tar.gz" mantis
+            rm mantis
+          done
+          shasum -a 256 mantis-*.tar.gz | tee SHA256SUMS-tarballs
+
+      - name: Capture tarball SHAs for the bump job
+        id: shas
+        working-directory: cli/dist/bin
+        run: |
+          for tgt in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            sha=$(shasum -a 256 "mantis-${tgt}.tar.gz" | awk '{print $1}')
+            key="${tgt//-/_}"
+            echo "${key}=${sha}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          NOTES=$(cat <<'EOF'
+          Cross-compiled standalone CLI binaries for macOS and Linux on arm64 / x86_64.
+
+          ### Install via Homebrew
+
+          ```
+          brew install privacykey/tap/mantis
+          ```
+
+          ### Or download directly
+
+          Pick the tarball for your platform below, extract it, and put the `mantis` binary on your `$PATH`.
+          EOF
+          )
+          gh release create "$TAG" \
+            --title "mantis CLI $VERSION" \
+            --notes "$NOTES" \
+            cli/dist/bin/mantis-darwin-arm64.tar.gz \
+            cli/dist/bin/mantis-darwin-x64.tar.gz \
+            cli/dist/bin/mantis-linux-arm64.tar.gz \
+            cli/dist/bin/mantis-linux-x64.tar.gz \
+            cli/dist/bin/SHA256SUMS-tarballs
+
+  bump-homebrew:
+    name: Bump Homebrew formula
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify HOMEBREW_TAP_TOKEN is set
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            cat >&2 <<'EOF'
+          ::error::HOMEBREW_TAP_TOKEN secret is not configured on this repo.
+          Create a fine-grained PAT with 'Contents: read & write' and
+          'Pull requests: read & write' on privacykey/homebrew-tap, then add
+          it as the HOMEBREW_TAP_TOKEN repo secret here. The release itself
+          has already succeeded — just configure the token and re-run this job.
+          EOF
+            exit 1
+          fi
+
+      - name: Checkout privacykey/homebrew-tap
+        uses: actions/checkout@v5
+        with:
+          repository: privacykey/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Regenerate Formula/mantis.rb
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ needs.release.outputs.sha_darwin_arm64 }}
+          SHA_DARWIN_X64: ${{ needs.release.outputs.sha_darwin_x64 }}
+          SHA_LINUX_ARM64: ${{ needs.release.outputs.sha_linux_arm64 }}
+          SHA_LINUX_X64: ${{ needs.release.outputs.sha_linux_x64 }}
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/mantis.rb <<EOF
+          # AUTO-GENERATED by privacykey/mantis cli-release workflow.
+          # Manual edits will be overwritten on the next release.
+          class Mantis < Formula
+            desc "Command-line client for Mantis — manage keys and watch hits from the terminal"
+            homepage "https://github.com/privacykey/mantis"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/privacykey/mantis/releases/download/cli-v#{version}/mantis-darwin-arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/privacykey/mantis/releases/download/cli-v#{version}/mantis-darwin-x64.tar.gz"
+                sha256 "${SHA_DARWIN_X64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/privacykey/mantis/releases/download/cli-v#{version}/mantis-linux-arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/privacykey/mantis/releases/download/cli-v#{version}/mantis-linux-x64.tar.gz"
+                sha256 "${SHA_LINUX_X64}"
+              end
+            end
+
+            def install
+              bin.install "mantis"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/mantis --version")
+            end
+          end
+          EOF
+
+      - name: Commit + open PR on the tap
+        working-directory: tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          BRANCH="bump-mantis-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add Formula/mantis.rb
+          if git diff --cached --quiet; then
+            echo "Formula already at ${VERSION} — nothing to do."
+            exit 0
+          fi
+          git commit -m "mantis ${VERSION}"
+          git push -u origin "$BRANCH"
+          gh pr create \
+            --title "mantis ${VERSION}" \
+            --body "Auto-generated by https://github.com/privacykey/mantis release workflow for tag \`${TAG}\`." \
+            --base main \
+            --head "$BRANCH"
