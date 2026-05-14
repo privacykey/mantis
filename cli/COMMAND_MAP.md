@@ -363,6 +363,8 @@ flowchart TD
 | `edge delete-key` | `--worker <url>` |
 | `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy`, `--test`, `--install <type>` (with `--out`, `--ssh-only`, `--hostname`). Run bare on a TTY to launch the interactive wizard. |
 | `edge install <url>` | `--type <type>`, `--out <file>`, `--ssh-only` (shell types), `--hostname <host>` (js-clone-detector), `--memo <text>`. Generates the same snippet `mantis install` produces server-side, but for a stateless edge URL. |
+| `backup` | `--out <file>` (default `./mantis-backup.json`), `--only <name>`, `--passphrase-stdin`, `--passphrase-env <var>`. Exports all profiles (or one) + plugin manifest into a scrypt + AES-256-GCM encrypted JSON file. Safe to commit to a private git-crypt repo. |
+| `restore <file>` | `--overwrite`, `--skip-plugins`, `--passphrase-stdin`, `--passphrase-env <var>`. Decrypts a backup bundle and writes profiles into config + keychain; re-installs plugins via `mantis plugin add <source>@<ref>`. Profiles that already exist are skipped unless `--overwrite`. |
 
 Note: `mantis new` and `mantis install` mirror the edge surface:
 

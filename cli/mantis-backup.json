@@ -1,0 +1,16 @@
+{
+  "format": "mantis-backup-v1",
+  "createdAt": "2026-05-14T10:28:29.823Z",
+  "encryption": {
+    "cipher": "AES-256-GCM",
+    "kdf": "scrypt",
+    "kdfParams": {
+      "N": 32768,
+      "r": 8,
+      "p": 1
+    },
+    "saltB64": "CidwITIWuP+mA9/RORgT3Q==",
+    "nonceB64": "RSWRjl5O8d6ls9J/"
+  },
+  "ciphertextB64": "jO0n8sjcwx/g9EB0YiFZuTCvU3GH8etpfYgd1x0xxaKvxKRch9dh1XW1CGLgiB0wFT7bBy75KENZ2jTUNoVr9V+j1W4x+D08/VWFNkNOCBInMb3dxsr8hjjQMH2XKHBMjc56k6n1kllZx5/2vEl/zw4CEIevVK/CiIDc+hKVh6xZdIJxCY3lO9iNIb4UqB+9W86yKkdpenCRBlCnZQjWo6ugDada190o2FqrSQLCBKxoYr/gMSYbXxtaeHrY6KaZu5al9u6lrPxMO5i7RSyWwkWEamysowDKN6JpUZDBvrMYG/VyzpklcFspi/E4lTsdwPf1YVRhMoS0I19j2qfx7OXJOTElLwZhPI0/PiQIue2GYnY6xRIqdz8="
+}

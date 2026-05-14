@@ -45,6 +45,8 @@ Credentials are stored in:
 |---|---|
 | `login [--url URL] [--no-switch]` | Prompt + store API key in keychain (under `--profile <name>` if given) |
 | `logout [--all]` | Remove stored credentials for the current profile (or all profiles) |
+| `backup [-o <file>] [--only <name>]` | Export profiles + plugin manifest into a passphrase-encrypted JSON bundle (scrypt + AES-256-GCM). Safe to commit to a private git-crypt repo. |
+| `restore <file> [--overwrite] [--skip-plugins]` | Decrypt a backup bundle and restore profiles into config + keychain. Re-installs plugins via `mantis plugin add <source>@<ref>`. |
 | `whoami` | Show current profile: server, key prefix, Cloudflare state, linked edge worker |
 | `doctor [--public-url URL]` | Check CLI config, server health, auth, Cloudflare, and split public/private hosts |
 | `detect [--scope user\|system\|all] [--deep]` | Offline self-audit for Mantis-style installer artifacts on this machine |
@@ -330,6 +332,50 @@ The keychain layout means **the same API key works across profiles that share a 
 - Cloudflare Service Auth secrets: OS keychain (`mantis-cli-cf` service, account = base URL)
 
 Existing pre-profile configs (flat `{baseUrl, keyPrefix, …}`) migrate automatically to the new shape on first read, landing under a profile named `default`. No re-login needed.
+
+## Backup & restore (migrating to a new machine)
+
+The config file is plain JSON and trivially `scp`-able, but the secrets that actually make a CLI install work — API keys, Cloudflare Service-Auth credentials, edge AES keys — live in the OS keychain and can't be copied that way. `mantis backup` and `mantis restore` cover the full set: a passphrase-encrypted JSON bundle containing every profile's secrets plus the plugin manifest, suitable for committing to a private git-crypt repo or stashing in a password manager.
+
+```bash
+# On the old machine:
+mantis backup --out ~/Vault/mantis-backup.json
+# prompts for a passphrase twice (typed input echoes — protected at rest, not on-screen)
+
+# On the new machine — install the CLI first, then:
+mantis restore ~/Vault/mantis-backup.json
+# prompts for the passphrase once
+```
+
+The bundle uses scrypt (N=32768, r=8, p=1) → AES-256-GCM. Salt + nonce are random per backup, so two backups of the same data produce different ciphertexts. The format tag (`mantis-backup-v1`) is checked on restore so we can evolve the format without silently breaking old bundles.
+
+**What's included:**
+
+- Every profile's `baseUrl`, `keyPrefix`, full `mantis_live_…` API key, Cloudflare Access mode + app URL + Service-Auth client-id/secret, linked edge worker URL, and edge AES key
+- The active-profile pointer
+- Plugin manifest: each plugin's `name`, `source` (GitHub `owner/repo`), pinned commit SHA, and version. **`restore` re-installs plugins via `mantis plugin add <source>@<ref>`** — the bundle does NOT carry the plugin contents themselves, so the new machine needs network access to GitHub for the re-install.
+
+**What's NOT included:**
+
+- Local-path plugins (`mantis plugin add ./some/path`) — those aren't reproducible on another machine; `backup` lists them as skipped.
+- `~/.cloudflared/` cached JWTs — owned by `cloudflared`, regenerated on next login.
+
+**Flag reference:**
+
+| Flag | What it does |
+|---|---|
+| `mantis backup --out <file>` | Where to write the bundle. Default `./mantis-backup.json`. |
+| `mantis backup --only <name>` | Back up just one profile. Default is all profiles. |
+| `mantis backup --passphrase-stdin` | Read passphrase from stdin (for scripts piping a vault into the CLI). |
+| `mantis backup --passphrase-env <VAR>` | Read passphrase from the named env var. |
+| `mantis restore <file>` | Decrypt + restore. By default, existing profiles on the target machine are kept; bundle entries with the same name are skipped. |
+| `mantis restore --overwrite` | Replace existing profiles + keychain entries when names collide. |
+| `mantis restore --skip-plugins` | Don't re-install plugins (faster restore; you can run `mantis plugin add` manually later). |
+| `mantis restore --passphrase-stdin` / `--passphrase-env <VAR>` | Same as on backup. |
+
+**Inline `--passphrase <value>` is intentionally not offered** — would leak into shell history and process listings. Use one of the stdin / env-var forms for automation.
+
+**On safety:** the bundle is safe to commit to a private repo or store in a vault provided you can keep the passphrase out of the same blast radius. If the file leaks but the passphrase doesn't, contents stay confidential. If the passphrase leaks, the contents are recoverable. Rotate API keys (`mantis login` re-runs) if you suspect either has been compromised.
 
 ## Local state reference
 
