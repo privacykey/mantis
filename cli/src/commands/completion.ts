@@ -7,6 +7,8 @@
 const COMMANDS = [
   "login",
   "logout",
+  "backup",
+  "restore",
   "whoami",
   "doctor",
   "detect",

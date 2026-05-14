@@ -6,6 +6,7 @@ import {
   cloudflareSetServiceAuthCmd,
   cloudflareStatusCmd,
 } from "./commands/cloudflare.js";
+import { backupCmd, restoreCmd } from "./commands/backup.js";
 import { bulkCreateCmd } from "./commands/bulk-create.js";
 import { completionCmd } from "./commands/completion.js";
 import { detectCmd } from "./commands/detect.js";
@@ -158,6 +159,74 @@ program
   .action(async (opts, cmd: Command) => {
     const globals = cmd.parent!.opts<GlobalRaw>();
     await logoutCmd({ profile: globals.profile, all: !!opts.all });
+  });
+
+program
+  .command("backup")
+  .description(
+    "export all profiles + plugin manifest into a passphrase-encrypted JSON file (safe to commit to a private git-crypt repo)",
+  )
+  .option(
+    "-o, --out <file>",
+    "write the encrypted bundle to this path",
+    "./mantis-backup.json",
+  )
+  // Named `--only` (not `--profile`) so it doesn't collide with the global
+  // `--profile <name>` option, which is owned by the root program and
+  // shadows any subcommand option of the same name. Same pattern as
+  // `--edge-key` on `mantis edge mint`.
+  .option(
+    "--only <name>",
+    "back up only this profile instead of all of them",
+  )
+  .option(
+    "--passphrase-stdin",
+    "read the passphrase from stdin instead of prompting",
+  )
+  .option(
+    "--passphrase-env <var>",
+    "read the passphrase from the named environment variable",
+  )
+  .action(
+    async (opts: {
+      out?: string;
+      only?: string;
+      passphraseStdin?: boolean;
+      passphraseEnv?: string;
+    }) => {
+      await backupCmd({
+        out: opts.out,
+        profile: opts.only,
+        passphraseStdin: opts.passphraseStdin,
+        passphraseEnv: opts.passphraseEnv,
+      });
+    },
+  );
+
+program
+  .command("restore")
+  .description(
+    "restore profiles + plugins from a `mantis backup` file. Existing profiles are skipped unless --overwrite.",
+  )
+  .argument("<file>", "path to a backup bundle produced by `mantis backup`")
+  .option(
+    "--overwrite",
+    "replace profiles that already exist on this machine (otherwise they're skipped)",
+  )
+  .option(
+    "--skip-plugins",
+    "don't re-install plugins from the manifest (you can run `mantis plugin add` later)",
+  )
+  .option(
+    "--passphrase-stdin",
+    "read the passphrase from stdin instead of prompting",
+  )
+  .option(
+    "--passphrase-env <var>",
+    "read the passphrase from the named environment variable",
+  )
+  .action(async (file: string, opts) => {
+    await restoreCmd(file, opts);
   });
 
 program
