@@ -148,7 +148,16 @@ export default async function KeyDetailPage({ params }: Props) {
               ))}
             </div>
             <span className="block text-neutral-600 mt-1">
-              for Immich / Paperless / Joplin / calendar / contacts etc. — see <code>self-hosted-apps.md</code>.
+              for Immich / Paperless / Joplin / calendar / contacts etc. — see{" "}
+              <a
+                href="https://github.com/privacykey/mantis-docs/blob/main/self-hosted-apps.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 no-underline hover:underline"
+              >
+                mantis-docs: self-hosted-apps.md
+              </a>
+              .
             </span>
             <span className="block mt-2 mb-1">honey directory (zip)</span>
             <a

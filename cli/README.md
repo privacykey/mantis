@@ -469,7 +469,7 @@ secret-tool search service mantis-cli-edge | xargs -r secret-tool clear service 
 
 ## Cloudflare Access auth (when your mantis API is gated)
 
-If you've put `/api/*` behind Cloudflare Access (see [`deploy/cloudflare.md`](../deploy/cloudflare.md#step-6-optional--cloudflare-access)), the CLI needs to authenticate to Cloudflare *before* it can reach the mantis API. Two modes:
+If you've put `/api/*` behind Cloudflare Access (see [mantis-docs: deployment/cloudflare.md](https://github.com/privacykey/mantis-docs/blob/main/deployment/cloudflare.md#step-6-optional--cloudflare-access)), the CLI needs to authenticate to Cloudflare *before* it can reach the mantis API. Two modes:
 
 **SSO** (interactive; uses your real Cloudflare identity):
 ```bash

@@ -11,7 +11,7 @@
 # Public edge limits:
 #   Fly concurrency protects Machines from overload, but it is not a WAF.
 #   For public Mantis URLs, use a Cloudflare-proxied custom domain and the
-#   rules in deploy/edge-limits.md#flyio.
+#   rules in https://github.com/privacykey/mantis-docs/blob/main/deployment/edge-limits.md#flyio
 
 app = "mantis-CHANGE-ME"
 primary_region = "iad"
