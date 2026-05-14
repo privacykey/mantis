@@ -88,12 +88,13 @@ mantis profile set-edge prod --worker https://edge.example.com
 
 ## 4. Verify
 
-Mint a URL that posts to a test webhook:
+Mint a URL that posts to a test webhook. Use `--channel` to pick a payload format the receiver understands (`webhook`, `slack`, `discord`, `teams`); omit it for raw `mantis.hit` JSON.
 
 ```bash
 mantis edge mint \
   --worker https://edge.example.com \
   --webhook https://hooks.slack.com/services/... \
+  --channel slack \
   --memo "edge smoke test"
 ```
 

@@ -84,6 +84,7 @@ npm run dev
 mantis edge mint \
   --worker https://mantis-edge.<sub>.workers.dev \
   --webhook https://hooks.slack.com/services/... \
+  --channel slack \
   --memo "prod-bastion shell" \
   --response-kind gif
 
@@ -95,12 +96,25 @@ Trigger it:
 ```bash
 curl -i https://mantis-edge.<sub>.workers.dev/c/<blob>
 # → 200, 1×1 transparent GIF
-# → webhook fires in the background with the mantis.hit payload
+# → webhook fires in the background, formatted for the chosen channel
 ```
 
-## Forwarded webhook shape
+## Destination channels
 
-Identical to the stateful mantis's webhook payload, with `key.id` / `key.public_id` set to `null` (stateless mode has no stored key row):
+`--channel` (encrypted into the URL alongside the webhook target) selects how the worker formats the body it POSTs to your webhook:
+
+| `--channel` | Payload shape | Use for |
+|---|---|---|
+| `webhook` *(default)* | Mantis `mantis.hit` JSON (same as stateful server, with `key.id`/`public_id` null) | Your own receiver / Pipedream / n8n / webhook.site |
+| `slack` | Slack `blocks` message with header + section + fields | Slack incoming webhooks (`hooks.slack.com/services/...`) |
+| `discord` | Discord embed with title, fields, timestamp | Discord webhooks (`discord.com/api/webhooks/...`) |
+| `teams` | Microsoft Teams Adaptive Card (Power Automate workflow webhook) | Teams workflow webhooks |
+
+The channel is baked into the encrypted blob at mint time — the worker doesn't have to know in advance which channel a given URL targets, and the same worker can serve URLs minted for all four channels simultaneously.
+
+## Raw webhook payload shape
+
+`--channel webhook` (or omitting `--channel`) sends Mantis's structured hit payload, matching the stateful mantis's webhook body with `key.id` / `key.public_id` set to `null` (stateless mode has no stored key row):
 
 ```json
 {

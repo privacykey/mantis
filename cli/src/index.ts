@@ -349,6 +349,12 @@ edge
   .option("--worker <url>", "worker base URL (https://…); falls back to current profile's edge worker")
   .option("--webhook <url>", "webhook URL the worker POSTs on hit")
   .addOption(
+    new Option(
+      "--channel <channel>",
+      "destination channel formatter — sends a payload shaped for this service",
+    ).choices(["webhook", "slack", "discord", "teams"]),
+  )
+  .addOption(
     new Option("--response-kind <kind>", "trigger response shape")
       .choices(["gif", "empty", "json", "redirect", "html"]),
   )

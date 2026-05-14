@@ -361,7 +361,7 @@ flowchart TD
 | `edge keygen` | none |
 | `edge set-key` | positional `[worker] [key]`, or `--worker <url>` (prompts for key if omitted) |
 | `edge delete-key` | `--worker <url>` |
-| `edge mint` | `--worker <url>`, `--webhook <url>`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy` |
+| `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy` |
 
 ### Shell Completion
 

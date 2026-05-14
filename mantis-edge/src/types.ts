@@ -8,9 +8,15 @@ export const RESPONSE_KINDS: ResponseKind[] = [
   "html",
 ];
 
+export type Channel = "webhook" | "slack" | "discord" | "teams";
+
+export const CHANNELS: Channel[] = ["webhook", "slack", "discord", "teams"];
+
 export type Payload = {
   /** Webhook URL the worker POSTs to on hit. */
   w: string;
+  /** Destination channel formatter. Defaults to "webhook" (raw mantis.hit JSON). */
+  c?: Channel;
   /** Response kind to return to the client. Defaults to "gif". */
   r?: ResponseKind;
   /** Response payload (used by json / redirect / html). */

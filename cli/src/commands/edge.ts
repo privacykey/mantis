@@ -13,6 +13,8 @@ import { c, emit, fail } from "../lib/out.js";
 const URL_RE = /^https?:\/\/.+/;
 const RESPONSE_KINDS = ["gif", "empty", "json", "redirect", "html"] as const;
 type ResponseKind = (typeof RESPONSE_KINDS)[number];
+const CHANNELS = ["webhook", "slack", "discord", "teams"] as const;
+type Channel = (typeof CHANNELS)[number];
 
 function normalizeWorker(url: string): string {
   return url.replace(/\/$/, "");
@@ -110,6 +112,7 @@ export function deleteKeyCmd(opts: { worker?: string }): void {
 export async function mintCmd(opts: {
   worker?: string;
   webhook?: string;
+  channel?: string;
   responseKind?: string;
   responsePayload?: string;
   memo?: string;
@@ -148,6 +151,15 @@ export async function mintCmd(opts: {
   const keyRaw = decodeKey(keyStr);
 
   const payload: Record<string, unknown> = { w: webhook };
+
+  if (opts.channel && opts.channel !== "webhook") {
+    if (!(CHANNELS as readonly string[]).includes(opts.channel)) {
+      fail(
+        `invalid --channel: ${opts.channel}. Allowed: ${CHANNELS.join(", ")}`,
+      );
+    }
+    payload.c = opts.channel as Channel;
+  }
 
   if (opts.responseKind) {
     if (!(RESPONSE_KINDS as readonly string[]).includes(opts.responseKind)) {

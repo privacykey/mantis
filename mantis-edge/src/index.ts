@@ -1,7 +1,7 @@
 import { forward } from "./forward";
 import { buildResponse } from "./response";
 import { b64urlDecode, unseal } from "./seal";
-import { RESPONSE_KINDS, type Env, type Payload } from "./types";
+import { CHANNELS, RESPONSE_KINDS, type Env, type Payload } from "./types";
 
 const PATH_RE = /^\/c\/([A-Za-z0-9_-]+)$/;
 
@@ -65,6 +65,7 @@ function isPayload(v: unknown): v is Payload {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
   if (typeof o.w !== "string" || !isHttpUrl(o.w)) return false;
+  if (o.c !== undefined && !CHANNELS.includes(o.c as never)) return false;
   if (o.r !== undefined && !RESPONSE_KINDS.includes(o.r as never)) return false;
   if (o.m !== undefined && typeof o.m !== "string") return false;
   if (o.exp !== undefined && typeof o.exp !== "number") return false;
