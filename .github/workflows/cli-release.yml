@@ -7,8 +7,14 @@
 # Publishes the four tarballs as a GitHub release and opens a PR on
 # privacykey/homebrew-tap to bump Formula/mantis.rb.
 #
-# Trigger: push a tag matching `cli-v*` (e.g. `cli-v0.1.0`) or run the
-# workflow manually from the Actions tab.
+# Triggers:
+#   - Bump the `version` in `cli/package.json` on `main` — the resolve
+#     job derives the tag from the new version and releases if the tag
+#     doesn't already exist on the remote. This is the recommended flow.
+#   - Push a tag matching `cli-v*` (e.g. `cli-v0.1.0`) — releases that
+#     exact tag.
+#   - Manually run the workflow from the Actions tab — optionally pass
+#     a `tag` input to override; leave blank to use cli/package.json.
 #
 # Requires repo secret HOMEBREW_TAP_TOKEN — a fine-grained PAT with
 # Contents + Pull requests read & write on privacykey/homebrew-tap.
@@ -17,20 +23,107 @@ name: Release CLI
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "cli-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. cli-v0.1.x). Created on the current commit if it doesn't exist."
-        required: true
+        description: "Tag to release (e.g. cli-v0.1.x). Leave blank to read the version from cli/package.json."
+        required: false
 
 permissions:
   contents: write
 
 jobs:
+  resolve:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      tag: ${{ steps.compute.outputs.tag }}
+      should_release: ${{ steps.compute.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compute version + tag
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INPUT_TAG="${{ github.event.inputs.tag }}"
+          REF="${{ github.ref }}"
+          REF_NAME="${{ github.ref_name }}"
+
+          # Three entry points, in priority order:
+          #   1. workflow_dispatch with explicit tag input  → use that tag.
+          #   2. Push of a cli-v* tag                       → use that tag.
+          #   3. Push to main (or workflow_dispatch w/o tag)→ read version
+          #      from cli/package.json and synthesise the tag.
+          if [[ -n "$INPUT_TAG" ]]; then
+            TAG="$INPUT_TAG"
+            SOURCE="workflow_dispatch input"
+          elif [[ "$REF" == refs/tags/cli-v* ]]; then
+            TAG="$REF_NAME"
+            SOURCE="tag push"
+          else
+            VERSION="$(jq -r .version cli/package.json)"
+            if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+              echo "::error::cli/package.json is missing a version field"
+              exit 1
+            fi
+            TAG="cli-v${VERSION}"
+            SOURCE="cli/package.json bump (version=${VERSION})"
+          fi
+
+          if [[ "$TAG" != cli-v* ]]; then
+            echo "::error::Tag must start with 'cli-v' (got: $TAG)"
+            exit 1
+          fi
+          VERSION="${TAG#cli-v}"
+
+          # For branch pushes / dispatch from cli/package.json, apply two
+          # guards. Tag pushes are explicit user intent and bypass both.
+          SHOULD_RELEASE=true
+          if [[ "$REF" != refs/tags/cli-v* ]]; then
+            # Guard 1 (idempotency): tag already exists on the remote → the
+            # version wasn't actually bumped, or this release was already
+            # cut. Silently skip.
+            if git ls-remote --tags --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} already exists on origin — no release needed."
+              SHOULD_RELEASE=false
+            else
+              # Guard 2 (regression): the new version must be strictly higher
+              # than the highest already-released cli-v* tag. Uses `sort -V`
+              # so 0.1.10 > 0.1.9 compares correctly. Tag pushes bypass this
+              # so you can still re-release an older version intentionally.
+              HIGHEST_VERSION="$(git ls-remote --tags origin 'refs/tags/cli-v*' \
+                | awk -F/ '{print $NF}' \
+                | grep -v '\^{}$' \
+                | sed 's/^cli-v//' \
+                | sort -V \
+                | tail -n1)"
+              if [[ -n "$HIGHEST_VERSION" ]]; then
+                WINNER="$(printf '%s\n%s\n' "$VERSION" "$HIGHEST_VERSION" | sort -V | tail -n1)"
+                if [[ "$WINNER" != "$VERSION" ]]; then
+                  echo "::error::Refusing to release ${TAG}: ${VERSION} is older than the latest released cli-v${HIGHEST_VERSION}. Bump cli/package.json to a version greater than ${HIGHEST_VERSION}, or push a cli-v* tag explicitly if you really mean to re-release an older line."
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          echo "Resolved: tag=${TAG} version=${VERSION} should_release=${SHOULD_RELEASE} (source: ${SOURCE})"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "should_release=${SHOULD_RELEASE}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build mantis-${{ matrix.target }}
+    needs: resolve
+    if: needs.resolve.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -57,22 +150,10 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Derive version
-        id: meta
-        shell: bash
-        run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          if [[ "$TAG" != cli-v* ]]; then
-            echo "::error::Tag must start with 'cli-v' (got: $TAG)"
-            exit 1
-          fi
-          VERSION="${TAG#cli-v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Pin CLI_VERSION to release version
         shell: bash
         run: |
-          printf 'export const CLI_VERSION = "%s";\n' "${{ steps.meta.outputs.version }}" > cli/src/version.ts
+          printf 'export const CLI_VERSION = "%s";\n' "${{ needs.resolve.outputs.version }}" > cli/src/version.ts
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -102,7 +183,7 @@ jobs:
           mkdir -p "$STAGE/share/man/man1"
           cp dist/bin/mantis "$STAGE/mantis"
           # Substitute the version placeholder in the man page header.
-          sed "s/__MANTIS_VERSION__/${{ steps.meta.outputs.version }}/g" \
+          sed "s/__MANTIS_VERSION__/${{ needs.resolve.outputs.version }}/g" \
             share/man/man1/mantis.1 > "$STAGE/share/man/man1/mantis.1"
           tar -C "$STAGE" -czf "dist/bin/mantis-${{ matrix.target }}.tar.gz" mantis share
 
@@ -115,29 +196,18 @@ jobs:
 
   release:
     name: Create GitHub release
-    needs: build
+    needs: [resolve, build]
+    if: needs.resolve.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ needs.resolve.outputs.tag }}
+      version: ${{ needs.resolve.outputs.version }}
       sha_darwin_arm64: ${{ steps.shas.outputs.darwin_arm64 }}
       sha_darwin_x64: ${{ steps.shas.outputs.darwin_x64 }}
       sha_linux_arm64: ${{ steps.shas.outputs.linux_arm64 }}
       sha_linux_x64: ${{ steps.shas.outputs.linux_x64 }}
     steps:
-      - name: Derive tag + version
-        id: meta
-        run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          if [[ "$TAG" != cli-v* ]]; then
-            echo "::error::Tag must start with 'cli-v' (got: $TAG)"
-            exit 1
-          fi
-          VERSION="${TAG#cli-v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Download all build artifacts
         uses: actions/download-artifact@v7.0.0
         with:
@@ -160,8 +230,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TARGET_SHA: ${{ github.sha }}
         run: |
           NOTES=$(cat <<'EOF'
           Standalone CLI binaries for macOS and Linux on arm64 / x86_64. Each binary is built on its own native runner so the bundled native modules (`@napi-rs/keyring`) match the target.
@@ -177,7 +248,11 @@ jobs:
           Pick the tarball for your platform below, extract it, and put the `mantis` binary on your `$PATH`.
           EOF
           )
+          # --target pins the tag to the commit that triggered this run. For
+          # tag pushes the tag already exists at that SHA (no-op); for branch
+          # pushes (version-bump trigger) this creates the tag.
           gh release create "$TAG" \
+            --target "$TARGET_SHA" \
             --title "mantis CLI $VERSION" \
             --notes "$NOTES" \
             artifacts/mantis-darwin-arm64.tar.gz \
