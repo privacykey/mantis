@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Entry } from "@napi-rs/keyring";
+import { maybeEmitKeychainNotice } from "./keychain-notice.js";
 
 const CONFIG_DIR = join(
   process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
@@ -95,6 +96,7 @@ export async function clearConfig(): Promise<void> {
 }
 
 export function getKey(baseUrl: string): string | null {
+  maybeEmitKeychainNotice();
   try {
     return new Entry(KEYCHAIN_SERVICE, baseUrl).getPassword();
   } catch {
@@ -103,10 +105,12 @@ export function getKey(baseUrl: string): string | null {
 }
 
 export function setKey(baseUrl: string, key: string): void {
+  maybeEmitKeychainNotice();
   new Entry(KEYCHAIN_SERVICE, baseUrl).setPassword(key);
 }
 
 export function deleteKey(baseUrl: string): void {
+  maybeEmitKeychainNotice();
   try {
     new Entry(KEYCHAIN_SERVICE, baseUrl).deletePassword();
   } catch {
@@ -122,6 +126,7 @@ export type CloudflareServiceAuth = {
 export function getCloudflareServiceAuth(
   baseUrl: string,
 ): CloudflareServiceAuth | null {
+  maybeEmitKeychainNotice();
   try {
     const raw = new Entry(KEYCHAIN_SERVICE_CF, baseUrl).getPassword();
     if (!raw) return null;
@@ -142,10 +147,12 @@ export function setCloudflareServiceAuth(
   baseUrl: string,
   creds: CloudflareServiceAuth,
 ): void {
+  maybeEmitKeychainNotice();
   new Entry(KEYCHAIN_SERVICE_CF, baseUrl).setPassword(JSON.stringify(creds));
 }
 
 export function deleteCloudflareServiceAuth(baseUrl: string): void {
+  maybeEmitKeychainNotice();
   try {
     new Entry(KEYCHAIN_SERVICE_CF, baseUrl).deletePassword();
   } catch {
