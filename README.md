@@ -33,7 +33,150 @@ v0.1.0 ships:
 
 Roadmap: more direct channels (Telegram/ntfy/Pushover/Mattermost/Pushbullet/Matrix + Signal via signal-cli-rest-api), fast-redirect first-class keys, email-address keys, DNS keys, macOS menubar app, multi-tenant orgs.
 
-## Quickstart — Docker (recommended)
+## What can you actually use this for?
+
+A mantis URL fires whenever someone fetches it. That's a deliberately simple primitive — the interesting bit is *where* you embed it. A few categories that work well today:
+
+### Defensive — "did someone touch the thing they shouldn't?"
+
+- **Honey files on shared drives.** `mantis new "AWS-creds.txt" --pdf decoy.pdf` (or `--docx`, `--xlsx`, `--folder` for a 9-file bundle). Drop them in Finder/Explorer folders alongside real work. If a colleague's curiosity gets the better of them, or if an attacker mounts the drive after stealing creds, you find out the moment the file opens.
+- **Fake credentials in `.env` / `.zshrc` / browser bookmarks.** A URL in a "production database URL" comment is irresistible to whoever has shell access.
+- **SSH-login alarms on jump boxes.** `mantis new "ssh on prod-bastion" --install shell --ssh-only --out ~/.zshrc.d/mantis.sh`. Discord/Slack pings on every SSH login, with `$USER`, hostname, and the client IP captured. Quiet on local tmux panes thanks to `--ssh-only`.
+- **Sudo-watch.** `--install shell-sudo` wraps `sudo` so every privileged invocation in your shell sends a notification with the full command.
+
+### Detective — "where did my content end up?"
+
+- **Track visits to a specific URL on your site.** Drop a 1×1 GIF mantis (`--svg` or just the bare trigger URL) in an obscure page, an email signature, or a forum signature. Get notified when traffic crosses a threshold — useful for honeypages, archive-bot detection, or just knowing when someone visits a private link you shared.
+- **See if someone reads your email.** `mantis new "email beacon" --eml beacon.eml` produces a `.eml` file whose embedded reference fires when the mail client renders the message. Attach it (or open one yourself to test) and you'll know when it's been opened, by which IP / user-agent, and when. Same idea with `--ics` for "did they actually open the calendar invite" or `--vcf` for a contact card.
+- **Detect site clones.** `mantis new "brand homepage clone-detector" --install js-clone-detector --hostname app.example.com` — the script fires only when it runs on a hostname that isn't yours, capturing `location.href` and `document.referrer` so you can see *where* your site was copied to (phishing kits, scrapers).
+- **Find which document an insider exfiltrated.** Generate per-employee `.docx` / `.xlsx` versions of the same file via `mantis bulk-create --csv staff.csv --memo-template "{{name}} - Q4 strategy"`. If one of them leaks, the memo tells you who.
+
+### Operational — "tell me when X happens in my house / lab / fleet"
+
+- **Home Assistant + Scrypted hooks.** `mantis install <id> --type homeassistant` drops a `rest_command` block plus example automations into your HA config. Wire it to "front door opened after 11 PM", "garage camera came online", "unfamiliar device joined the LAN" — anything HA already knows about. Get the alert in the same Discord/Slack channel as your security stuff. The IoT helper at `iot-helper/` adds an opt-in LAN watcher for hosts that aren't on HA.
+- **Unattended host wake-up / network changes.** `--install macos-wake` / `--install linux-wake` / `--install windows-wake` fires when the machine resumes from sleep. `*-network` types fire on Wi-Fi join / Ethernet plug — useful for "did my Raspberry Pi just appear on a strange network?"
+- **NFC tags at physical chokepoints.** `--install nfc-ndef` produces a URL you write to a blank NTAG sticker. Tape one to the back of a network closet door, your laptop lid, or a server rack. Anyone who taps with a phone fires it.
+- **CI / monitoring backstops.** Use the URL as a heartbeat the opposite way: configure your CI / cron to NOT fire it on success, and have Uptime Kuma watch the matching status endpoint. Silence = healthy. The `mantis monitor <id> --mode latch` flag turns this on.
+
+### Adversarial-research — "spread the URL on purpose"
+
+- **Public paste/scraper bait.** Push tokens shaped like AWS keys, GitHub PATs, or `.env` files into public Pastebins / GitHub gists with the URL embedded as a "real" endpoint. Useful for measuring how fast credential-scraping bots in your industry actually act. (For the stateless variant where you really don't want a server-side hit log, `mantis edge mint` is appropriate.)
+- **Tarpit your phishing kit.** When you find a copy of your site running on `evil-bank-login.tk`, hand them a mantis-watermarked logo so every visitor fires a hit and you can correlate to the kit's victim list.
+
+### Stateless variant via `mantis-edge`
+
+When you want sub-50ms Cloudflare-edge response, no DB to host, and "anyone with the AES key can mint" semantics (CI service accounts, hand-off URLs that should not appear in a central audit log), use `mantis edge mint --install <type>` instead of `mantis new --install <type>`. The host snippets are identical; only the URL shape and where the audit lives differ. See [`mantis-edge/README.md`](./mantis-edge/README.md) for the full edge-vs-stateful trade-off.
+
+## Get started
+
+The CLI is the recommended way to drive mantis — the dashboard is a nice browser for hits, but the CLI does everything the dashboard does plus the things the dashboard doesn't (multi-profile, installer snippets, bulk-create, scriptable JSON output). Five steps from zero to a working canary (one of them optional):
+
+### 1. Install the CLI
+
+```bash
+brew install privacykey/tap/mantis
+```
+
+That gives you `mantis` on `$PATH` with shell completions, a man page, and the auto-update path from the Homebrew tap. (Building from source also works — see [`cli/README.md`](./cli/README.md#install-from-this-repo) for `npm link` instructions.)
+
+### 2. Pick where mantis lives
+
+The CLI talks to either of two backends, with the same command surface:
+
+| Backend | What it gives you | Where it runs |
+|---|---|---|
+| **Stateful server** (`mantis`) | Dashboard, hit history, audit log, multiple destinations per key, key revocation, monitor/status | Your own server. Docker Compose on a VPS, or one-click via [Railway / Fly.io / Render](#deployment). **Don't run this on your laptop as your primary backend** — your laptop's not on the public internet at 3am when the canary fires. |
+| **Cloudflare Worker** (`mantis-edge`) | Sub-50ms response from the CF edge, no DB to host, "anyone with the AES key can mint", URLs are self-contained encrypted blobs | Cloudflare's edge — you deploy a single Worker via `npx wrangler deploy` (see [`mantis-edge/`](./mantis-edge/)) |
+
+You can use **both**. Most people deploy the stateful server for primary tripwires (the ones you want a timeline + multi-destination management for), and reach for the edge variant for hand-off URLs that just need to fire a webhook without a central log.
+
+### 3. Log in
+
+For the stateful server:
+
+```bash
+mantis login
+# interactive: prompts for server URL + API key
+```
+
+For the edge worker (one-time, after you deploy the worker per `mantis-edge/README.md`):
+
+```bash
+mantis edge keygen                       # makes a 32-byte AES key
+npx wrangler secret put MANTIS_EDGE_KEY  # paste the key when prompted
+mantis edge set-key https://mantis-edge.<your-subdomain>.workers.dev
+```
+
+Credentials live in your OS keychain — never on disk in plaintext. See [`cli/README.md`](./cli/README.md) for storage details.
+
+### 4. (Recommended) Set up a second profile for resilience
+
+Run a second backend (or share with a teammate's deployment) so that if one is down for maintenance, you can still mint and inspect keys. Profiles live in `~/.config/mantis/config.json`; the CLI stores each profile's API key in a separate keychain entry.
+
+```bash
+mantis --profile primary login --url https://mantis.example.com
+mantis --profile backup  login --url https://mantis-fallback.example.com  --no-switch
+
+# Day-to-day: stay on `primary`
+mantis new "ssh on prod-bastion" --install shell --ssh-only --out ~/.zshrc.d/mantis.sh
+
+# When `primary` is unavailable: one-off override
+mantis --profile backup new "urgent canary"
+
+# Or switch the active profile entirely:
+mantis profile use backup
+mantis whoami
+```
+
+Caveat worth knowing: a key minted on `primary` only exists on `primary`. Profiles don't replicate state — they let your *CLI* keep working when one backend is down, and they let you split keys across deployments by purpose (`prod` / `staging` / `personal` / `home-lab`). For genuine URL-level redundancy where the trigger URL itself doesn't depend on any one host, use `mantis edge mint` — encrypted edge URLs decrypt purely from the Cloudflare Worker secret and have no per-key server state.
+
+### 5. Create your first key
+
+```bash
+mantis new
+# bare invocation launches the interactive wizard (memo → installer? →
+# destinations loop → expiry → copy → summary/edit)
+```
+
+…or as a one-liner if you already know what you want:
+
+```bash
+mantis new "ssh on prod" \
+  --notify-webhook https://discord.com/api/webhooks/... \
+  --install shell --ssh-only \
+  --out ~/.zshrc.d/mantis.sh
+```
+
+That single command creates the server-side key, registers the Discord webhook destination (fires an activation ping right away), and writes the SSH-only shell snippet into your zshrc.d. Reload your shell and the next SSH login fires a Discord notification.
+
+For the stateless equivalent against the edge worker:
+
+```bash
+mantis edge mint \
+  --worker https://mantis-edge.<sub>.workers.dev \
+  --webhook https://discord.com/api/webhooks/... \
+  --channel discord \
+  --install shell --ssh-only \
+  --out ~/.zshrc.d/mantis.sh \
+  --test
+```
+
+`--test` fires a synthetic hit so you confirm the chain works before handing the URL off.
+
+For spreadsheet-driven setup (one row, one canary), bulk-create writes the URLs back into a CSV:
+
+```bash
+mantis bulk-create \
+  --csv smart-home-areas.csv \
+  --out smart-home-areas-with-urls.csv \
+  --memo-template "{{area}} - {{device}}"
+```
+
+See [`cli/README.md`](./cli/README.md) for the full command reference and [`COMMAND_MAP.md`](./cli/COMMAND_MAP.md) for the option matrix.
+
+## Trying it locally before you deploy
+
+Want to kick the tyres without provisioning a real server first? Run the stack against your laptop with Docker:
 
 ```bash
 git clone <this repo> mantis && cd mantis
@@ -43,51 +186,36 @@ docker compose logs mantis | grep "bootstrap API key" -A1
 
 The first boot prints a bootstrap API key. Copy it; it won't be shown again.
 
-### Option A — Use the dashboard
-
-Open **http://localhost:3000** → paste your API key → you're in.
-
-- `/keys` — list with hit counts, inline disable/enable
-- `/keys/new` — create a key (memo + response shape + notification destinations)
-- `/keys/<id>` — detail view with the mantis URL, copy button, and a feed of recent hits (click any row to expand headers)
-- `/inbox` — built-in webhook capture (dev only)
-
-The dashboard authenticates via an httpOnly cookie containing the API key. Logout clears the cookie.
-
-### Option B — Use the CLI
+Then drive the CLI as usual, just pointing at localhost:
 
 ```bash
-cd cli && npm install && npm run build && npm link
 mantis --key mantis_live_... login --url http://localhost:3000
 
-# Point the webhook at the built-in dev inbox (no webhook.site needed)
+# The dev image ships an inbox at /inbox; webhook captures land there with
+# zero external setup.
 mantis new "first mantis" -w http://localhost:3000/inbox/demo
-
-# Trigger the URL it printed, then open the viewer:
 open http://localhost:3000/inbox
-
-mantis list
-mantis hits <key-id>
-mantis watch       # tails hits live
-mantis doctor      # checks CLI config, server health, and split hosts
+mantis hits last --follow
 ```
 
-For spreadsheet-driven setup, bulk-create URLs and get a CSV back with one
-generated URL per row:
+When you're ready to move from "trying it" to "running it", pick a real deployment from [Deployment](#deployment) below and `mantis --profile prod login --url https://...` against it. The Docker localhost setup is for evaluation only — don't rely on it for canaries that need to fire when you're not at your machine.
 
-```bash
-mantis bulk-create \
-  --csv smart-home-areas.csv \
-  --out smart-home-areas-with-urls.csv \
-  --memo-template "{{area}} - {{device}}"
-```
+### Browse hits in the dashboard (optional)
 
-See [`cli/README.md`](./cli/README.md) for the full command reference.
+The web dashboard at `/keys` is handy for clicking through a key's hits and seeing the full headers/UA breakdown. The CLI exposes the same data:
 
-### Performance Checks
+| Dashboard | CLI |
+|---|---|
+| `/keys` | `mantis list` |
+| `/keys/<id>` | `mantis show <id>` or `mantis hits <id> --follow` |
+| `/keys/new` | `mantis new` |
+| `/inbox` (dev only) | `mantis hits last --follow` against a key pointing at `/inbox/demo` |
 
-Benchmarks live under [`bench/`](./bench/README.md) and are intentionally local,
-not CI-gated:
+The dashboard authenticates via an httpOnly cookie containing the API key; logout clears the cookie.
+
+### Performance checks
+
+Benchmarks live under [`bench/`](./bench/README.md) and are intentionally local, not CI-gated:
 
 ```bash
 npm run bench:cli                  # CLI startup/rendering overhead
@@ -95,7 +223,7 @@ npm run bench:edge                 # mantis-edge worker, requires `npx wrangler 
 MANTIS_BENCH_KEY=mantis_live_... npm run bench:server
 ```
 
-### Option E — Smart Home / IoT events
+## Smart-home and IoT tripwires
 
 Mantis can fire from Home Assistant, Scrypted, or a small LAN watcher:
 
@@ -105,7 +233,7 @@ mantis install <key-id> --type scrypted --out mantis-scrypted.js
 
 # Choose the server/profile at generation time:
 mantis --profile prod install last --type homeassistant --out mantis-ha-prod.yaml
-mantis --profile lab install last --type homeassistant --out mantis-ha-lab.yaml
+mantis --profile lab  install last --type homeassistant --out mantis-ha-lab.yaml
 
 # Optional LAN watcher for unexpected MAC/IP appearances or syslog login lines.
 cd iot-helper
@@ -113,17 +241,15 @@ cp config.example.json mantis-iot.json
 node bin/mantis-iot-helper.js --config mantis-iot.json --once --dry-run
 ```
 
-Smart-home hits show structured context in the dashboard and CLI via
-`X-Mantis-Event`, `X-Mantis-Device`, `X-Mantis-Entity-Id`, and related headers.
-Generated snippets contain literal trigger URLs, so they keep reporting to the
-profile/server used by `mantis install`; they do not consult CLI profiles at
-runtime.
+Smart-home hits show structured context in the dashboard and CLI via `X-Mantis-Event`, `X-Mantis-Device`, `X-Mantis-Entity-Id`, and related headers. Generated snippets contain literal trigger URLs, so they keep reporting to the profile/server used by `mantis install`; they do not consult CLI profiles at runtime.
 
-### Option C — curl directly
+## Driving the HTTP API directly
+
+The CLI is the recommended interface, but everything it does is exposed over a plain JSON HTTP API. Useful for scripts in languages without a Mantis client, or for testing the trigger path with `curl`:
 
 ```bash
 export MANTIS=http://localhost:3000
-export KEY=mantis_live_...   # from logs above
+export KEY=mantis_live_...   # `mantis login` output, or read from the bootstrap log
 
 # Mint a key
 curl -sX POST $MANTIS/api/keys \
@@ -133,12 +259,14 @@ curl -sX POST $MANTIS/api/keys \
 # → { "id":"...", "public_id":"...", "url":"http://localhost:3000/c/...", ... }
 
 # Trigger it
-curl -i http://localhost:3000/c/<public_id>
+curl -i $MANTIS/c/<public_id>
 # → 200 OK with a 1×1 transparent GIF
 
 # Inspect hits
 curl -s $MANTIS/api/keys/<id>/hits -H "Authorization: Bearer $KEY" | jq
 ```
+
+See [API](#api) below for the full endpoint reference and [Webhook payload](#webhook-payload) for the body shape.
 
 ## Quickstart — local dev
 

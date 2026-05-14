@@ -1,6 +1,7 @@
 import { ApiError, RequestTimeoutError } from "./api.js";
 import { MantisClient } from "./api.js";
-import { AuthError, resolveAuth } from "./config.js";
+import { AuthError, listProfiles, resolveAuth } from "./config.js";
+import { listEdgeKeyWorkers } from "./edge-key.js";
 import { fail } from "./out.js";
 import { ResolveError } from "./resolve.js";
 
@@ -32,7 +33,19 @@ export async function withClient<T>(
     });
     return await fn(client);
   } catch (err) {
-    if (err instanceof AuthError) return fail(err.message);
+    if (err instanceof AuthError) {
+      // If the user never configured a server at all but DOES have a
+      // mantis-edge worker set up, point them at `mantis edge mint`
+      // instead of pushing them to `mantis login` for a server they
+      // don't have. We only do this for "no profile configured" — once
+      // a server profile exists, "no API key" / "profile not found"
+      // are real server-intent errors and edge isn't the answer.
+      if (err.message.startsWith("no profile configured")) {
+        const hint = await edgeSuggestion();
+        if (hint) return fail(`${err.message}\n        ${hint}`);
+      }
+      return fail(err.message);
+    }
     if (err instanceof ResolveError) return fail(err.message);
     if (err instanceof RequestTimeoutError) {
       return fail(`${err.message}. Try --timeout with a larger value`);
@@ -43,6 +56,28 @@ export async function withClient<T>(
     const message = err instanceof Error ? err.message : String(err);
     return fail(`${message}${genericHint(message)}`);
   }
+}
+
+/**
+ * If the user has at least one mantis-edge worker configured (keychain key
+ * or a profile with `edgeWorkerUrl`), return a hint pointing them at
+ * `mantis edge mint`. Returns null when there's no edge config to surface.
+ */
+async function edgeSuggestion(): Promise<string | null> {
+  const [keychainUrls, profilesResult] = await Promise.all([
+    listEdgeKeyWorkers().catch(() => []),
+    listProfiles().catch(() => ({ current: null, profiles: [] })),
+  ]);
+  const profileWorkers = profilesResult.profiles
+    .map((p) => p.entry.edgeWorkerUrl)
+    .filter((u): u is string => Boolean(u));
+  const all = new Set<string>([...keychainUrls, ...profileWorkers]);
+  if (all.size === 0) return null;
+  if (all.size === 1) {
+    const url = [...all][0]!;
+    return `You have a mantis-edge worker configured (${url}) — if you don't have a server, run \`mantis edge mint\` instead.`;
+  }
+  return `You have ${all.size} mantis-edge workers configured — if you don't have a server, run \`mantis edge mint\` instead.`;
 }
 
 function apiHint(err: ApiError): string {

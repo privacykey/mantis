@@ -2,20 +2,27 @@ import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { createInterface, type Interface } from "node:readline/promises";
-import { getCurrentProfileName, getProfile } from "../lib/config.js";
+import {
+  getCurrentProfileName,
+  getProfile,
+  listProfiles,
+} from "../lib/config.js";
 import { b64urlDecode, b64urlEncode, seal } from "../lib/edge-crypto.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import {
   deleteEdgeKey,
   getEdgeKey,
+  listEdgeKeyWorkers,
   setEdgeKey,
 } from "../lib/edge-key.js";
 import {
   ALL_INSTALL_TYPES,
+  INSTALLER_META,
   applySshOnlyGuard,
   buildInstaller,
   isInstallType,
   type InstallType,
+  type Installer,
 } from "../lib/installers.js";
 import { c, emit, fail } from "../lib/out.js";
 import {
@@ -154,6 +161,67 @@ const RESPONSE_FOR_INSTALL: Record<InstallType, ResponseKind> = {
   homeassistant: "empty",
   scrypted: "empty",
 };
+
+// Grouped menu of installer types for the interactive wizard. Display order
+// is fixed (POSIX first, IoT last) so users always see the same layout; types
+// within each group follow INSTALLER_META's declaration order.
+const OS_GROUP_ORDER: Installer["os"][] = [
+  "posix",
+  "macos",
+  "linux",
+  "windows",
+  "web",
+  "tag",
+  "iot",
+];
+
+const OS_GROUP_LABELS: Record<Installer["os"], string> = {
+  posix: "POSIX shells",
+  macos: "macOS",
+  linux: "Linux",
+  windows: "Windows",
+  web: "Web embed",
+  tag: "NFC tag",
+  iot: "Smart home / IoT",
+};
+
+/**
+ * Print a grouped, numbered menu of all installer types to stderr and return
+ * the types in display order so callers can map a chosen number back to a type.
+ */
+function printInstallerMenu(): InstallType[] {
+  const byOs = new Map<Installer["os"], InstallType[]>();
+  for (const type of ALL_INSTALL_TYPES) {
+    const os = INSTALLER_META[type].os;
+    const arr = byOs.get(os) ?? [];
+    arr.push(type);
+    byOs.set(os, arr);
+  }
+
+  const ordered: InstallType[] = [];
+  process.stderr.write("  Installer types:\n");
+  let idx = 0;
+  // Width of the widest type slug, so the " — description" column lines up.
+  const typeColumn = ALL_INSTALL_TYPES.reduce(
+    (n, t) => Math.max(n, t.length),
+    0,
+  );
+  for (const os of OS_GROUP_ORDER) {
+    const types = byOs.get(os);
+    if (!types?.length) continue;
+    process.stderr.write(`    ${c.dim(OS_GROUP_LABELS[os])}\n`);
+    for (const type of types) {
+      idx++;
+      ordered.push(type);
+      const num = String(idx).padStart(2, " ");
+      const slug = type.padEnd(typeColumn, " ");
+      process.stderr.write(
+        `      ${num}) ${slug}  ${c.dim("— " + INSTALLER_META[type].name)}\n`,
+      );
+    }
+  }
+  return ordered;
+}
 
 /** Stable short identifier for installer labels/filenames, derived from the URL. */
 function deriveKeyIdFromUrl(url: string): string {
@@ -458,22 +526,104 @@ async function mintWizard(opts: Wizardish): Promise<void> {
   }
 }
 
+/**
+ * Workers the user has demonstrably set up before, unioned across two
+ * sources: keys stored in the OS keychain (via `mantis edge set-key`) and
+ * `edgeWorkerUrl` values stored on any profile. Used by the mint wizard to
+ * auto-suggest defaults instead of making the user remember URLs.
+ */
+type KnownWorker = { url: string; profiles: string[] };
+
+async function listKnownWorkers(): Promise<KnownWorker[]> {
+  const [keychainUrls, profilesResult] = await Promise.all([
+    listEdgeKeyWorkers(),
+    listProfiles().catch(() => ({ current: null, profiles: [] })),
+  ]);
+
+  const profileMap = new Map<string, string[]>();
+  for (const { name, entry } of profilesResult.profiles) {
+    if (entry.edgeWorkerUrl) {
+      const list = profileMap.get(entry.edgeWorkerUrl) ?? [];
+      list.push(name);
+      profileMap.set(entry.edgeWorkerUrl, list);
+    }
+  }
+
+  const all = new Set<string>([...keychainUrls, ...profileMap.keys()]);
+  return [...all]
+    .sort((a, b) => a.localeCompare(b))
+    .map((url) => ({ url, profiles: profileMap.get(url) ?? [] }));
+}
+
 async function askWorker(rl: Interface, opts: Wizardish): Promise<void> {
   if (opts.worker && URL_RE.test(opts.worker)) return;
+
+  // Three shapes for this prompt depending on how much we already know:
+  //   0 known workers → free-form URL (today's behaviour).
+  //   1 known worker  → that URL becomes the default; user can override.
+  //   2+ known        → numbered menu; user picks by number or pastes a new URL.
+  const known = await listKnownWorkers();
+
+  if (known.length === 0) {
+    for (;;) {
+      const ans = (
+        await rl.question("Worker URL (https://…): ")
+      ).trim();
+      if (URL_RE.test(ans)) {
+        opts.worker = normalizeWorker(ans);
+        return;
+      }
+      process.stderr.write(
+        `  ${c.red("!")} must start with https:// — try again.\n`,
+      );
+    }
+  }
+
+  if (known.length === 1) {
+    const def = known[0]!.url;
+    for (;;) {
+      const ans = (
+        await rl.question(`Worker URL [${def}]: `)
+      ).trim();
+      const v = ans || def;
+      if (URL_RE.test(v)) {
+        opts.worker = normalizeWorker(v);
+        return;
+      }
+      process.stderr.write(
+        `  ${c.red("!")} must start with https:// — try again.\n`,
+      );
+    }
+  }
+
+  process.stderr.write(
+    "Worker URL — pick by number, or paste a new https:// URL:\n",
+  );
+  for (let i = 0; i < known.length; i++) {
+    const w = known[i]!;
+    const num = String(i + 1).padStart(2, " ");
+    const annotation =
+      w.profiles.length > 0
+        ? `  ${c.dim(`(profile${w.profiles.length > 1 ? "s" : ""}: ${w.profiles.join(", ")})`)}`
+        : "";
+    process.stderr.write(`  ${num}) ${w.url}${annotation}\n`);
+  }
   for (;;) {
-    const def = opts.worker ?? "";
     const ans = (
-      await rl.question(
-        def ? `Worker URL [${def}]: ` : "Worker URL (https://…): ",
-      )
+      await rl.question("Pick / paste new URL [1]: ")
     ).trim();
-    const v = ans || def;
+    const v = ans === "" ? "1" : ans;
+    const num = Number(v);
+    if (Number.isInteger(num) && num >= 1 && num <= known.length) {
+      opts.worker = known[num - 1]!.url;
+      return;
+    }
     if (URL_RE.test(v)) {
       opts.worker = normalizeWorker(v);
       return;
     }
     process.stderr.write(
-      `  ${c.red("!")} must start with https:// — try again.\n`,
+      `  ${c.red("!")} pick 1–${known.length} or paste an https:// URL\n`,
     );
   }
 }
@@ -501,20 +651,29 @@ async function askInstallerSubtree(
   rl: Interface,
   opts: Wizardish,
 ): Promise<void> {
-  // Type
+  // Show the grouped menu once, then loop on the prompt until we get a
+  // valid pick. Accepts either a 1-based menu number or the type slug, so
+  // returning users who know the name can still type it directly.
+  const ordered = printInstallerMenu();
   for (;;) {
     const def = (opts.install && isInstallType(opts.install)) ? opts.install : "shell";
+    const defIdx = ordered.indexOf(def) + 1;
     const ans = (
-      await rl.question(`  Installer type [${def}]: `)
+      await rl.question(`  Pick by number or name [${defIdx}=${def}]: `)
     ).trim();
     const v = ans || def;
+    const num = Number(v);
+    if (Number.isInteger(num) && num >= 1 && num <= ordered.length) {
+      // Bounds-checked above, so this is always defined.
+      opts.install = ordered[num - 1]!;
+      break;
+    }
     if (isInstallType(v)) {
       opts.install = v;
       break;
     }
     process.stderr.write(
-      `    ${c.red("!")} unknown type. Available:\n` +
-        `    ${ALL_INSTALL_TYPES.join(", ")}\n`,
+      `    ${c.red("!")} not a valid choice. Pick a number 1–${ordered.length} or one of: ${ordered.join(", ")}\n`,
     );
   }
 
