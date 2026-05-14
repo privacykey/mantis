@@ -18,6 +18,7 @@ import {
 import { downloadCmd } from "./commands/download.js";
 import {
   deleteKeyCmd as edgeDeleteKeyCmd,
+  installCmd as edgeInstallCmd,
   keygenCmd as edgeKeygenCmd,
   mintCmd as edgeMintCmd,
   setKeyCmd as edgeSetKeyCmd,
@@ -365,14 +366,117 @@ edge
   // override). Maps to the internal `key` field below.
   .option("--edge-key <base64url>", "override stored AES key for one mint")
   .option("--copy", "copy the minted edge URL to the clipboard")
-  .action(async (opts: { edgeKey?: string }, cmd: Command) => {
-    const globals = cmd.parent!.parent!.opts<GlobalRaw>();
-    await edgeMintCmd({
-      ...opts,
-      key: opts.edgeKey,
-      profile: globals.profile,
-    });
-  });
+  .option(
+    "--test",
+    "fire a synthetic GET to the minted URL and report what the worker says (use to verify the chain end-to-end)",
+  )
+  .option(
+    "--install <type>",
+    "after minting, generate an installer snippet for the URL (shell, macos-login, css-background, …). Use --out to write to a file.",
+  )
+  .option(
+    "--out <file>",
+    "write the installer snippet to this path (only with --install)",
+  )
+  .option(
+    "--ssh-only",
+    "wrap shell/shell-sudo installers in `if [[ -n $SSH_CONNECTION ]]; then ... fi`",
+  )
+  .option(
+    "--hostname <host>",
+    "expected hostname (required for `--install js-clone-detector`)",
+  )
+  .action(
+    async (
+      opts: {
+        edgeKey?: string;
+        install?: string;
+        out?: string;
+        sshOnly?: boolean;
+        hostname?: string;
+      },
+      cmd: Command,
+    ) => {
+      const globals = cmd.parent!.parent!.opts<GlobalRaw>();
+      await edgeMintCmd({
+        ...opts,
+        key: opts.edgeKey,
+        profile: globals.profile,
+      });
+    },
+  );
+
+edge
+  .command("install")
+  .description(
+    "generate an installer snippet (shell, plist, systemd unit, CSS, …) for a stateless mantis-edge URL",
+  )
+  .argument("<url>", "the URL printed by `mantis edge mint`")
+  .addOption(
+    new Option("-t, --type <type>", "installer type").choices([
+      "shell",
+      "shell-sudo",
+      "macos-login",
+      "macos-boot",
+      "macos-wake",
+      "macos-network",
+      "linux-boot",
+      "linux-wake",
+      "linux-network",
+      "windows-logon",
+      "windows-wake",
+      "windows-network",
+      "css-background",
+      "js-clone-detector",
+      "nfc-ndef",
+      "homeassistant",
+      "scrypted",
+    ]),
+  )
+  .option(
+    "-o, --out <file>",
+    "write the snippet to this path (default: print to stdout)",
+  )
+  .option(
+    "--ssh-only",
+    "wrap shell/shell-sudo installers in `if [[ -n $SSH_CONNECTION ]]; then ... fi`",
+  )
+  .option(
+    "-H, --hostname <host>",
+    "expected hostname (required for js-clone-detector)",
+  )
+  .option("--memo <text>", "memo to embed in the snippet header comment")
+  .action(
+    async (
+      url: string,
+      opts: {
+        type?: string;
+        out?: string;
+        sshOnly?: boolean;
+        hostname?: string;
+        memo?: string;
+      },
+    ) => {
+      if (!opts.type) {
+        // commander shows a friendly error already, but be explicit
+        await edgeInstallCmd(url, {
+          type: "",
+          out: opts.out,
+          sshOnly: opts.sshOnly,
+          hostname: opts.hostname,
+          memo: opts.memo,
+        });
+        return;
+      }
+      await edgeInstallCmd(url, {
+        type: opts.type,
+        out: opts.out,
+        sshOnly: opts.sshOnly,
+        hostname: opts.hostname,
+        memo: opts.memo,
+      });
+    },
+  );
 
 program
   .command("new")
@@ -407,6 +511,22 @@ program
   .option("--eml <file>", "also generate an .eml email that fires when opened in a mail client")
   .option("--ics <file>", "also generate an .ics calendar event with image attachment URL")
   .option("--vcf <file>", "also generate a .vcf contact card with PHOTO URI")
+  .option(
+    "--install <type>",
+    "after creating the key, generate an installer snippet (shell, macos-login, css-background, …). Use --out to write to a file.",
+  )
+  .option(
+    "--out <file>",
+    "write the installer snippet to this path (only with --install; default: stdout)",
+  )
+  .option(
+    "--ssh-only",
+    "wrap shell/shell-sudo installers in `if [[ -n $SSH_CONNECTION ]]; then ... fi`",
+  )
+  .option(
+    "--hostname <host>",
+    "expected hostname (required for `--install js-clone-detector`)",
+  )
   .action(async (memo: string | undefined, opts, cmd: Command) => {
     await newCmd(memo, withGlobals(cmd.parent!, opts));
   });
@@ -535,6 +655,10 @@ program
   .option(
     "-H, --hostname <host>",
     "expected hostname (required for js-clone-detector; the snippet won't fire on this host or its subdomains)",
+  )
+  .option(
+    "--ssh-only",
+    "wrap shell/shell-sudo installers in `if [[ -n $SSH_CONNECTION ]]; then ... fi` so they only fire for SSH-originated shells",
   )
   .action(async (id: string, opts, cmd: Command) => {
     await installCmd(id, withGlobals(cmd.parent!, opts));

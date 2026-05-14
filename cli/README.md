@@ -20,12 +20,18 @@ For one-off use without linking: `node cli/dist/index.js <command>`.
 
 ```bash
 mantis login                                    # prompts for URL + key
+mantis new                                      # bare: launches interactive wizard
 mantis new "test on prod" -w https://example.com/hook --copy
+mantis new "ssh on prod" --install shell --ssh-only --out ~/.zshrc.d/mantis.sh
 mantis list
 mantis hits <key-id>
 mantis watch                                    # polls; prints new hits live
 mantis doctor                                   # checks auth, health, and split hosts
 ```
+
+The wizard (run `mantis new` bare on a TTY) walks you through memo → optional installer (shell / macos-login / css-background / …) → notification destinations (loop, with channel-aware webhook prompts and host-based channel inference) → expiry → copy, then shows a summary with per-field `edit` before creating the key. Scripts that pass `--notify`/`-w`/`-e` or a positional memo never see a prompt — the wizard only kicks in when stdin is interactive AND the memo is missing.
+
+The same wizard shape works on `mantis edge mint` — both build on `src/lib/wizard.ts`.
 
 Credentials are stored in:
 - `~/.config/mantis/config.json` — base URL + key prefix (for display) + Cloudflare Access mode/app URL (non-sensitive)
@@ -72,7 +78,8 @@ Credentials are stored in:
 | `cloudflare logout` | Clear cached Cloudflare Access credentials |
 | `cloudflare set-service-auth [--client-id … --client-secret …]` | Configure headless Cloudflare Access Service Auth |
 | `cloudflare status` | Show Cloudflare Access auth state for the current server |
-| `edge mint [...opts] [--copy]` | Mint a stateless edge URL, optionally copying it |
+| `edge mint [...opts]` | Mint a stateless edge URL. Run bare on a TTY for the interactive wizard; pass `--install <type>` to chain straight into installer generation |
+| `edge install <url> --type <type>` | Generate an installer snippet (shell, plist, systemd unit, CSS, JS, NFC, Home Assistant, …) for a previously-minted edge URL |
 | `plugin add <spec>` | Install a trusted local/GitHub CLI plugin that contributes installer types or file formats |
 | `plugin list` / `ls` | List installed CLI plugins and what they provide |
 | `plugin remove <name>` / `rm` | Uninstall a plugin |

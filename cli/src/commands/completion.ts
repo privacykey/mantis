@@ -50,7 +50,7 @@ const PROFILE_SUBS = [
   "set-edge",
 ];
 const CLOUDFLARE_SUBS = ["login", "logout", "set-service-auth", "status"];
-const EDGE_SUBS = ["keygen", "set-key", "delete-key", "mint"];
+const EDGE_SUBS = ["keygen", "set-key", "delete-key", "mint", "install"];
 const DEST_SUBS = ["list", "ls", "add", "rm", "remove", "test", "rotate-secret"];
 const AUDIT_SUBS = ["log"];
 const PLUGIN_SUBS = ["add", "list", "ls", "remove", "rm", "upgrade"];
@@ -109,7 +109,7 @@ _mantis_completion() {
   case "$prev" in
     --response-kind|-r) COMPREPLY=( $(compgen -W "${RESPONSE_KINDS.join(" ")}" -- "$cur") ); return ;;
     --channel)          COMPREPLY=( $(compgen -W "${CHANNELS.join(" ")}" -- "$cur") ); return ;;
-    --type|-t)          COMPREPLY=( $(compgen -W "${INSTALL_TYPES.join(" ")}" -- "$cur") ); return ;;
+    --type|-t|--install) COMPREPLY=( $(compgen -W "${INSTALL_TYPES.join(" ")}" -- "$cur") ); return ;;
     --mode|-m)          COMPREPLY=( $(compgen -W "${MONITOR_MODES.join(" ")}" -- "$cur") ); return ;;
     --scope)            COMPREPLY=( $(compgen -W "${SCOPES.join(" ")}" -- "$cur") ); return ;;
     --output)           COMPREPLY=( $(compgen -W "${OUTPUT_MODES.join(" ")}" -- "$cur") ); return ;;
@@ -162,7 +162,7 @@ _mantis() {
   case "$words[CURRENT-1]" in
     --response-kind|-r) _describe 'response kind' response_kinds; return ;;
     --channel)          _describe 'channel' channels; return ;;
-    --type|-t)          _describe 'installer type' install_types; return ;;
+    --type|-t|--install) _describe 'installer type' install_types; return ;;
     --mode|-m)          _describe 'monitor mode' monitor_modes; return ;;
     --scope)            _describe 'scope' scopes; return ;;
     --output)           _describe 'output mode' output_modes; return ;;
@@ -222,6 +222,7 @@ function fishCompletion(): string {
     `complete -c mantis -l response-kind -s r -a '${RESPONSE_KINDS.join(" ")}'`,
     `complete -c mantis -l channel -a '${CHANNELS.join(" ")}'`,
     `complete -c mantis -l type -s t -a '${INSTALL_TYPES.join(" ")}'`,
+    `complete -c mantis -l install -a '${INSTALL_TYPES.join(" ")}'`,
     `complete -c mantis -l mode -s m -a '${MONITOR_MODES.join(" ")}'`,
     `complete -c mantis -l scope -a '${SCOPES.join(" ")}'`,
     `complete -c mantis -l output -a '${OUTPUT_MODES.join(" ")}'`,

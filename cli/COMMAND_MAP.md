@@ -361,7 +361,15 @@ flowchart TD
 | `edge keygen` | none |
 | `edge set-key` | positional `[worker] [key]`, or `--worker <url>` (prompts for key if omitted) |
 | `edge delete-key` | `--worker <url>` |
-| `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy` |
+| `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy`, `--test`, `--install <type>` (with `--out`, `--ssh-only`, `--hostname`). Run bare on a TTY to launch the interactive wizard. |
+| `edge install <url>` | `--type <type>`, `--out <file>`, `--ssh-only` (shell types), `--hostname <host>` (js-clone-detector), `--memo <text>`. Generates the same snippet `mantis install` produces server-side, but for a stateless edge URL. |
+
+Note: `mantis new` and `mantis install` mirror the edge surface:
+
+- `mantis new` (no args) on a TTY launches the same wizard shape (memo → installer? → destinations loop → expiry → copy → summary/edit) and can chain `--install <type>` after key creation to template a host snippet in one shot.
+- `mantis install` accepts `--ssh-only` for shell/shell-sudo types, matching `mantis edge install`.
+
+The shared wizard primitives live in `src/lib/wizard.ts` (channel inference, channel-aware webhook prompt, summary + edit loop). Keep them in sync — both commands import from there.
 
 ### Shell Completion
 

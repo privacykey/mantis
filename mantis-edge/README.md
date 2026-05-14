@@ -80,18 +80,75 @@ npm run dev
 
 ## Mint an edge URL
 
+The fastest path is the **interactive wizard**: run `mantis edge mint` bare in a terminal and it walks you through worker → installer → channel → webhook → test → memo, with a summary + per-field edit at the end.
+
+```text
+$ mantis edge mint
+
+  Worker URL [https://mantis-edge.<sub>.workers.dev]:
+  Generate installer snippet? [y/N]: y
+    Installer type [shell]:
+    SSH-only guard? [y/N]: y
+    Write to file (blank = print to stdout): ~/.zshrc.d/mantis.sh
+    → trigger response defaulting to `empty` (suitable for shell)
+  Notification channel (webhook / slack / discord / teams) [webhook]: discord
+  Discord webhook URL: https://discord.com/api/webhooks/.../...
+  Test fire after mint? [Y/n]:
+  Memo (optional, shown in notifications): ssh on prod-bastion
+
+Summary:
+  worker     https://mantis-edge.<sub>.workers.dev
+  installer  shell ssh-only → ~/.zshrc.d/mantis.sh
+  response   empty
+  channel    discord
+  webhook    https://discord.com/api/webhooks/.../...
+  test       yes
+  memo       ssh on prod-bastion
+
+Proceed? [Y/n/edit]:
+```
+
+The wizard only kicks in when stdin is a TTY and required flags are missing, so **scripts and CI never see a prompt**. Any flag you pre-set skips its prompt. Full non-interactive form:
+
 ```bash
 mantis edge mint \
   --worker https://mantis-edge.<sub>.workers.dev \
   --webhook https://hooks.slack.com/services/... \
   --channel slack \
   --memo "prod-bastion shell" \
-  --response-kind gif
+  --response-kind gif \
+  --test
 
 # → https://mantis-edge.<sub>.workers.dev/c/<encrypted-blob>
+# length: 220
+# ✓ test: worker accepted the URL (HTTP 200) and queued the webhook.
 ```
 
-Trigger it:
+`--test` fires a single GET against the URL right after mint and reports the worker's response, so you find out about misconfigurations (wrong key, allowlist blocked, channel mismatch) before handing the URL off. It's opt-in — omit it for clean scripted use.
+
+## Generate an installer for a minted URL
+
+`mantis edge install <url> --type <type>` (or the chained `mantis edge mint --install <type> --out FILE`) produces the same kinds of installer snippets `mantis install <key-id>` does on the stateful server, but works against a stateless edge URL — no DB, no server round-trip.
+
+```bash
+# Standalone — when you already have a URL
+mantis edge install "$EDGE_URL" --type shell --ssh-only --out ~/.zshrc.d/mantis.sh
+
+# Chained — mint and install in one go
+mantis edge mint \
+  --worker https://mantis-edge.<sub>.workers.dev \
+  --webhook https://discord.com/api/webhooks/.../... \
+  --channel discord \
+  --memo "ssh on $(hostname -s)" \
+  --install shell \
+  --ssh-only \
+  --out ~/.zshrc.d/mantis.sh \
+  --test
+```
+
+All 17 installer types from the stateful CLI work here verbatim: `shell`, `shell-sudo`, `macos-{login,boot,wake,network}`, `linux-{boot,wake,network}`, `windows-{logon,wake,network}`, `css-background`, `js-clone-detector` (needs `--hostname`), `nfc-ndef`, `homeassistant`, `scrypted`. The default trigger response is auto-set per installer (`empty` for back-channel curls, `gif` for browser-facing CSS/NFC) and can be overridden via `--response-kind` or the wizard's edit step.
+
+Trigger manually any time after:
 
 ```bash
 curl -i https://mantis-edge.<sub>.workers.dev/c/<blob>
