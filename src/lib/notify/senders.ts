@@ -65,6 +65,8 @@ export async function send(
       return sendDiscord(ctx);
     case "teams":
       return sendTeams(ctx);
+    case "home_assistant":
+      return sendHomeAssistant(ctx);
     default:
       throw new Error(`unknown channel: ${String(channel)}`);
   }
@@ -236,6 +238,38 @@ export async function sendTeams(ctx: SendContext): Promise<void> {
       },
     ],
   });
+}
+
+// ---------------------------------------------------------------------------
+// Home Assistant — POSTs to a webhook automation trigger
+// (https://<ha>/api/webhook/<id>). The webhook_id is the credential; HA
+// runs whatever automation the user wired to it. Payload is kept flat so
+// HA Jinja templates (`trigger.json.<field>`) stay readable.
+// ---------------------------------------------------------------------------
+
+export async function sendHomeAssistant(ctx: SendContext): Promise<void> {
+  const { key, hit } = ctx;
+  const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
+  await postJson(
+    ctx.target,
+    {
+      type: "mantis.hit",
+      memo: key.memo,
+      key_url: keyUrl(key.publicId),
+      key_public_id: key.publicId,
+      occurred_at: hit.occurredAt,
+      ip: hit.ip,
+      user_agent: hit.userAgent,
+      ua_browser: hit.uaBrowser,
+      ua_os: hit.uaOs,
+      ua_device: hit.uaDevice,
+      bot_label: hit.botLabel,
+      is_duplicate: hit.isDuplicate,
+      host_context: hostCtx,
+      hit_id: hit.id,
+    },
+    { signingSecret: ctx.signingSecret ?? null },
+  );
 }
 
 // ---------------------------------------------------------------------------

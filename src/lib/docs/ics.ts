@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { type DocOptions } from "./util";
 
 /**
@@ -14,7 +15,10 @@ export function generateIcs(opts: DocOptions): Promise<Buffer> {
   const title = icsEscape(opts.title);
   const url = opts.url;
   const description = icsEscape(opts.body?.join("\\n") ?? opts.title);
-  const uid = `${Math.random().toString(36).slice(2)}-${Date.now()}@mantis.local`;
+  // Crypto-grade random UID. Predictable UIDs would let a target who
+  // received this canary correlate it with other canaries (same generator,
+  // same Math.random seed-derived prefix) — so we use the OS RNG instead.
+  const uid = `${randomBytes(12).toString("hex")}-${Date.now()}@mantis.local`;
   const now = formatIcsDate(new Date());
   const start = formatIcsDate(midnightToday(12));
   const end = formatIcsDate(midnightToday(13));

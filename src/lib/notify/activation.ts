@@ -96,6 +96,8 @@ async function dispatchActivation(
       return activateDiscord(ctx);
     case "teams":
       return activateTeams(ctx);
+    case "home_assistant":
+      return activateHomeAssistant(ctx);
     default:
       throw new Error(`unknown channel: ${String(channel)}`);
   }
@@ -198,6 +200,19 @@ async function activateTeams(ctx: ActivationCtx): Promise<void> {
         },
       },
     ],
+  });
+}
+
+async function activateHomeAssistant(ctx: ActivationCtx): Promise<void> {
+  await postJson(ctx.target, {
+    type: "mantis.activation",
+    memo: ctx.key.memo,
+    key_url: keyUrl(ctx.key.publicId),
+    key_public_id: ctx.key.publicId,
+    activation: true,
+    connected_at: new Date().toISOString(),
+    message:
+      "Mantis Home Assistant destination connected. Hit alerts will arrive at this webhook.",
   });
 }
 

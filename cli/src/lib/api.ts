@@ -9,7 +9,8 @@ export type NotificationChannel =
   | "email"
   | "slack"
   | "discord"
-  | "teams";
+  | "teams"
+  | "home_assistant";
 
 export type Destination = {
   id: string;

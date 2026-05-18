@@ -1,11 +1,15 @@
 "use server";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db/client";
 import { apiKeys } from "@/db/schema";
-import { hashApiKey, isWellFormedApiKey } from "@/lib/api-keys";
+import {
+  hashApiKey,
+  isWellFormedApiKey,
+  legacySha256ApiKey,
+} from "@/lib/api-keys";
 import { audit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 import { setSessionCookie } from "@/lib/session";
@@ -50,11 +54,16 @@ export async function loginAction(
     return { error: "doesn't look like a mantis_live_… key" };
   }
 
-  const hash = hashApiKey(key);
+  // Match either the current v2 (HMAC) or legacy v1 (SHA-256) stored hash.
+  // Dual-mode for the same reason as resolveByPlaintext in src/lib/auth.ts —
+  // existing rows from before MANTIS_API_KEY_PEPPER existed keep working,
+  // and get opportunistically upgraded to v2 on the first successful login.
+  const v2 = hashApiKey(key);
+  const v1 = legacySha256ApiKey(key);
   const rows = await db
     .select()
     .from(apiKeys)
-    .where(and(eq(apiKeys.hash, hash), isNull(apiKeys.revokedAt)))
+    .where(and(inArray(apiKeys.hash, [v2, v1]), isNull(apiKeys.revokedAt)))
     .limit(1);
 
   if (rows.length === 0) {
@@ -62,6 +71,13 @@ export async function loginAction(
   }
 
   const apiKeyRow = rows[0]!;
+  if (apiKeyRow.hash !== v2) {
+    void db
+      .update(apiKeys)
+      .set({ hash: v2 })
+      .where(eq(apiKeys.id, apiKeyRow.id))
+      .catch(() => {});
+  }
   await audit({
     type: "session.login",
     actorApiKeyId: apiKeyRow.id,

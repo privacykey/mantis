@@ -9,3 +9,10 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+
+# Force vulnerable transitive deps past their patched versions:
+#   postcss <8.5.10  → XSS via unescaped </style> in CSS Stringify
+#   esbuild <0.25.0  → dev server CORS bypass (CVE)
+overrides:
+  postcss: ^8.5.10
+  esbuild: ^0.25.0

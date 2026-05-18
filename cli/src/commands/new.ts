@@ -108,6 +108,7 @@ const RESPONSE_FOR_INSTALL: Record<InstallType, Key["response_kind"]> = {
   "js-clone-detector": "empty",
   "nfc-ndef": "gif",
   homeassistant: "empty",
+  "homeassistant-receiver": "empty",
   scrypted: "empty",
 };
 

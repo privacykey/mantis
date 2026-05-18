@@ -55,6 +55,7 @@ jobs:
     env:
       DATABASE_URL: postgres://mantis:mantis@localhost:5432/mantis_test
       PUBLIC_BASE_URL: http://localhost:3000
+      MANTIS_API_KEY_PEPPER: ci-only-pepper-not-secret
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -81,6 +82,7 @@ jobs:
       # Build doesn't need a live DB but does need these to be defined.
       DATABASE_URL: postgres://placeholder/placeholder
       PUBLIC_BASE_URL: http://localhost:3000
+      MANTIS_API_KEY_PEPPER: ci-only-pepper-not-secret
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6

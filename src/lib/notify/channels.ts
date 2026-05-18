@@ -6,6 +6,7 @@ const DISCORD_RE =
 const TEAMS_RE =
   /^https:\/\/(?:[a-z0-9-]+\.webhook\.office\.com\/webhookb2\/|outlook\.office\.com\/webhook\/)/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const HA_WEBHOOK_PATH_RE = /^\/api\/webhook\/[A-Za-z0-9_-]+\/?$/;
 
 /**
  * Validates a destination target against its declared channel. Returns
@@ -70,6 +71,25 @@ export function validateDestination(
       }
       return { ok: true };
 
+    case "home_assistant": {
+      let u: URL;
+      try {
+        u = new URL(target);
+      } catch {
+        return { ok: false, error: "not a valid URL" };
+      }
+      if (u.protocol !== "https:" && u.protocol !== "http:") {
+        return { ok: false, error: "Home Assistant URL must be http(s)" };
+      }
+      if (!HA_WEBHOOK_PATH_RE.test(u.pathname)) {
+        return {
+          ok: false,
+          error: "Home Assistant URL must end with /api/webhook/<id>",
+        };
+      }
+      return { ok: true };
+    }
+
     default:
       return { ok: false, error: `unknown channel: ${String(channel)}` };
   }
@@ -88,7 +108,8 @@ export function detectChannelFromUrl(
   if (TEAMS_RE.test(target)) return "teams";
   if (EMAIL_RE.test(target)) return "email";
   try {
-    new URL(target);
+    const u = new URL(target);
+    if (HA_WEBHOOK_PATH_RE.test(u.pathname)) return "home_assistant";
     return "webhook";
   } catch {
     return null;

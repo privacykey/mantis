@@ -163,6 +163,7 @@ export const notificationChannelEnum = pgEnum("notification_channel", [
   "slack",
   "discord",
   "teams",
+  "home_assistant",
 ]);
 
 export const notifications = pgTable(

@@ -22,6 +22,7 @@ Highlights:
 - **Host-event installers** — shell, sudo, login, boot, wake, network — for macOS, Linux, and Windows, with parsed `X-Mantis-*` context including SSH client IP
 - **Web canaries** — CSS-background + JS clone-detector — and NFC NDEF tag URLs
 - **Smart-home triggers** via Home Assistant, Scrypted, and an optional LAN watcher
+- **Smart-home actions** — `home_assistant` destination posts to a HA webhook automation, so a hit can flip a switch (e.g. cut a VLAN via the OPNsense integration), fire a scene, or push a phone notification (`mantis install <key> --type homeassistant-receiver` prints a ready-to-paste automation skeleton)
 - **Direct notification destinations** — webhook, email, Slack, Discord, Teams — with a Postgres-backed retry queue and per-key dedup
 - **Optional stateless variant** ([`mantis-edge/`](./mantis-edge/README.md)) — a Cloudflare Worker that decrypts URLs at the edge, no DB to host
 - **Uptime Kuma integration** — per-key status URL flips on hit, watched by Kuma for 80+ notification channel fan-out

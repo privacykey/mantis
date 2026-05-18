@@ -1,9 +1,13 @@
-import { eq, isNull, and, sql } from "drizzle-orm";
+import { eq, isNull, and, inArray, sql } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { apiKeys, keys, type ApiKey, type Key } from "@/db/schema";
-import { hashApiKey, isWellFormedApiKey } from "@/lib/api-keys";
+import {
+  hashApiKey,
+  isWellFormedApiKey,
+  legacySha256ApiKey,
+} from "@/lib/api-keys";
 
 export type AuthResult = { ok: true; key: ApiKey } | { ok: false; res: NextResponse };
 
@@ -51,17 +55,26 @@ function extractBearer(req: NextRequest): string | null {
 
 async function resolveByPlaintext(presented: string): Promise<ApiKey | null> {
   if (!isWellFormedApiKey(presented)) return null;
-  const hash = hashApiKey(presented);
+  // Look up by either the v2 (HMAC, current) or v1 (SHA-256, legacy) hash.
+  // Both are 64-char hex; the column is indexed, so this is still O(1).
+  // Once we've verified the row, opportunistically migrate v1 → v2 so the
+  // legacy column drains over time.
+  const v2 = hashApiKey(presented);
+  const v1 = legacySha256ApiKey(presented);
   const rows = await db
     .select()
     .from(apiKeys)
-    .where(and(eq(apiKeys.hash, hash), isNull(apiKeys.revokedAt)))
+    .where(and(inArray(apiKeys.hash, [v2, v1]), isNull(apiKeys.revokedAt)))
     .limit(1);
   const key = rows[0] ?? null;
   if (key) {
+    const needsUpgrade = key.hash !== v2;
     void db
       .update(apiKeys)
-      .set({ lastUsedAt: sql`now()` })
+      .set({
+        lastUsedAt: sql`now()`,
+        ...(needsUpgrade ? { hash: v2 } : {}),
+      })
       .where(eq(apiKeys.id, key.id))
       .catch(() => {});
   }

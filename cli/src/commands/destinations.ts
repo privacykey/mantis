@@ -9,6 +9,7 @@ const VALID_CHANNELS: NotificationChannel[] = [
   "slack",
   "discord",
   "teams",
+  "home_assistant",
 ];
 
 export async function listDestinationsCmd(
