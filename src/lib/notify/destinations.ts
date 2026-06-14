@@ -7,6 +7,7 @@ import {
   type NotificationChannel,
   type NotificationDestination,
 } from "@/db/schema";
+import { openSecret, sealSecret } from "@/lib/secret-box";
 import { fireActivationPing } from "./activation";
 import { validateDestination } from "./channels";
 
@@ -41,8 +42,10 @@ export async function createDestination(
       keyId: key.id,
       channel: input.channel,
       target: input.target,
-      // Per-destination HMAC secret; only generic webhooks need it.
-      signingSecret: input.channel === "webhook" ? newSigningSecret() : null,
+      // Per-destination HMAC secret; only generic webhooks need it. Sealed at
+      // rest (no-op unless MANTIS_SECRET_KEY is set).
+      signingSecret:
+        input.channel === "webhook" ? sealSecret(newSigningSecret()) : null,
     })
     .returning();
   if (!row) throw new Error("destination insert returned no row");
@@ -153,18 +156,19 @@ export function serializeDestination(
   d: NotificationDestination,
   opts: SerializeOpts = {},
 ) {
+  const plaintextSecret = d.signingSecret ? openSecret(d.signingSecret) : null;
   return {
     id: d.id,
     channel: d.channel,
     target: d.target,
     // Plaintext on create/rotate responses only; reads return the fingerprint.
-    signing_secret: d.signingSecret
+    signing_secret: plaintextSecret
       ? opts.reveal
-        ? d.signingSecret
+        ? plaintextSecret
         : null
       : null,
-    signing_secret_fingerprint: d.signingSecret
-      ? fingerprintSecret(d.signingSecret)
+    signing_secret_fingerprint: plaintextSecret
+      ? fingerprintSecret(plaintextSecret)
       : null,
     created_at: d.createdAt,
     last_activation_status: d.lastActivationStatus,
@@ -200,7 +204,7 @@ export async function rotateSigningSecret(
 
   const [updated] = await db
     .update(notificationDestinations)
-    .set({ signingSecret: newSigningSecret() })
+    .set({ signingSecret: sealSecret(newSigningSecret()) })
     .where(eq(notificationDestinations.id, destinationId))
     .returning();
   return updated ?? null;

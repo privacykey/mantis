@@ -5,6 +5,7 @@ import { notificationDestinations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { loadOwnedKey, requireApiKeyOrSession } from "@/lib/auth";
 import { extractIp } from "@/lib/request-info";
+import { openSecret } from "@/lib/secret-box";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   });
 
   return NextResponse.json(
-    { signing_secret: row.signingSecret },
+    { signing_secret: openSecret(row.signingSecret) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

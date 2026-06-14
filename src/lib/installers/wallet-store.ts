@@ -3,6 +3,7 @@ import { db } from "@/db/client";
 import { walletConfig, type NewWalletConfig } from "@/db/schema";
 import { env, type ApplePassConfig } from "@/lib/env";
 import { log } from "@/lib/log";
+import { openSecret, sealSecret } from "@/lib/secret-box";
 
 /**
  * "Where did this config come from?" — useful for the dashboard to explain
@@ -84,10 +85,11 @@ async function loadFromDb(): Promise<ResolvedWalletConfig | null> {
   return {
     source: "db",
     certBuf: Buffer.from(row.certP12B64, "base64"),
-    certPass: row.certPass,
+    // Decrypt the at-rest envelope (no-op for legacy plaintext rows).
+    certPass: openSecret(row.certPass),
     teamId: row.teamId,
     passTypeId: row.passTypeId,
-    authSecret: row.authSecret,
+    authSecret: openSecret(row.authSecret),
     organizationName: row.organizationName,
     wwdrBuf: row.wwdrPemB64 ? Buffer.from(row.wwdrPemB64, "base64") : null,
     iconBuf: row.iconPngB64 ? Buffer.from(row.iconPngB64, "base64") : null,
@@ -136,18 +138,26 @@ export async function describeConfigSource(): Promise<{
 export async function saveWalletConfig(
   input: Omit<NewWalletConfig, "id" | "createdAt" | "updatedAt">,
 ): Promise<void> {
+  // Seal the secret fields at rest (no-op unless MANTIS_SECRET_KEY is set). The
+  // .p12 blob itself is already passphrase-protected, so encrypting certPass +
+  // authSecret is what keeps a DB-only leak from yielding usable secrets.
+  const sealed = {
+    ...input,
+    certPass: sealSecret(input.certPass),
+    authSecret: sealSecret(input.authSecret),
+  };
   await db
     .insert(walletConfig)
-    .values({ id: "default", ...input })
+    .values({ id: "default", ...sealed })
     .onConflictDoUpdate({
       target: walletConfig.id,
       set: {
-        certP12B64: input.certP12B64,
-        certPass: input.certPass,
-        teamId: input.teamId,
-        passTypeId: input.passTypeId,
-        authSecret: input.authSecret,
-        organizationName: input.organizationName ?? "Mantis",
+        certP12B64: sealed.certP12B64,
+        certPass: sealed.certPass,
+        teamId: sealed.teamId,
+        passTypeId: sealed.passTypeId,
+        authSecret: sealed.authSecret,
+        organizationName: sealed.organizationName ?? "Mantis",
         wwdrPemB64: input.wwdrPemB64 ?? null,
         iconPngB64: input.iconPngB64 ?? null,
         logoPngB64: input.logoPngB64 ?? null,
