@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   capStoredRequestField,
   clientIpFromHeaders,
+  isSecureRequest,
   snapshotHeaders,
 } from "@/lib/request-info";
 
@@ -91,6 +92,39 @@ describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
         }),
       ),
     ).toBe("203.0.113.9");
+  });
+});
+
+describe("isSecureRequest (session cookie Secure scheme detection)", () => {
+  const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
+
+  it("marks Secure when the forwarded scheme is https", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "https" }))).toBe(true);
+  });
+
+  it("does not mark Secure when the forwarded scheme is plain http", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "http" }))).toBe(false);
+  });
+
+  it("does not mark Secure for local dev over http://localhost", () => {
+    // No TLS-terminating proxy in front, so no x-forwarded-proto is present.
+    expect(isSecureRequest(get({ host: "localhost:3000" }))).toBe(false);
+    expect(isSecureRequest(get({ host: "127.0.0.1:3000" }))).toBe(false);
+    expect(isSecureRequest(get({}))).toBe(false);
+  });
+
+  it("reads the leftmost (client-facing) entry of a forwarded chain", () => {
+    // client → outer proxy (https) → inner proxy (http) appends its hop.
+    expect(
+      isSecureRequest(get({ "x-forwarded-proto": "https, http" })),
+    ).toBe(true);
+    expect(
+      isSecureRequest(get({ "x-forwarded-proto": "http, https" })),
+    ).toBe(false);
+  });
+
+  it("normalises forwarded-proto casing and whitespace", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "  HTTPS " }))).toBe(true);
   });
 });
 

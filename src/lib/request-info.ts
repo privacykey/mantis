@@ -107,6 +107,28 @@ export function extractIp(req: NextRequest): string | null {
   return clientIpFromHeaders((n) => req.headers.get(n));
 }
 
+/**
+ * Whether the inbound request reached the client over HTTPS, decided from the
+ * forwarded scheme rather than NODE_ENV. TLS is terminated by the reverse proxy
+ * / tunnel this app documents (Cloudflare, cloudflared, Tailscale Funnel,
+ * nginx), each of which sets X-Forwarded-Proto to the original client scheme.
+ *
+ * We return true only on a positive "https" signal. An over-eager Secure flag
+ * on a plaintext-HTTP deployment stops the browser from ever sending the cookie
+ * back, breaking login — so when the scheme isn't provably HTTPS we treat the
+ * request as insecure. Absence of the header means no TLS-terminating proxy is
+ * in front (local dev over http://localhost, or a direct HTTP deployment),
+ * which is likewise not secure.
+ */
+export function isSecureRequest(get: HeaderGetter): boolean {
+  const proto = get("x-forwarded-proto");
+  if (!proto) return false;
+  // X-Forwarded-Proto is appended per hop ("https, http"); the LEFTMOST entry
+  // is the scheme the client used to reach the outermost proxy.
+  const scheme = proto.split(",")[0]?.trim().toLowerCase();
+  return scheme === "https";
+}
+
 // Allowlist of request headers stored into hits.headers. The CREDENTIAL_PATTERNS
 // denylist runs after, so a credential-shaped name accidentally added here
 // (e.g. an `x-auth-*` header) still gets dropped.
