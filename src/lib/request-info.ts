@@ -107,26 +107,78 @@ export function extractIp(req: NextRequest): string | null {
   return clientIpFromHeaders((n) => req.headers.get(n));
 }
 
+// Operator override for the session-cookie Secure flag. "1" forces Secure ON,
+// "0" forces it OFF; anything else (incl. unset) defers to the header-derived
+// auto-detection. Use "1" behind a genuine-HTTPS front end that sets NEITHER
+// X-Forwarded-Proto NOR a RFC 7239 `Forwarded: proto=https` directive (a
+// non-standard proxy/tunnel), so the cookie still gets Secure over real TLS.
+function forceSecureCookies(): boolean | null {
+  const flag = process.env.FORCE_SECURE_COOKIES;
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  return null;
+}
+
+// Whether the FIRST (outermost, client-facing) element of an RFC 7239
+// `Forwarded` header declares proto=https. Elements are comma-separated and
+// parameters semicolon-separated; parameter names are case-insensitive and the
+// value may be quoted (proto="https"). We read the leftmost element to mirror
+// the X-Forwarded-Proto leftmost-hop logic.
+function forwardedHeaderIsHttps(forwarded: string): boolean {
+  const firstElement = forwarded.split(",")[0];
+  if (!firstElement) return false;
+  for (const pair of firstElement.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const key = pair.slice(0, eq).trim().toLowerCase();
+    if (key !== "proto") continue;
+    let value = pair.slice(eq + 1).trim().toLowerCase();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    return value === "https";
+  }
+  return false;
+}
+
 /**
  * Whether the inbound request reached the client over HTTPS, decided from the
  * forwarded scheme rather than NODE_ENV. TLS is terminated by the reverse proxy
  * / tunnel this app documents (Cloudflare, cloudflared, Tailscale Funnel,
- * nginx), each of which sets X-Forwarded-Proto to the original client scheme.
+ * nginx), each of which sets X-Forwarded-Proto — or the RFC 7239 `Forwarded`
+ * header — to the original client scheme.
+ *
+ * Resolution order:
+ *   1. FORCE_SECURE_COOKIES, if set to "1"/"0", wins outright — the operator
+ *      escape hatch for a non-standard HTTPS proxy that sets no scheme header.
+ *   2. Otherwise: secure if EITHER X-Forwarded-Proto's leftmost hop is "https"
+ *      OR the leftmost `Forwarded` element declares proto=https.
  *
  * We return true only on a positive "https" signal. An over-eager Secure flag
  * on a plaintext-HTTP deployment stops the browser from ever sending the cookie
- * back, breaking login — so when the scheme isn't provably HTTPS we treat the
- * request as insecure. Absence of the header means no TLS-terminating proxy is
+ * back, breaking login — so when nothing proves HTTPS we treat the request as
+ * insecure. Absence of every scheme signal means no TLS-terminating proxy is
  * in front (local dev over http://localhost, or a direct HTTP deployment),
  * which is likewise not secure.
  */
 export function isSecureRequest(get: HeaderGetter): boolean {
-  const proto = get("x-forwarded-proto");
-  if (!proto) return false;
+  const override = forceSecureCookies();
+  if (override !== null) return override;
+
   // X-Forwarded-Proto is appended per hop ("https, http"); the LEFTMOST entry
   // is the scheme the client used to reach the outermost proxy.
-  const scheme = proto.split(",")[0]?.trim().toLowerCase();
-  return scheme === "https";
+  const proto = get("x-forwarded-proto");
+  if (proto) {
+    const scheme = proto.split(",")[0]?.trim().toLowerCase();
+    if (scheme === "https") return true;
+  }
+
+  // A front end may emit only the RFC 7239 `Forwarded: proto=https` header
+  // instead of X-Forwarded-Proto; honour it so genuine HTTPS still gets Secure.
+  const forwarded = get("forwarded");
+  if (forwarded && forwardedHeaderIsHttps(forwarded)) return true;
+
+  return false;
 }
 
 // Allowlist of request headers stored into hits.headers. The CREDENTIAL_PATTERNS
