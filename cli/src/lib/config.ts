@@ -3,12 +3,16 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Entry } from "@napi-rs/keyring";
 import { maybeEmitKeychainNotice } from "./keychain-notice.js";
+import type { ColorMode, OutputMode } from "./out.js";
 
 const CONFIG_DIR = join(
   process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
   "mantis",
 );
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
+
+/** Absolute path to the config file (for `mantis config path`). */
+export const CONFIG_PATH = CONFIG_FILE;
 const KEYCHAIN_SERVICE = "mantis-cli";
 const KEYCHAIN_SERVICE_CF = "mantis-cli-cf";
 
@@ -25,9 +29,16 @@ export type ProfileEntry = {
   edgeWorkerUrl?: string;
 };
 
+/** Machine-wide defaults applied below explicit flags (see `mantis config`). */
+export type CliDefaults = {
+  output?: OutputMode;
+  color?: ColorMode;
+};
+
 export type StoredConfig = {
   currentProfile: string;
   profiles: Record<string, ProfileEntry>;
+  defaults?: CliDefaults;
 };
 
 export const DEFAULT_PROFILE = "default";
@@ -189,6 +200,20 @@ function resolveProfileName(
   );
 }
 
+/**
+ * Resolve which server to talk to and the API key for it.
+ *
+ * Base URL precedence:
+ *   1. opts.baseUrl (`--base-url`)          — ad-hoc, no profile / CF Access
+ *   2. explicit profile (`--profile` / `MANTIS_PROFILE`) — must exist
+ *   3. `MANTIS_BASE_URL` env var            — ad-hoc (CI / containers)
+ *   4. stored `currentProfile`
+ *
+ * API key precedence: `--key` > `MANTIS_API_KEY` > keychain entry for the
+ * resolved base URL. The env vars let headless/CI runs supply credentials
+ * without putting the secret on argv (where it leaks via `ps` / shell history)
+ * or depending on an OS keychain that may not exist on a CI runner.
+ */
 export async function resolveAuth(opts: {
   baseUrl?: string;
   key?: string;
@@ -203,26 +228,42 @@ export async function resolveAuth(opts: {
   if (opts.baseUrl) {
     baseUrl = opts.baseUrl.replace(/\/$/, "");
   } else {
-    profileName = resolveProfileName(opts, stored);
-    if (!profileName) {
+    const namedProfile = opts.profile ?? process.env.MANTIS_PROFILE;
+    if (namedProfile) {
+      // An explicitly requested profile must exist — don't silently fall back
+      // to MANTIS_BASE_URL and talk to a different server than the user named.
+      const found = stored?.profiles[namedProfile];
+      if (!found) {
+        throw new AuthError(
+          `profile '${namedProfile}' not found. Run \`mantis login --profile ${namedProfile}\` or \`mantis profile list\``,
+        );
+      }
+      profileName = namedProfile;
+      profileEntry = found;
+      baseUrl = found.baseUrl;
+    } else if (process.env.MANTIS_BASE_URL) {
+      baseUrl = process.env.MANTIS_BASE_URL.replace(/\/$/, "");
+    } else if (stored?.currentProfile) {
+      const found = stored.profiles[stored.currentProfile];
+      if (!found) {
+        throw new AuthError(
+          `profile '${stored.currentProfile}' not found. Run \`mantis login --profile ${stored.currentProfile}\` or \`mantis profile list\``,
+        );
+      }
+      profileName = stored.currentProfile;
+      profileEntry = found;
+      baseUrl = found.baseUrl;
+    } else {
       throw new AuthError(
-        "no profile configured. Run `mantis login` or pass --base-url / --profile",
+        "no profile configured. Run `mantis login`, pass --base-url / --profile, or set MANTIS_BASE_URL + MANTIS_API_KEY",
       );
     }
-    const found = stored?.profiles[profileName];
-    if (!found) {
-      throw new AuthError(
-        `profile '${profileName}' not found. Run \`mantis login --profile ${profileName}\` or \`mantis profile list\``,
-      );
-    }
-    profileEntry = found;
-    baseUrl = found.baseUrl;
   }
 
-  const key = opts.key ?? getKey(baseUrl);
+  const key = opts.key ?? process.env.MANTIS_API_KEY ?? getKey(baseUrl);
   if (!key) {
     throw new AuthError(
-      `no API key for ${baseUrl}. Run \`mantis login${profileName ? ` --profile ${profileName}` : ""}\` or pass --key`,
+      `no API key for ${baseUrl}. Run \`mantis login${profileName ? ` --profile ${profileName}` : ""}\`, pass --key, or set MANTIS_API_KEY`,
     );
   }
 
@@ -339,4 +380,24 @@ export async function useProfile(name: string): Promise<void> {
   }
   stored.currentProfile = name;
   await writeConfig(stored);
+}
+
+export async function getDefaults(): Promise<CliDefaults> {
+  return (await readConfig())?.defaults ?? {};
+}
+
+/**
+ * Merge a patch into the stored defaults. A key set to `undefined` is removed.
+ * Creates the config file (with no profiles) if it doesn't exist yet, so a
+ * preference can be set before logging in.
+ */
+export async function setDefaults(patch: CliDefaults): Promise<CliDefaults> {
+  const stored = (await readConfig()) ?? { currentProfile: "", profiles: {} };
+  const next: CliDefaults = { ...stored.defaults, ...patch };
+  for (const key of Object.keys(next) as (keyof CliDefaults)[]) {
+    if (next[key] === undefined) delete next[key];
+  }
+  stored.defaults = next;
+  await writeConfig(stored);
+  return next;
 }

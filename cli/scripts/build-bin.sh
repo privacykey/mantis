@@ -32,6 +32,10 @@ EOF
   exit 1
 fi
 
+# Stamp src/version.ts from package.json before compiling — the binaries
+# embed everything, so the version must be correct at build time.
+node scripts/gen-version.mjs
+
 ENTRY="src/index.ts"
 OUT_DIR="dist/bin"
 rm -rf "$OUT_DIR"

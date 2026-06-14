@@ -1,4 +1,12 @@
-import { c, emit, fail, formatTime, isWideMode, table } from "../lib/out.js";
+import {
+  c,
+  emit,
+  fail,
+  formatTime,
+  isWideMode,
+  table,
+  truncate,
+} from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type ListOpts = GlobalOpts & {
@@ -65,10 +73,6 @@ export async function listCmd(opts: ListOpts): Promise<void> {
       { data: items },
     );
   });
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 
 type Page<T> = { data: T[]; next_cursor: string | null };

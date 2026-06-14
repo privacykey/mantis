@@ -24,7 +24,8 @@ import {
   type InstallType,
   type Installer,
 } from "../lib/installers.js";
-import { c, emit, fail } from "../lib/out.js";
+import { c, emit, fail, isJsonMode } from "../lib/out.js";
+import { canPrompt, readStdin } from "../lib/prompt.js";
 import {
   URL_RE,
   inferChannelFromWebhook,
@@ -78,6 +79,8 @@ export function keygenCmd(): void {
 export async function setKeyCmd(opts: {
   worker?: string;
   key?: string;
+  /** Read the key from stdin instead of prompting (leak-free for CI). */
+  keyStdin?: boolean;
 }): Promise<void> {
   const worker = opts.worker;
   if (!worker || !URL_RE.test(worker)) {
@@ -88,7 +91,18 @@ export async function setKeyCmd(opts: {
   const workerUrl = normalizeWorker(worker);
 
   let key = opts.key;
+  if (!key && opts.keyStdin) {
+    key = (await readStdin()).trim();
+    if (!key) {
+      fail("edge set-key: --key-stdin was set but stdin was empty");
+    }
+  }
   if (!key) {
+    if (isJsonMode() || !canPrompt()) {
+      fail(
+        "edge set-key needs an interactive terminal to paste the key. Pass it as the second argument or via --key-stdin (leak-free for CI).",
+      );
+    }
     const rl = createInterface({
       input: process.stdin,
       output: process.stderr,
