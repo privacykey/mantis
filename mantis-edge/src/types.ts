@@ -29,6 +29,11 @@ export type Payload = {
 
 export interface Env {
   MANTIS_EDGE_KEY: string;
-  /** Optional comma-separated webhook host allowlist. Supports exact hosts and *.example.com wildcards. */
+  /**
+   * Optional comma-separated webhook host allowlist. Supports exact hosts and
+   * *.example.com wildcards. When unset, the worker forwards to any *public*
+   * host but always blocks literal private / loopback / metadata IPs. Set this
+   * to lock down hostname targets too (the edge can't resolve DNS to check them).
+   */
   MANTIS_EDGE_WEBHOOK_ALLOWLIST?: string;
 }

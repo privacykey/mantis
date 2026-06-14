@@ -1,4 +1,5 @@
 import { forward } from "./forward";
+import { isPrivateLiteralHost } from "./private-host";
 import { buildResponse } from "./response";
 import { b64urlDecode, unseal } from "./seal";
 import { CHANNELS, RESPONSE_KINDS, type Env, type Payload } from "./types";
@@ -42,7 +43,7 @@ export default {
     }
 
     if (!isWebhookAllowed(payload.w, env.MANTIS_EDGE_WEBHOOK_ALLOWLIST)) {
-      console.warn("mantis-edge blocked webhook outside allowlist", {
+      console.warn("mantis-edge blocked webhook (private address or outside allowlist)", {
         target: summarizeUrl(payload.w),
       });
       return notFound();
@@ -82,14 +83,20 @@ function isHttpUrl(value: string): boolean {
 }
 
 function isWebhookAllowed(webhook: string, allowlist: string | undefined): boolean {
-  const rules = parseAllowlist(allowlist);
-  if (rules.length === 0) return true;
-
   let hostname: string;
   try {
     hostname = normalizeHostname(new URL(webhook).hostname);
   } catch {
     return false;
+  }
+
+  const rules = parseAllowlist(allowlist);
+  if (rules.length === 0) {
+    // No allowlist configured: default-open for public hosts, but never
+    // forward to a literal private / loopback / metadata IP. The edge can't
+    // resolve hostnames, so set MANTIS_EDGE_WEBHOOK_ALLOWLIST to lock down
+    // hostname targets too.
+    return !isPrivateLiteralHost(hostname);
   }
 
   return rules.some((rule) =>

@@ -27,6 +27,9 @@ export function CopyUrl({ url }: { url: string }) {
       >
         {copied ? "copied!" : "copy"}
       </button>
+      <span role="status" className="sr-only">
+        {copied ? "copied to clipboard" : ""}
+      </span>
     </div>
   );
 }

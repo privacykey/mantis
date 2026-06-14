@@ -185,7 +185,10 @@ export function NewKeyForm() {
       </Field>
 
       {state.error && (
-        <div className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded px-3 py-2">
+        <div
+          role="alert"
+          className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded px-3 py-2"
+        >
           {state.error}
         </div>
       )}

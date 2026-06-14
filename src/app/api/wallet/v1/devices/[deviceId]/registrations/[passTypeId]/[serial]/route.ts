@@ -7,6 +7,11 @@ import {
   authenticateWalletRequest,
   recordWalletHit,
 } from "@/lib/installers/wallet-hit";
+import { readBodyText } from "@/lib/safe-body";
+
+// A push token is short base16; anything larger is abuse. Cap the read so a
+// hostile (authenticated) device can't stream a multi-GB body into V8.
+const MAX_REGISTRATION_BODY_BYTES = 8 * 1024;
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,14 +34,15 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   let pushToken: string | null = null;
   try {
-    const body = (await req.json().catch(() => null)) as
+    const raw = await readBodyText(req, MAX_REGISTRATION_BODY_BYTES);
+    const body = (raw ? JSON.parse(raw) : null) as
       | { pushToken?: unknown }
       | null;
     if (body && typeof body.pushToken === "string" && /^[a-fA-F0-9]+$/.test(body.pushToken)) {
       pushToken = body.pushToken;
     }
   } catch {
-    /* ignore — registration without a push token still works for the install hit */
+    /* ignore — oversized/invalid body or no push token still records the install hit */
   }
 
   if (pushToken) {

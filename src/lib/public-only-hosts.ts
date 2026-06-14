@@ -41,7 +41,7 @@ export function normalizeHost(value: string | null | undefined): string | null {
   return raw.split(":", 1)[0] ?? null;
 }
 
-export function parsePublicOnlyHosts(value: string | null | undefined): Set<string> {
+function parsePublicOnlyHosts(value: string | null | undefined): Set<string> {
   const hosts = new Set<string>();
   for (const part of (value ?? "").split(/[\s,]+/)) {
     const host = normalizeHost(part);

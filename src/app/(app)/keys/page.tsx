@@ -10,6 +10,9 @@ import { toggleKeyAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
+// Newest-N shown in the dashboard; older keys remain reachable via the API.
+const KEYS_PAGE_SIZE = 200;
+
 export default async function KeysPage() {
   const session = await getSessionApiKey();
   if (!session) redirect("/login");
@@ -18,21 +21,46 @@ export default async function KeysPage() {
   const where = session.isAdmin
     ? undefined
     : eq(keys.createdByApiKeyId, session.id);
-  const rows = await db
+
+  // Bound the work: take a page of the newest keys FIRST, then aggregate hits
+  // only for those. The old query joined every key against the entire hits
+  // table with no limit, so the per-key count/max scanned all hits on every
+  // dashboard load — cost grew with total hits, unbounded. This caps it to
+  // the hits belonging to one page of keys (served by hits_key_occurred_idx).
+  const pageKeys = db
     .select({
       id: keys.id,
       publicId: keys.publicId,
       memo: keys.memo,
       createdAt: keys.createdAt,
       disabledAt: keys.disabledAt,
+    })
+    .from(keys)
+    .where(where)
+    .orderBy(desc(keys.createdAt))
+    .limit(KEYS_PAGE_SIZE)
+    .as("page_keys");
+
+  const rows = await db
+    .select({
+      id: pageKeys.id,
+      publicId: pageKeys.publicId,
+      memo: pageKeys.memo,
+      createdAt: pageKeys.createdAt,
+      disabledAt: pageKeys.disabledAt,
       hitCount: sql<number>`count(${hits.id})::int`.as("hit_count"),
       lastHit: sql<Date | null>`max(${hits.occurredAt})`.as("last_hit"),
     })
-    .from(keys)
-    .leftJoin(hits, eq(hits.keyId, keys.id))
-    .where(where)
-    .groupBy(keys.id)
-    .orderBy(desc(keys.createdAt));
+    .from(pageKeys)
+    .leftJoin(hits, eq(hits.keyId, pageKeys.id))
+    .groupBy(
+      pageKeys.id,
+      pageKeys.publicId,
+      pageKeys.memo,
+      pageKeys.createdAt,
+      pageKeys.disabledAt,
+    )
+    .orderBy(desc(pageKeys.createdAt));
 
   return (
     <div>
@@ -57,6 +85,7 @@ export default async function KeysPage() {
           </Link>
         </div>
       ) : (
+        <>
         <div className="border border-neutral-900 rounded overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-neutral-950 text-neutral-500 text-xs uppercase tracking-wide">
@@ -122,6 +151,14 @@ export default async function KeysPage() {
             </tbody>
           </table>
         </div>
+        {rows.length === KEYS_PAGE_SIZE && (
+          <p className="text-xs text-neutral-600 mt-3">
+            showing the {KEYS_PAGE_SIZE} most recent keys — use{" "}
+            <code className="font-mono">GET /api/keys</code> to page through the
+            rest.
+          </p>
+        )}
+        </>
       )}
     </div>
   );

@@ -1,0 +1,2 @@
+CREATE INDEX "keys_created_by_idx" ON "keys" USING btree ("created_by_api_key_id","created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "notifications_settled_updated_idx" ON "notifications" USING btree ("updated_at") WHERE status IN ('succeeded', 'failed', 'aborted');

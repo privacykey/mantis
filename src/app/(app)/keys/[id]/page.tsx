@@ -204,11 +204,22 @@ export default async function KeyDetailPage({ params }: Props) {
               {destinations.map((d) => {
                 const status = d.lastActivationStatus;
                 const icon =
-                  status === "ok"
-                    ? <span className="text-emerald-400">✓</span>
-                    : status === "failed"
-                    ? <span className="text-red-400">⚠</span>
-                    : <span className="text-neutral-600">·</span>;
+                  status === "ok" ? (
+                    <>
+                      <span aria-hidden="true" className="text-emerald-400">✓</span>
+                      <span className="sr-only">activated</span>
+                    </>
+                  ) : status === "failed" ? (
+                    <>
+                      <span aria-hidden="true" className="text-red-400">⚠</span>
+                      <span className="sr-only">activation failed</span>
+                    </>
+                  ) : (
+                    <>
+                      <span aria-hidden="true" className="text-neutral-600">·</span>
+                      <span className="sr-only">not activated</span>
+                    </>
+                  );
                 return (
                   <li key={d.id} className="flex items-start gap-2 text-sm">
                     <span className="shrink-0 w-3">{icon}</span>
@@ -485,9 +496,27 @@ function NotifySummary({
   ).length;
   return (
     <span className="text-xs shrink-0 flex gap-1">
-      {succeeded > 0 && <span className="text-emerald-500">✓{succeeded}</span>}
-      {pending > 0 && <span className="text-amber-400">⏳{pending}</span>}
-      {failed > 0 && <span className="text-red-400">⚠{failed}</span>}
+      {succeeded > 0 && (
+        <span className="text-emerald-500">
+          <span aria-hidden="true">✓</span>
+          {succeeded}
+          <span className="sr-only"> succeeded</span>
+        </span>
+      )}
+      {pending > 0 && (
+        <span className="text-amber-400">
+          <span aria-hidden="true">⏳</span>
+          {pending}
+          <span className="sr-only"> pending</span>
+        </span>
+      )}
+      {failed > 0 && (
+        <span className="text-red-400">
+          <span aria-hidden="true">⚠</span>
+          {failed}
+          <span className="sr-only"> failed</span>
+        </span>
+      )}
     </span>
   );
 }

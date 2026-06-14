@@ -3,6 +3,14 @@ export async function register(): Promise<void> {
 
   const { log } = await import("@/lib/log");
 
+  // Fail fast at boot: importing the env module evaluates the required()
+  // checks (DATABASE_URL, MANTIS_API_KEY_PEPPER). Without this the process
+  // boots "healthy" and only throws on the first request that touches a key
+  // path — which the `/` healthcheck never trips. Crash here instead.
+  const { env } = await import("@/lib/env");
+  void env.databaseUrl;
+  void env.apiKeyPepper;
+
   if (process.env.AUTO_MIGRATE === "1") {
     try {
       const { migrate } = await import("drizzle-orm/postgres-js/migrator");
@@ -31,6 +39,22 @@ export async function register(): Promise<void> {
         "/inbox capture is exposed. Anyone who can reach this server can read " +
         "every webhook body it captures. Set ENABLE_DEV_INBOX=0 unless you " +
         "are intentionally running a deliberate test deployment.",
+    );
+  }
+
+  // Warn (don't change behavior) when retention is fully unset: hits and
+  // notifications are then kept forever, which grows the DB unbounded and
+  // slows the dashboard/list queries over time. Operators opt in by setting
+  // the *_RETENTION_DAYS vars (see .env.example / lib/retention.ts).
+  if (
+    !process.env.MANTIS_HIT_RETENTION_DAYS &&
+    !process.env.MANTIS_NOTIFICATION_RETENTION_DAYS
+  ) {
+    log.warn(
+      "no retention configured — MANTIS_HIT_RETENTION_DAYS and " +
+        "MANTIS_NOTIFICATION_RETENTION_DAYS are unset, so hits and " +
+        "notifications are retained forever. Set them (e.g. 90 and 30) to " +
+        "enable automatic pruning and keep query performance steady.",
     );
   }
 

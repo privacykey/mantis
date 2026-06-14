@@ -102,7 +102,9 @@ export function MonitorCard({
           <SubmitButton />
         </div>
         {actionState.error && (
-          <div className="text-sm text-red-400">{actionState.error}</div>
+          <div role="alert" className="text-sm text-red-400">
+            {actionState.error}
+          </div>
         )}
       </form>
 
@@ -122,6 +124,9 @@ export function MonitorCard({
             >
               {copied ? "copied!" : "copy"}
             </button>
+            <span role="status" className="sr-only">
+              {copied ? "copied to clipboard" : ""}
+            </span>
           </div>
         </div>
       )}

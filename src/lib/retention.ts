@@ -22,7 +22,7 @@ function readPositiveInt(name: string): number | null {
   return n;
 }
 
-export function retentionConfig(): {
+function retentionConfig(): {
   hitDays: number | null;
   notificationDays: number | null;
   auditDays: number | null;

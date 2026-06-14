@@ -1,11 +1,32 @@
-node_modules
+# Dependencies — exclude at every level (the monorepo has nested
+# node_modules under cli/, mantis-edge/, iot-helper/, bench/).
+**/node_modules
+.pnpm-store
+
+# Build output / caches
 .next
+**/dist
+**/.wrangler
+**/.turbo
+*.tsbuildinfo
+coverage
+
+# VCS / local / secrets
 .git
 .env
-.env.local
+.env.*
 .env*.local
+# wrangler local secrets (mantis-edge/.dev.vars holds a live MANTIS_EDGE_KEY)
+**/.dev.vars
+**/.dev.vars.*
+# private key material — NB: do NOT add *.pem here, the public Apple WWDR cert
+# (src/lib/installers/wallet-assets/wwdr.pem) is needed in the image.
+*.p12
+*.p8
 *.log
 .DS_Store
+
+# Docs & CI (not needed in the image)
 README.md
 docs
 .github
