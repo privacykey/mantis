@@ -1,0 +1,58 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { NextRequest } from "next/server";
+import { config, middleware } from "@/middleware";
+
+// Regression guard: the host-based public/dashboard split is only enforced if
+// proxy.ts is wired as Next.js middleware from this magic filename. If this
+// file is ever deleted/renamed or stops exporting `middleware` + a matcher,
+// the split silently becomes dead code again (the original bug). These tests
+// fail loudly in that case.
+
+describe("middleware wiring", () => {
+  const orig = {
+    public: process.env.PUBLIC_ONLY_HOSTS,
+    dashboard: process.env.DASHBOARD_HOSTS,
+  };
+  beforeEach(() => {
+    delete process.env.PUBLIC_ONLY_HOSTS;
+    delete process.env.DASHBOARD_HOSTS;
+  });
+  afterEach(() => {
+    if (orig.public === undefined) delete process.env.PUBLIC_ONLY_HOSTS;
+    else process.env.PUBLIC_ONLY_HOSTS = orig.public;
+    if (orig.dashboard === undefined) delete process.env.DASHBOARD_HOSTS;
+    else process.env.DASHBOARD_HOSTS = orig.dashboard;
+  });
+
+  it("exports a middleware function and a non-empty matcher", () => {
+    expect(typeof middleware).toBe("function");
+    expect(Array.isArray(config.matcher)).toBe(true);
+    expect(config.matcher.length).toBeGreaterThan(0);
+  });
+
+  it("passes through when no host lists are configured (single-host default)", () => {
+    const res = middleware(new NextRequest("https://anything.example/api/keys"));
+    expect(res.status).toBe(200); // NextResponse.next()
+  });
+
+  it("404s the management surface on a public-only host", () => {
+    process.env.PUBLIC_ONLY_HOSTS = "public.example";
+    const res = middleware(new NextRequest("https://public.example/api/keys"));
+    expect(res.status).toBe(404);
+  });
+
+  it("allows public canary paths on a public-only host", () => {
+    process.env.PUBLIC_ONLY_HOSTS = "public.example";
+    for (const path of ["/c/abc123", "/status/abc123", "/api/wallet/v1/log"]) {
+      const res = middleware(new NextRequest(`https://public.example${path}`));
+      expect(res.status, path).toBe(200);
+    }
+  });
+
+  it("allows the full surface on a dashboard host", () => {
+    process.env.PUBLIC_ONLY_HOSTS = "public.example";
+    process.env.DASHBOARD_HOSTS = "private.example";
+    const res = middleware(new NextRequest("https://private.example/api/keys"));
+    expect(res.status).toBe(200);
+  });
+});
