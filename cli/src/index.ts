@@ -38,11 +38,15 @@ import { disableCmd, enableCmd } from "./commands/toggle.js";
 import { watchCmd } from "./commands/watch.js";
 import { whoamiCmd } from "./commands/whoami.js";
 import { CLI_VERSION } from "./version.js";
-import { readConfig } from "./lib/config.js";
+import { type CliDefaults, getDefaults, readConfig } from "./lib/config.js";
 import { listEdgeKeyWorkers } from "./lib/edge-key.js";
 import {
   c,
+  type ColorMode,
   fail,
+  isDebug,
+  setColorMode,
+  setDebug,
   setJsonMode,
   setNoHeaders,
   setOutputMode,
@@ -58,6 +62,8 @@ type GlobalRaw = {
   quiet?: boolean;
   output?: OutputMode;
   headers?: boolean;
+  color?: ColorMode;
+  debug?: boolean;
   timeout?: string;
   retries?: string;
 };
@@ -82,8 +88,8 @@ program
   .name("mantis")
   .description("Mantis key CLI — self-hostable tripwires.")
   .version(CLI_VERSION, "-v, --version", "output the version number")
-  .option("--base-url <url>", "override stored base URL")
-  .option("--key <key>", "override stored API key")
+  .option("--base-url <url>", "override stored base URL (env: MANTIS_BASE_URL)")
+  .option("--key <key>", "override stored API key (env: MANTIS_API_KEY)")
   .option("-p, --profile <name>", "use a named profile (env: MANTIS_PROFILE)")
   .option("--json", "emit machine-readable JSON to stdout")
   .addOption(
@@ -92,12 +98,28 @@ program
   )
   .option("-q, --quiet", "suppress human-readable stdout")
   .option("--no-headers", "hide table headers")
+  .addOption(
+    new Option(
+      "--color <when>",
+      "when to colorize output (env: NO_COLOR, FORCE_COLOR)",
+    ).choices(["auto", "always", "never"]),
+  )
+  .option(
+    "--debug",
+    "print stack traces + HTTP request details on failure (env: MANTIS_DEBUG)",
+  )
   .option("--timeout <duration>", "request timeout (examples: 500ms, 5s, 1m)")
   .option("--retries <n>", "GET retry count for transient failures (0-5)")
-  .hook("preAction", (cmd) => {
+  .hook("preAction", async (cmd) => {
     const opts = cmd.opts<GlobalRaw>();
-    if (opts.output) setOutputMode(opts.output);
+    // Stored defaults (mantis config set …) sit below explicit flags.
+    const defaults: CliDefaults = await getDefaults().catch(() => ({}));
+    const output = opts.output ?? (opts.json ? "json" : undefined) ?? defaults.output;
+    if (output) setOutputMode(output);
     if (opts.json) setJsonMode(true);
+    const color = opts.color ?? defaults.color;
+    if (color) setColorMode(color);
+    setDebug(!!opts.debug);
     setQuiet(!!opts.quiet);
     setNoHeaders(opts.headers === false);
   })
@@ -112,7 +134,9 @@ program
       process.stdout.write(
         `${c.bold("Welcome to mantis.")} ${c.dim("Self-hostable tripwires for the terminal.")}
 
-Two ways to use mantis — pick whichever fits, or both:
+${c.dim("Fastest:")} ${c.cyan("mantis init")} ${c.dim("— guided setup (asks server or edge, does the rest)")}
+
+Or set it up yourself — two ways to use mantis, pick whichever fits, or both:
 
   ${c.dim("1. Stateful server")} ${c.dim("(dashboard, hit history, multi-destination keys)")}
        ${c.cyan("mantis login")}                       ${c.dim("# interactive: server URL + API key")}
@@ -186,15 +210,28 @@ ${c.dim("Quick start:")}
   });
 
 program
+  .command("init")
+  .description("guided first-time setup — walks you through server or edge (interactive)")
+  .action(async () => {
+    const { initCmd } = await import("./commands/init.js");
+    await initCmd();
+  });
+
+program
   .command("login")
   .description("store API key for a profile (creates one if needed)")
   .option("-u, --url <url>", "Mantis server base URL (skips prompt)")
+  .option(
+    "--key-stdin",
+    "read the API key from stdin instead of prompting (leak-free for CI)",
+  )
   .option("--no-switch", "save the profile but don't switch the current profile to it")
   .action(async (opts, cmd: Command) => {
     const globals = cmd.parent!.opts<GlobalRaw>();
     await loginCmd({
       url: opts.url ?? globals.baseUrl,
       key: globals.key,
+      keyStdin: opts.keyStdin,
       profile: globals.profile,
       noSwitch: opts.switch === false,
     });
@@ -407,6 +444,10 @@ cloudflare
   )
   .option("--client-id <id>", "Service Auth Client-ID (ends in .access)")
   .option("--client-secret <secret>", "Service Auth Client-Secret")
+  .option(
+    "--client-secret-stdin",
+    "read the client secret from stdin instead of prompting (leak-free for CI)",
+  )
   .action(async (opts) => {
     await cloudflareSetServiceAuthCmd(opts);
   });
@@ -439,16 +480,21 @@ edge
   )
   .option("--worker <url>", "worker base URL (https://…)")
   // No `--key` flag: it collides with the global `--key` (which overrides the
-  // mantis API key). Use the positional argument or the interactive prompt.
+  // mantis API key). Use the positional argument, --key-stdin, or the prompt.
+  .option(
+    "--key-stdin",
+    "read the edge key from stdin instead of prompting (leak-free for CI)",
+  )
   .action(
     async (
       workerArg: string | undefined,
       keyArg: string | undefined,
-      opts: { worker?: string },
+      opts: { worker?: string; keyStdin?: boolean },
     ) => {
       await edgeSetKeyCmd({
         worker: opts.worker ?? workerArg,
         key: keyArg,
+        keyStdin: opts.keyStdin,
       });
     },
   );
@@ -709,7 +755,9 @@ program
     new Option("-m, --mode <mode>", "monitor mode")
       .choices(["off", "latch", "window"]),
   )
-  .option("-w, --window <seconds>", "window size in seconds (used with --mode window)")
+  // Long-only: `-w` means `--watch` on `status`, so don't reuse it for a
+  // value-taking window size here (avoids a silent muscle-memory hazard).
+  .option("--window <seconds>", "window size in seconds (used with --mode window)")
   .action(async (id: string, opts, cmd: Command) => {
     await monitorCmd(id, withGlobals(cmd.parent!, opts));
   });
@@ -808,27 +856,30 @@ program
 program
   .command("rm")
   .alias("delete")
-  .description("delete a key (cascades hits)")
-  .argument("<id>", "key UUID, prefix (≥4 hex), or `last`")
+  .description("delete one or more keys (cascades hits)")
+  .argument(
+    "<id...>",
+    "key UUID(s), prefix (≥4 hex), or `last`; accepts many (e.g. `mantis list --id-only | xargs mantis rm -y`)",
+  )
   .option("-y, --yes", "skip confirmation")
-  .action(async (id: string, opts, cmd: Command) => {
-    await rmCmd(id, withGlobals(cmd.parent!, opts));
+  .action(async (ids: string[], opts, cmd: Command) => {
+    await rmCmd(ids, withGlobals(cmd.parent!, opts));
   });
 
 program
   .command("disable")
-  .description("disable a key (preserves history)")
-  .argument("<id>", "key UUID, prefix (≥4 hex), or `last`")
-  .action(async (id: string, opts, cmd: Command) => {
-    await disableCmd(id, withGlobals(cmd.parent!, opts));
+  .description("disable one or more keys (preserves history)")
+  .argument("<id...>", "key UUID(s), prefix (≥4 hex), or `last`")
+  .action(async (ids: string[], opts, cmd: Command) => {
+    await disableCmd(ids, withGlobals(cmd.parent!, opts));
   });
 
 program
   .command("enable")
-  .description("re-enable a disabled key")
-  .argument("<id>", "key UUID, prefix (≥4 hex), or `last`")
-  .action(async (id: string, opts, cmd: Command) => {
-    await enableCmd(id, withGlobals(cmd.parent!, opts));
+  .description("re-enable one or more disabled keys")
+  .argument("<id...>", "key UUID(s), prefix (≥4 hex), or `last`")
+  .action(async (ids: string[], opts, cmd: Command) => {
+    await enableCmd(ids, withGlobals(cmd.parent!, opts));
   });
 
 const destinations = program
@@ -959,11 +1010,12 @@ program
 
 program
   .command("watch")
-  .description("poll for new hits and print them as they arrive")
-  .option("--id <id>", "watch a single key only")
+  .description("poll for new hits and print them as they arrive (all keys, or one)")
+  .argument("[id]", "key UUID, prefix, or `last`; omit to watch all keys")
+  .option("--id <id>", "(deprecated) watch a single key — use the positional <id> instead")
   .option("-i, --interval <seconds>", "poll interval in seconds", "5")
-  .action(async (opts, cmd: Command) => {
-    await watchCmd(withGlobals(cmd.parent!, opts));
+  .action(async (id: string | undefined, opts, cmd: Command) => {
+    await watchCmd({ ...withGlobals(cmd.parent!, opts), id: id ?? opts.id });
   });
 
 program
@@ -972,6 +1024,55 @@ program
   .argument("<shell>", "bash, zsh, or fish")
   .action((shell: string) => {
     completionCmd(shell);
+  });
+
+const config = program
+  .command("config")
+  .description("get/set machine-wide CLI defaults (output mode, color)");
+
+config
+  .command("list")
+  .alias("ls")
+  .description("show the config file path and current defaults")
+  .action(async () => {
+    const { configListCmd } = await import("./commands/config.js");
+    await configListCmd();
+  });
+
+config
+  .command("get")
+  .description("print one default value")
+  .argument("<key>", "output | color")
+  .action(async (key: string) => {
+    const { configGetCmd } = await import("./commands/config.js");
+    await configGetCmd(key);
+  });
+
+config
+  .command("set")
+  .description("set a default value (applied below explicit flags)")
+  .argument("<key>", "output | color")
+  .argument("<value>", "output: table|json|wide; color: auto|always|never")
+  .action(async (key: string, value: string) => {
+    const { configSetCmd } = await import("./commands/config.js");
+    await configSetCmd(key, value);
+  });
+
+config
+  .command("unset")
+  .description("clear a default value")
+  .argument("<key>", "output | color")
+  .action(async (key: string) => {
+    const { configUnsetCmd } = await import("./commands/config.js");
+    await configUnsetCmd(key);
+  });
+
+config
+  .command("path")
+  .description("print the config file path")
+  .action(async () => {
+    const { configPathCmd } = await import("./commands/config.js");
+    configPathCmd();
   });
 
 const plugin = program
@@ -1066,5 +1167,8 @@ program
   .showSuggestionAfterError();
 
 program.parseAsync(process.argv).catch((err) => {
+  if (isDebug() && err instanceof Error && err.stack) {
+    process.stderr.write(c.dim(err.stack + "\n"));
+  }
   fail(err instanceof Error ? err.message : String(err));
 });

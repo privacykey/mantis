@@ -5,7 +5,12 @@
 #   3. Edit "name:" fields and any region you prefer.
 #   4. Go to https://dashboard.render.com/blueprints and "New Blueprint" → point at the repo.
 #   5. Render provisions both the web service and a Postgres database; it injects DATABASE_URL.
-#   6. Add BOOTSTRAP_API_KEY in the dashboard so you have a known first key.
+#   6. In the service settings, set the two required secrets that Render asks for:
+#        MANTIS_API_KEY_PEPPER  — generate with `openssl rand -base64 32`. Mantis refuses to
+#                                 boot without it. Do NOT rotate after the first key is
+#                                 minted — rotating invalidates every API key.
+#        BOOTSTRAP_API_KEY      — your initial admin API key, so you have something to log in
+#                                 with on first boot.
 #
 # Free-tier caveat: Render free web services spin down after 15 min of inactivity.
 # That means the FIRST mantis trigger after idle will be slow (cold start, 30–60s).
@@ -27,6 +32,11 @@ services:
     envVars:
       - key: PUBLIC_BASE_URL
         value: https://mantis.onrender.com   # change to your mantis's URL after first deploy
+      # REQUIRED. The dashboard prompts for this value on first deploy. Generate with:
+      #   openssl rand -base64 32
+      # Mantis refuses to boot without it. Do NOT rotate after the first key is minted.
+      - key: MANTIS_API_KEY_PEPPER
+        sync: false
       - key: AUTO_MIGRATE
         value: "1"
       - key: LOG_LEVEL

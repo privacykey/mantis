@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline/promises";
+import { createInterface, type Interface } from "node:readline/promises";
 import { MantisClient } from "../lib/api.js";
 import {
   DEFAULT_PROFILE,
@@ -8,7 +8,8 @@ import {
   setProfile,
   useProfile,
 } from "../lib/config.js";
-import { c, fail } from "../lib/out.js";
+import { c, ExitCode, fail, isJsonMode } from "../lib/out.js";
+import { canPrompt, readStdin } from "../lib/prompt.js";
 
 const KEY_RE = /^mantis_live_[A-Za-z0-9_-]+$/;
 const URL_RE = /^https?:\/\/.+/;
@@ -16,6 +17,8 @@ const URL_RE = /^https?:\/\/.+/;
 export async function loginCmd(opts: {
   url?: string;
   key?: string;
+  /** Read the API key from stdin instead of prompting (leak-free for CI). */
+  keyStdin?: boolean;
   profile?: string;
   /** Don't set this profile as the active one (e.g. when adding a second profile). */
   noSwitch?: boolean;
@@ -24,26 +27,45 @@ export async function loginCmd(opts: {
     opts.profile ?? (await getCurrentProfileName()) ?? DEFAULT_PROFILE;
   const existing = await getProfile(profileName);
 
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  let url = opts.url ?? existing?.baseUrl ?? "";
+  let key = opts.key ?? "";
+  if (!key && opts.keyStdin) {
+    key = (await readStdin()).trim();
+    if (!key) {
+      return fail("login: --key-stdin was set but stdin was empty", ExitCode.Usage);
+    }
+  }
+
+  // We must prompt if the URL still isn't known or the key wasn't supplied.
+  // Without a usable terminal that would silently read piped/empty data and
+  // surface a misleading "invalid URL"; fail with actionable guidance instead.
+  const interactive = !isJsonMode() && canPrompt();
+  if ((!url || !key) && !interactive) {
+    return fail(
+      "login needs an interactive terminal. To run non-interactively, pass --url and supply the key via --key-stdin (or --key).",
+      ExitCode.Usage,
+    );
+  }
+
+  let rl: Interface | undefined;
   try {
-    let url = opts.url ?? existing?.baseUrl ?? "";
-    if (!opts.url) {
+    if (interactive && !opts.url) {
+      rl ??= createInterface({ input: process.stdin, output: process.stderr });
       const prompt = url ? `Base URL [${url}]: ` : "Base URL: ";
       const answer = (await rl.question(prompt)).trim();
       if (answer) url = answer;
     }
     if (!URL_RE.test(url)) {
-      return fail(`invalid URL: ${url}`);
+      return fail(`invalid URL: ${url}`, ExitCode.Usage);
     }
     url = url.replace(/\/$/, "");
 
-    let key = opts.key ?? "";
-    if (!key) {
-      const answer = (await rl.question("API key (mantis_live_...): ")).trim();
-      key = answer;
+    if (interactive && !key) {
+      rl ??= createInterface({ input: process.stdin, output: process.stderr });
+      key = (await rl.question("API key (mantis_live_...): ")).trim();
     }
     if (!KEY_RE.test(key)) {
-      return fail("invalid API key format");
+      return fail("invalid API key format", ExitCode.Usage);
     }
 
     const client = new MantisClient({ baseUrl: url, key });
@@ -71,6 +93,6 @@ export async function loginCmd(opts: {
       `${c.green("✓")} stored credentials for ${c.cyan(url)} as profile ${c.bold(profileName)}${opts.noSwitch ? c.dim(" (not switched to)") : ""}\n`,
     );
   } finally {
-    rl.close();
+    rl?.close();
   }
 }

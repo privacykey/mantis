@@ -71,6 +71,22 @@ Suppress human-readable stdout. Useful in scripts.
 Hide table headers.
 
 .TP
+.BI \-\-color " when"
+When to colorize output:
+.BR auto ", " always ", or " never .
+Also honors
+.BR NO_COLOR " and " FORCE_COLOR .
+Default
+.B auto
+colors only on a TTY.
+
+.TP
+.B \-\-debug
+On failure, print the resolved target, a stack trace, and HTTP request
+details to stderr. Also enabled by
+.BR MANTIS_DEBUG .
+
+.TP
 .BI \-\-timeout " duration"
 Request timeout. Accepts forms like
 .BR 500ms ", " 5s ", " 1m .
@@ -82,13 +98,21 @@ Retry count for transient GET failures (0\-5).
 .SH COMMANDS
 .SS Authentication & profiles
 .TP
-.B mantis login [\-u URL] [\-\-no\-switch]
+.B mantis init
+Guided first-time setup. Asks whether to use a stateful server or a stateless
+edge worker, runs the matching credential flow, and (for a server) offers to
+create a first key. Interactive only.
+
+.TP
+.B mantis login [\-u URL] [\-\-key\-stdin] [\-\-no\-switch]
 Prompt for a Mantis server URL and API key, then store the key in the OS
 keychain. Use
 .B \-\-profile <name>
 to save under a named profile;
 .B \-\-no\-switch
-keeps the current profile active.
+keeps the current profile active;
+.B \-\-key\-stdin
+reads the key from stdin (leak-free, for CI) instead of prompting.
 
 .TP
 .B mantis logout [\-\-all]
@@ -182,7 +206,7 @@ Use
 to stream live (default poll interval 3s).
 
 .TP
-.B mantis watch [\-\-id ID] [\-i SECONDS]
+.B mantis watch [id] [\-i SECONDS]
 Poll across all keys (or one) and print new hits as they arrive.
 
 .TP
@@ -196,7 +220,7 @@ detail (window: hits + expiry; latch: hits since reset).
 refreshes continuously.
 
 .TP
-.B mantis monitor <id> \-m {off,latch,window} [\-w SECONDS]
+.B mantis monitor <id> \-m {off,latch,window} [\-\-window SECONDS]
 Configure the Uptime Kuma status endpoint for a key.
 
 .TP
@@ -270,6 +294,17 @@ Print a shell completion script. The Homebrew formula already installs these in
 the right paths.
 
 .TP
+.B "mantis config {list,get,set,unset,path} [key] [value]"
+Get or set machine-wide defaults applied below explicit flags. Keys:
+.B output
+.RB ( table / json / wide )
+and
+.B color
+.RB ( auto / always / never ).
+.B mantis config path
+prints the config file location.
+
+.TP
 .B "mantis plugin {add,list,remove,upgrade} [args]"
 Manage CLI plugins (third-party installer types and file formats; installed
 locally, never on the server). Specs accept
@@ -282,6 +317,64 @@ or a local directory.
 Default profile when
 .B \-\-profile
 isn't supplied.
+.TP
+.B MANTIS_BASE_URL
+Server base URL for headless use (CI, containers) when no profile is stored.
+Lower precedence than an explicitly named profile, higher than the stored
+current profile. Equivalent to
+.BR \-\-base\-url .
+.TP
+.B MANTIS_API_KEY
+API key for headless use, read before the OS keychain. Equivalent to
+.B \-\-key
+but keeps the secret out of argv (process listings, shell history).
+.TP
+.B MANTIS_DEBUG
+When set, enables debug output on failure (resolved target, stack trace, HTTP
+details). Same as
+.BR \-\-debug .
+.TP
+.B NO_COLOR ", " FORCE_COLOR
+Standard color controls.
+.B NO_COLOR
+disables color;
+.B FORCE_COLOR
+(any value but
+.BR 0 )
+forces it on. See also
+.BR \-\-color .
+.TP
+.B MANTIS_ASCII
+When set, use ASCII fallbacks for unicode glyphs (for legacy/non-UTF-8
+terminals).
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Generic / unclassified error.
+.TP
+.B 2
+Used only by
+.BR "mantis detect" :
+installer artifacts were found (grep-style).
+.TP
+.B 3
+Usage error (bad flag or argument value).
+.TP
+.B 4
+Authentication error (missing/invalid credentials, HTTP 401/403, no profile).
+.TP
+.B 5
+Not found (unknown key id/prefix, HTTP 404).
+.TP
+.B 6
+Network error (connection failed or request timed out).
+.TP
+.B 7
+Server error (HTTP 5xx).
 
 .SH FILES
 .TP

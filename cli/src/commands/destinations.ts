@@ -1,5 +1,5 @@
 import type { Destination, NotificationChannel } from "../lib/api.js";
-import { c, emit, fail, table } from "../lib/out.js";
+import { c, emit, fail, table, truncate } from "../lib/out.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -22,7 +22,13 @@ export async function listDestinationsCmd(
     emit(
       () => {
         if (key.destinations.length === 0) {
-          process.stdout.write(c.dim("no destinations configured\n"));
+          // Empty-state guidance goes to stderr so `dest list | wc -l` stays
+          // honest; mirrors the dest-add error phrasing.
+          process.stderr.write(
+            c.dim(
+              `no destinations configured. Add one with \`mantis dest add ${keyId} webhook https://example.com/hook\` (channels: ${VALID_CHANNELS.join(", ")}).\n`,
+            ),
+          );
           return;
         }
         const rows = key.destinations.map((d) => [
@@ -299,8 +305,4 @@ function statusIcon(status: Destination["last_activation_status"]): string {
   if (status === "ok") return c.green("✓");
   if (status === "failed") return c.red("⚠");
   return c.dim("·");
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }

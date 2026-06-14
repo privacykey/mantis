@@ -1,5 +1,6 @@
 import { buildCloudflareHeaders } from "./cloudflare.js";
 import type { ResolvedAuth } from "./config.js";
+import { c, isDebug } from "./out.js";
 
 export type MonitorMode = "off" | "latch" | "window";
 export type MonitorState = "off" | "ok" | "tripped";
@@ -456,6 +457,12 @@ export class MantisClient {
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const res = await fetchOnce(url, init, this.policy.timeoutMs);
+        if (isDebug()) {
+          const tag = attempt > 0 ? ` (attempt ${attempt + 1})` : "";
+          process.stderr.write(
+            c.dim(`[debug] ${method} ${url} → ${res.status}${tag}\n`),
+          );
+        }
         if (
           retryable &&
           attempt < attempts - 1 &&

@@ -1,11 +1,27 @@
+# SECURITY NOTES — read before running in any environment that isn't your
+# laptop:
+#   1. The default Postgres password below is `mantis` — fine for `docker
+#      compose up` on localhost, dangerous on a shared / public host.
+#      Override via .env: POSTGRES_PASSWORD=$(openssl rand -base64 32)
+#      and update DATABASE_URL below to match.
+#   2. MANTIS_API_KEY_PEPPER is REQUIRED. The mantis service will refuse
+#      to boot without it. Generate one with `openssl rand -base64 32`
+#      and set it in your .env. Do NOT rotate after the first key is
+#      minted — rotating invalidates every existing API key.
+
 services:
   postgres:
-    image: postgres:18-alpine
+    # Pinned to a digest for reproducible pulls. Refresh with:
+    #   docker buildx imagetools inspect <image:tag> --format '{{.Manifest.Digest}}'
+    # (Dependabot's docker ecosystem bumps these automatically.)
+    image: postgres:18-alpine@sha256:96d56f7f57c6aacd1fcb908bc83b345ec5f83231ee486dd66a1baadce274db88
     restart: unless-stopped
     environment:
-      POSTGRES_USER: mantis
-      POSTGRES_PASSWORD: mantis
-      POSTGRES_DB: mantis
+      POSTGRES_USER: ${POSTGRES_USER:-mantis}
+      # Default `mantis` is intentional for the localhost quickstart only.
+      # Override in .env for anything beyond `docker compose up` on a laptop.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mantis}
+      POSTGRES_DB: ${POSTGRES_DB:-mantis}
     volumes:
       - mantis-pg:/var/lib/postgresql/data
     healthcheck:
@@ -23,8 +39,13 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://mantis:mantis@postgres:5432/mantis
+      # If you override POSTGRES_PASSWORD in .env, update DATABASE_URL too
+      # — they aren't auto-derived from each other.
+      DATABASE_URL: ${DATABASE_URL:-postgres://mantis:mantis@postgres:5432/mantis}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      # REQUIRED. Server refuses to boot without it. Generate with:
+      #   openssl rand -base64 32
+      MANTIS_API_KEY_PEPPER: ${MANTIS_API_KEY_PEPPER:?MANTIS_API_KEY_PEPPER is required. Generate with `openssl rand -base64 32` and put it in .env.}
       PUBLIC_ONLY_HOSTS: ${PUBLIC_ONLY_HOSTS:-}
       PUBLIC_ONLY_ALLOW_HEALTH: ${PUBLIC_ONLY_ALLOW_HEALTH:-0}
       PUBLIC_ONLY_ALLOW_INBOX: ${PUBLIC_ONLY_ALLOW_INBOX:-0}
@@ -45,7 +66,7 @@ services:
   # Result:   mantis reachable at https://<TS_HOSTNAME>.<your-tailnet>.ts.net
   #           Funnel (public exposure) opt-in via Tailscale admin → DNS → HTTPS + Funnel
   tailscale:
-    image: tailscale/tailscale:stable
+    image: tailscale/tailscale:stable@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     profiles: ["tailscale"]
     hostname: ${TS_HOSTNAME:-mantis}
     restart: unless-stopped
@@ -75,7 +96,7 @@ services:
   # Set PUBLIC_BASE_URL + PUBLIC_ONLY_HOSTS to the public hostname, and
   # DASHBOARD_HOSTS to the private hostname.
   tailscale-private:
-    image: tailscale/tailscale:stable
+    image: tailscale/tailscale:stable@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     profiles: ["tailscale-split"]
     hostname: ${TS_PRIVATE_HOSTNAME:-mantis-private}
     restart: unless-stopped
@@ -99,7 +120,7 @@ services:
       - /dev/net/tun
 
   tailscale-public:
-    image: tailscale/tailscale:stable
+    image: tailscale/tailscale:stable@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     profiles: ["tailscale-split"]
     hostname: ${TS_PUBLIC_HOSTNAME:-mantis-public}
     restart: unless-stopped
@@ -128,7 +149,7 @@ services:
   # Tunnel routing (hostname → http://mantis:3000) is configured in the CF dashboard.
   # Dashboard access policies via Cloudflare Access also live in the CF dashboard.
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:latest@sha256:ba461b8aa9c042156dbd39c38657fe7431bafa063220eab8d5330a523863da9f
     profiles: ["cloudflared"]
     restart: unless-stopped
     depends_on:
