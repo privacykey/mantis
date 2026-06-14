@@ -11,6 +11,18 @@ const IP_HEADERS = [
   "x-forwarded-for",
 ] as const;
 
+const IP_HEADER_SET: ReadonlySet<string> = new Set(IP_HEADERS);
+
+// Headers whose value is a client-first append chain ("client, proxy1, …"),
+// where the LEFTMOST entry is client-supplied and therefore spoofable. These
+// get rightmost-hop parsing (the entry TRUST_PROXY_HOPS from the right). The
+// remaining IP_HEADERS (cf-connecting-ip, x-real-ip) carry a single
+// proxy-written value and keep taking the leftmost token.
+const CHAIN_IP_HEADERS: ReadonlySet<string> = new Set([
+  "x-forwarded-for",
+  "x-vercel-forwarded-for",
+]);
+
 // Honour the IP_HEADERS values when this app sits behind a proxy that
 // strips & re-injects them; otherwise treat them as spoofable. Auto-on
 // under Vercel and in non-production; explicit opt-in everywhere else.
@@ -57,6 +69,24 @@ function trustedIpHeader(): string | null {
   return name || null;
 }
 
+let warnedUnknownTrustedHeader = false;
+function maybeWarnUnknownTrustedHeader(): void {
+  if (warnedUnknownTrustedHeader) return;
+  warnedUnknownTrustedHeader = true;
+  // Avoid pulling in the pino logger here to keep this module edge-safe.
+  // Deliberately do NOT echo the configured value back into the log: it is
+  // operator-supplied environment data, and logging it verbatim trips
+  // js/clear-text-logging and risks log injection via crafted values. Naming
+  // the accepted set is equally actionable — the operator set the value.
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[mantis] TRUSTED_IP_HEADER is set to an unrecognised value (expected one " +
+      `of: ${IP_HEADERS.join(", ")}). Ignoring it and falling back to the ` +
+      "default ordered header list. Fix the value or unset it to silence this " +
+      "warning.",
+  );
+}
+
 type HeaderGetter = (name: string) => string | null | undefined;
 
 /**
@@ -66,9 +96,11 @@ type HeaderGetter = (name: string) => string | null | undefined;
  * session paths (which only have `headers()`) all delegate here so none of them
  * can drift back to trusting the spoofable leftmost XFF token.
  *
- * When TRUSTED_IP_HEADER is set, only that header is consulted; otherwise the
- * IP_HEADERS list is tried in order (cf-connecting-ip first) for backward
- * compatibility.
+ * When TRUSTED_IP_HEADER is set to a recognised header, only that header is
+ * consulted; an unrecognised value (e.g. a typo) is ignored with a one-time
+ * warning so a misconfiguration can't silently null out every client IP.
+ * Otherwise the IP_HEADERS list is tried in order (cf-connecting-ip first) for
+ * backward compatibility.
  */
 export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (!trustProxyHeaders()) {
@@ -76,7 +108,13 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
     return null;
   }
   const pinned = trustedIpHeader();
-  const headers: readonly string[] = pinned ? [pinned] : IP_HEADERS;
+  let headers: readonly string[];
+  if (pinned && IP_HEADER_SET.has(pinned)) {
+    headers = [pinned];
+  } else {
+    if (pinned) maybeWarnUnknownTrustedHeader();
+    headers = IP_HEADERS;
+  }
   for (const h of headers) {
     const v = get(h);
     if (!v) continue;
@@ -86,16 +124,17 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
       .filter(Boolean);
     if (parts.length === 0) continue;
 
-    if (h === "x-forwarded-for") {
-      // X-Forwarded-For is a client-first append chain ("client, proxy1, …").
-      // The LEFTMOST entry is supplied by the client and is fully spoofable;
-      // take the entry TRUST_PROXY_HOPS from the right (the nearest trusted
-      // hop), which a client cannot forge past your proxy layer.
+    if (CHAIN_IP_HEADERS.has(h)) {
+      // A client-first append chain ("client, proxy1, …"): the LEFTMOST entry
+      // is supplied by the client and is fully spoofable. Take the entry
+      // TRUST_PROXY_HOPS from the right (the nearest trusted hop), which a
+      // client cannot forge past your proxy layer. Applies to x-forwarded-for
+      // and x-vercel-forwarded-for, both of which can arrive comma-joined.
       const ip = parts[Math.max(0, parts.length - trustProxyHops())];
       if (ip) return ip;
     } else {
-      // cf-connecting-ip / x-real-ip / x-vercel-forwarded-for are single values
-      // set by the trusted proxy, not a client-controlled list.
+      // cf-connecting-ip / x-real-ip are single values set by the trusted
+      // proxy, not a client-controlled list.
       const ip = parts[0];
       if (ip) return ip;
     }

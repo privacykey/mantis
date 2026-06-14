@@ -93,6 +93,54 @@ describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
       ),
     ).toBe("203.0.113.9");
   });
+
+  it("takes the rightmost hop when pinned to a chain header (x-vercel-forwarded-for)", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-vercel-forwarded-for");
+    // x-vercel-forwarded-for can arrive comma-joined "client, proxy"; the
+    // leftmost is the spoofable client token, so the rightmost hop must win.
+    expect(
+      clientIpFromHeaders(
+        get({ "x-vercel-forwarded-for": "6.6.6.6, 203.0.113.9" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("applies rightmost-hop parsing to x-vercel-forwarded-for even when unpinned", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    // No TRUSTED_IP_HEADER: the default ordered list still treats the Vercel
+    // chain header as a chain, not as a single leftmost token.
+    expect(
+      clientIpFromHeaders(
+        get({ "x-vercel-forwarded-for": "6.6.6.6, 203.0.113.9" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("warns once and falls back to the default list for an unknown TRUSTED_IP_HEADER", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-typo-ip");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // A typo'd header name must NOT silently null out every IP. It is ignored
+      // and the legacy ordered list (cf-connecting-ip first) is consulted.
+      expect(
+        clientIpFromHeaders(
+          get({
+            "cf-connecting-ip": "198.51.100.7",
+            "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+          }),
+        ),
+      ).toBe("198.51.100.7");
+      // The fallback applies on every call, but the warning is emitted once.
+      expect(
+        clientIpFromHeaders(get({ "cf-connecting-ip": "198.51.100.7" })),
+      ).toBe("198.51.100.7");
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe("isSecureRequest (session cookie Secure scheme detection)", () => {
