@@ -70,16 +70,20 @@ function trustedIpHeader(): string | null {
 }
 
 let warnedUnknownTrustedHeader = false;
-function maybeWarnUnknownTrustedHeader(name: string): void {
+function maybeWarnUnknownTrustedHeader(): void {
   if (warnedUnknownTrustedHeader) return;
   warnedUnknownTrustedHeader = true;
   // Avoid pulling in the pino logger here to keep this module edge-safe.
+  // Deliberately do NOT echo the configured value back into the log: it is
+  // operator-supplied environment data, and logging it verbatim trips
+  // js/clear-text-logging and risks log injection via crafted values. Naming
+  // the accepted set is equally actionable — the operator set the value.
   // eslint-disable-next-line no-console
   console.warn(
-    `[mantis] TRUSTED_IP_HEADER="${name}" is not a recognised client-IP ` +
-      `header (expected one of: ${IP_HEADERS.join(", ")}). Ignoring it and ` +
-      "falling back to the default ordered header list. Fix the value or " +
-      "unset it to silence this warning.",
+    "[mantis] TRUSTED_IP_HEADER is set to an unrecognised value (expected one " +
+      `of: ${IP_HEADERS.join(", ")}). Ignoring it and falling back to the ` +
+      "default ordered header list. Fix the value or unset it to silence this " +
+      "warning.",
   );
 }
 
@@ -108,7 +112,7 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (pinned && IP_HEADER_SET.has(pinned)) {
     headers = [pinned];
   } else {
-    if (pinned) maybeWarnUnknownTrustedHeader(pinned);
+    if (pinned) maybeWarnUnknownTrustedHeader();
     headers = IP_HEADERS;
   }
   for (const h of headers) {
