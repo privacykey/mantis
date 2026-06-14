@@ -9,3 +9,22 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+
+# Force vulnerable transitive deps to patched versions:
+#   postcss <8.5.10  → XSS via unescaped </style> in CSS Stringify (GHSA-qx2v-qp2m-jg93)
+#   esbuild <0.28.1  → Deno binary-integrity RCE (GHSA-gv7w-rqvm-qjhr); also clears the
+#                      Windows dev-server path traversal (GHSA-g7r4-m6w7-qqqr) and the older
+#                      dev-server CORS bypass (GHSA-67mh-4wv8-2f99). Build-time devDep only.
+#   joi <17.13.4     → uncaught RangeError on deep recursive link() schemas (GHSA-q7cg-457f-vx79)
+#                      (pulled in transitively via passkit-generator; ^17.x stays off the
+#                      separate 18.0.0–18.2.0 vulnerable branch)
+#   ws <8.20.1       → uninitialized memory disclosure via close() reason TypedArray
+#                      (GHSA-58qx-3vcg-4xpx); pulled in via miniflare's exact 8.18.0 pin
+#   uuid <11.1.1     → v3/v5/v6 missing output-buffer bounds check (GHSA-w5hq-g745-h8pq);
+#                      ^11.x deliberately avoids the re-vulnerable 12.0.0 / 13.0.0. Bench-only dep.
+overrides:
+  postcss: ^8.5.10
+  esbuild: ^0.28.1
+  joi: ^17.13.4
+  ws: ^8.20.1
+  uuid: ^11.1.1

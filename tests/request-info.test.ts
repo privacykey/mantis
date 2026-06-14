@@ -1,8 +1,132 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   capStoredRequestField,
+  clientIpFromHeaders,
+  isSecureRequest,
   snapshotHeaders,
 } from "@/lib/request-info";
+
+describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
+
+  it("returns null when proxy headers aren't trusted", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "0");
+    expect(
+      clientIpFromHeaders(get({ "x-forwarded-for": "1.2.3.4" })),
+    ).toBeNull();
+  });
+
+  it("takes the rightmost (nearest-proxy) XFF entry, not the spoofable leftmost", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    // Attacker forges "6.6.6.6" as the leftmost; the real peer is appended right.
+    expect(
+      clientIpFromHeaders(get({ "x-forwarded-for": "6.6.6.6, 203.0.113.9" })),
+    ).toBe("203.0.113.9");
+  });
+
+  it("honours TRUST_PROXY_HOPS for multiple proxy layers", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUST_PROXY_HOPS", "2");
+    expect(
+      clientIpFromHeaders(
+        get({ "x-forwarded-for": "6.6.6.6, 203.0.113.9, 10.0.0.2" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("prefers single-valued trusted headers over XFF", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    expect(
+      clientIpFromHeaders(
+        get({
+          "cf-connecting-ip": "198.51.100.7",
+          "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+        }),
+      ),
+    ).toBe("198.51.100.7");
+  });
+
+  it("ignores a forged cf-connecting-ip when TRUSTED_IP_HEADER pins x-real-ip", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-real-ip");
+    // Behind nginx/Caddy/Traefik the attacker forges cf-connecting-ip; only the
+    // proxy-written x-real-ip is authoritative and must win.
+    expect(
+      clientIpFromHeaders(
+        get({
+          "cf-connecting-ip": "6.6.6.6",
+          "x-real-ip": "203.0.113.9",
+        }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("returns null when the pinned header is absent, even if others are present", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-real-ip");
+    expect(
+      clientIpFromHeaders(get({ "cf-connecting-ip": "6.6.6.6" })),
+    ).toBeNull();
+  });
+
+  it("normalises TRUSTED_IP_HEADER casing/whitespace", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "  X-Real-IP  ");
+    expect(
+      clientIpFromHeaders(
+        get({ "cf-connecting-ip": "6.6.6.6", "x-real-ip": "203.0.113.9" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("keeps rightmost-hop XFF parsing when pinned to x-forwarded-for", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-forwarded-for");
+    expect(
+      clientIpFromHeaders(
+        get({
+          "cf-connecting-ip": "6.6.6.6",
+          "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+        }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+});
+
+describe("isSecureRequest (session cookie Secure scheme detection)", () => {
+  const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
+
+  it("marks Secure when the forwarded scheme is https", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "https" }))).toBe(true);
+  });
+
+  it("does not mark Secure when the forwarded scheme is plain http", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "http" }))).toBe(false);
+  });
+
+  it("does not mark Secure for local dev over http://localhost", () => {
+    // No TLS-terminating proxy in front, so no x-forwarded-proto is present.
+    expect(isSecureRequest(get({ host: "localhost:3000" }))).toBe(false);
+    expect(isSecureRequest(get({ host: "127.0.0.1:3000" }))).toBe(false);
+    expect(isSecureRequest(get({}))).toBe(false);
+  });
+
+  it("reads the leftmost (client-facing) entry of a forwarded chain", () => {
+    // client → outer proxy (https) → inner proxy (http) appends its hop.
+    expect(
+      isSecureRequest(get({ "x-forwarded-proto": "https, http" })),
+    ).toBe(true);
+    expect(
+      isSecureRequest(get({ "x-forwarded-proto": "http, https" })),
+    ).toBe(false);
+  });
+
+  it("normalises forwarded-proto casing and whitespace", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "  HTTPS " }))).toBe(true);
+  });
+});
 
 describe("request info capture caps", () => {
   afterEach(() => {

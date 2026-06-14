@@ -1,0 +1,1 @@
+ALTER TYPE "public"."notification_channel" ADD VALUE 'home_assistant';

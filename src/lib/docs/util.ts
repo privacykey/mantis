@@ -1,10 +1,18 @@
 export function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  return (
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;")
+      // Strip characters that are illegal in XML 1.0 — all C0 control bytes
+      // except tab (0x09), LF (0x0A), CR (0x0D), plus DEL (0x7F). An operator
+      // memo carrying e.g. a stray \x00/\x07 would otherwise produce a
+      // malformed .docx/.xlsx/.pptx/.svg that silently fails to open, breaking
+      // the canary. See XML 1.0 §2.2 (Char production).
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+  );
 }
 
 export type DocOptions = {

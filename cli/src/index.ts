@@ -39,6 +39,7 @@ import { watchCmd } from "./commands/watch.js";
 import { whoamiCmd } from "./commands/whoami.js";
 import { CLI_VERSION } from "./version.js";
 import { readConfig } from "./lib/config.js";
+import { listEdgeKeyWorkers } from "./lib/edge-key.js";
 import {
   c,
   fail,
@@ -103,18 +104,22 @@ program
   .action(async () => {
     const stored = await readConfig();
     const hasProfile = !!stored && Object.keys(stored.profiles).length > 0;
+    const edgeWorkers = await listEdgeKeyWorkers();
+    const hasEdge = edgeWorkers.length > 0;
 
-    if (!hasProfile) {
+    // Case 1: brand-new — neither stateful login nor an edge key.
+    if (!hasProfile && !hasEdge) {
       process.stdout.write(
         `${c.bold("Welcome to mantis.")} ${c.dim("Self-hostable tripwires for the terminal.")}
 
-You haven't logged in yet. Point the CLI at a Mantis server to get started:
+Two ways to use mantis — pick whichever fits, or both:
 
-  ${c.cyan("mantis login")}
+  ${c.dim("1. Stateful server")} ${c.dim("(dashboard, hit history, multi-destination keys)")}
+       ${c.cyan("mantis login")}                       ${c.dim("# interactive: server URL + API key")}
 
-Or skip the prompt by passing the URL directly:
-
-  ${c.cyan("mantis login --url https://mantis.example.com")}
+  ${c.dim("2. Cloudflare Worker edge")} ${c.dim("(no server, sub-50ms response, self-contained URLs)")}
+       ${c.cyan("mantis edge keygen")}                 ${c.dim("# generate an AES key")}
+       ${c.cyan("mantis edge set-key <worker-url>")}   ${c.dim("# store it locally")}
 
 Then explore: ${c.dim("mantis --help")}
 `,
@@ -122,15 +127,58 @@ Then explore: ${c.dim("mantis --help")}
       return;
     }
 
-    const profileName = stored.currentProfile;
-    const entry = stored.profiles[profileName];
-    process.stdout.write(
-      `${c.dim("Logged in as")} ${c.bold(profileName)} ${c.dim("→")} ${entry?.baseUrl ?? "?"}
+    // Case 2: edge-only — no stateful profile yet, but an edge key is set up.
+    if (!hasProfile && hasEdge) {
+      const workerList = edgeWorkers
+        .slice(0, 3)
+        .map((w) => `  ${c.cyan(w)}`)
+        .join("\n");
+      const more =
+        edgeWorkers.length > 3
+          ? `\n  ${c.dim(`(+${edgeWorkers.length - 3} more)`)}`
+          : "";
+      process.stdout.write(
+        `${c.dim("Edge keys configured for:")}
+${workerList}${more}
 
+You're set up for ${c.bold("mantis-edge")} but haven't logged into a stateful server. That's expected — most edge use cases don't need one.
+
+${c.dim("Quick start (edge):")}
+  ${c.cyan("mantis edge mint")}                              ${c.dim("# interactive wizard")}
+  ${c.cyan("mantis edge mint --webhook <url> --channel discord")}
+  ${c.cyan("mantis edge install <url> --type shell")}        ${c.dim("# host snippet for a minted URL")}
+
+${c.dim("If you also want a stateful server (dashboard, hit history, multi-destination keys):")}
+  ${c.cyan("mantis login")}
+
+`,
+      );
+      program.outputHelp();
+      return;
+    }
+
+    // Case 3 + 4: stateful profile present (with or without edge).
+    const profileName = stored!.currentProfile;
+    const entry = stored!.profiles[profileName];
+    process.stdout.write(
+      `${c.dim("Logged in as")} ${c.bold(profileName)} ${c.dim("→")} ${entry?.baseUrl ?? "?"}\n`,
+    );
+    if (hasEdge) {
+      process.stdout.write(
+        `${c.dim("Edge keys:  ")} ${edgeWorkers.length === 1 ? c.cyan(edgeWorkers[0]!) : `${edgeWorkers.length} workers`}\n`,
+      );
+    }
+    process.stdout.write(
+      `
 ${c.dim("Quick start:")}
   ${c.cyan('mantis new "my first key"')}    ${c.dim("# create a key")}
   ${c.cyan("mantis list")}                   ${c.dim("# see all keys")}
-  ${c.cyan("mantis hits last --follow")}     ${c.dim("# tail hits live")}
+  ${c.cyan("mantis hits last --follow")}     ${c.dim("# tail hits live")}` +
+        (hasEdge
+          ? `
+  ${c.cyan("mantis edge mint")}              ${c.dim("# stateless edge URL")}`
+          : "") +
+        `
 
 `,
     );

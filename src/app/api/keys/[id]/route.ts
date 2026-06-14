@@ -10,6 +10,12 @@ import { serializeKey } from "@/lib/keys";
 import { validateDestination } from "@/lib/notify/channels";
 import { extractIp } from "@/lib/request-info";
 import {
+  BodyParseError,
+  BodyTooLargeError,
+  MAX_API_JSON_BYTES,
+  readBodyJson,
+} from "@/lib/safe-body";
+import {
   listDestinations,
   replaceDestinations,
   serializeResult,
@@ -46,12 +52,21 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "bad_request", message: "invalid JSON body" },
-      { status: 400 },
-    );
+    body = await readBodyJson(req, MAX_API_JSON_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: err.message },
+        { status: 413 },
+      );
+    }
+    if (err instanceof BodyParseError) {
+      return NextResponse.json(
+        { error: "bad_request", message: "invalid JSON body" },
+        { status: 400 },
+      );
+    }
+    throw err;
   }
 
   const parsed = updateKeySchema.safeParse(body);

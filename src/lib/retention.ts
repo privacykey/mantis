@@ -9,7 +9,17 @@ import { log } from "@/lib/log";
  *   MANTIS_AUDIT_RETENTION_DAYS        — append-only audit_events
  *   MANTIS_SESSION_RETENTION_DAYS      — terminated sessions only
  * Unset = retain forever. Runs inside the notify worker.
+ *
+ * The rate_limits sweep below is the exception: it always runs and is not
+ * env-gated. That table is internal operational state (one row per limiter
+ * key) with no value once its fixed-window has elapsed, so leaving rows
+ * forever is pure unbounded growth — a slow disk-exhaustion vector, since
+ * keys include attacker-rotatable IPs (login:<ip>, auth-fail:<ip>, …).
  */
+
+// TTL for spent rate_limits rows. All limiter windows are ~1 minute, so a day
+// is comfortably past any live window — a row this old cannot be in use.
+const RATE_LIMIT_RETENTION_DAYS = 1;
 
 function readPositiveInt(name: string): number | null {
   const raw = process.env[name];
@@ -22,7 +32,7 @@ function readPositiveInt(name: string): number | null {
   return n;
 }
 
-export function retentionConfig(): {
+function retentionConfig(): {
   hitDays: number | null;
   notificationDays: number | null;
   auditDays: number | null;
@@ -41,12 +51,14 @@ export async function runRetentionSweep(): Promise<{
   notificationsDeleted: number;
   auditEventsDeleted: number;
   sessionsDeleted: number;
+  rateLimitsDeleted: number;
 }> {
   const cfg = retentionConfig();
   let hitsDeleted = 0;
   let notificationsDeleted = 0;
   let auditEventsDeleted = 0;
   let sessionsDeleted = 0;
+  let rateLimitsDeleted = 0;
 
   if (cfg.hitDays !== null) {
     const res = await db.execute<{ count: string }>(sql`
@@ -109,11 +121,27 @@ export async function runRetentionSweep(): Promise<{
     sessionsDeleted = Number(res[0]?.count ?? 0);
   }
 
+  // Always-on, unlike the env-gated categories above: drop rate_limits rows
+  // whose window elapsed long ago. A plain DELETE is idempotent and safe to
+  // run concurrently — overlapping sweeps just delete intersecting row sets.
+  {
+    const res = await db.execute<{ count: string }>(sql`
+      WITH deleted AS (
+        DELETE FROM rate_limits
+        WHERE window_start < now() - (${RATE_LIMIT_RETENTION_DAYS}::int * interval '1 day')
+        RETURNING 1
+      )
+      SELECT count(*) AS count FROM deleted
+    `);
+    rateLimitsDeleted = Number(res[0]?.count ?? 0);
+  }
+
   if (
     hitsDeleted > 0 ||
     notificationsDeleted > 0 ||
     auditEventsDeleted > 0 ||
-    sessionsDeleted > 0
+    sessionsDeleted > 0 ||
+    rateLimitsDeleted > 0
   ) {
     log.info(
       {
@@ -121,6 +149,7 @@ export async function runRetentionSweep(): Promise<{
         notificationsDeleted,
         auditEventsDeleted,
         sessionsDeleted,
+        rateLimitsDeleted,
         cfg,
       },
       "retention sweep deleted rows",
@@ -131,5 +160,6 @@ export async function runRetentionSweep(): Promise<{
     notificationsDeleted,
     auditEventsDeleted,
     sessionsDeleted,
+    rateLimitsDeleted,
   };
 }

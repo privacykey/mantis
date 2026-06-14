@@ -49,7 +49,26 @@ export async function openCmd(
   });
 }
 
-function launchBrowser(url: string): boolean {
+function launchBrowser(rawUrl: string): boolean {
+  // Hard-validate before shelling out. spawn() with an args array doesn't
+  // invoke a POSIX shell, but on Windows `cmd.exe /c start ...` re-parses
+  // its command line through cmd.exe's own parser, where `&`, `|`, `>`,
+  // `^` etc. are special — so a URL with those characters can break out
+  // of the argv quoting Node applied. The fix:
+  //   1) refuse anything that isn't a parseable http/https URL
+  //   2) on Windows, use `rundll32.exe url.dll,FileProtocolHandler` so we
+  //      never go through cmd.exe at all.
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return false;
+  }
+  const url = parsed.toString();
+
   const platform = process.platform;
   let cmd: string;
   let args: string[];
@@ -57,8 +76,8 @@ function launchBrowser(url: string): boolean {
     cmd = "open";
     args = [url];
   } else if (platform === "win32") {
-    cmd = "cmd";
-    args = ["/c", "start", "", url];
+    cmd = "rundll32.exe";
+    args = ["url.dll,FileProtocolHandler", url];
   } else {
     cmd = "xdg-open";
     args = [url];

@@ -3,6 +3,7 @@ import { db } from "@/db/client";
 import { notifications, type NotificationChannel } from "@/db/schema";
 import { log } from "@/lib/log";
 import { runRetentionSweep } from "@/lib/retention";
+import { openSecretOrNull } from "@/lib/secret-box";
 import { loadSendContext, send } from "./senders";
 
 const IDLE_POLL_MS = 5_000;
@@ -117,7 +118,8 @@ async function processOne(c: Claimed): Promise<void> {
     await send(c.channel, {
       ...ctx,
       target: c.target,
-      signingSecret: c.signing_secret,
+      // Decrypt the at-rest envelope right before it is used as the HMAC key.
+      signingSecret: openSecretOrNull(c.signing_secret),
     });
 
     await markSucceeded(c.id, nextAttempt);

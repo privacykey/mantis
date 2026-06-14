@@ -86,7 +86,9 @@ export function SecretReveal({
           </button>
         )}
         {state.kind === "loading" && (
-          <span className="text-xs text-neutral-500">loading…</span>
+          <span role="status" className="text-xs text-neutral-500">
+            loading…
+          </span>
         )}
         {state.kind === "shown" && (
           <>
@@ -104,11 +106,14 @@ export function SecretReveal({
             >
               hide
             </button>
+            <span role="status" className="sr-only">
+              {copied ? "copied to clipboard" : "signing secret revealed"}
+            </span>
           </>
         )}
       </div>
       {state.kind === "error" && (
-        <p className="text-xs text-red-400 mt-1">
+        <p role="alert" className="text-xs text-red-400 mt-1">
           could not reveal: {state.message}
         </p>
       )}

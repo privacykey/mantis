@@ -21,6 +21,12 @@ export const env = {
   smtpUrl: process.env.SMTP_URL,
   smtpFrom: process.env.SMTP_FROM ?? "Mantis <mantis@localhost>",
   bootstrapApiKey: process.env.BOOTSTRAP_API_KEY,
+  // Server-side pepper for HMAC-hashing API keys at rest. Required —
+  // generate one with `openssl rand -base64 32` and put it in your .env.
+  // Existing deployments upgrading from the SHA-256 era: set this once and
+  // existing keys keep working via dual-mode verify (and re-hash on next
+  // use). See docs/cli-backup or src/lib/api-keys.ts for the full story.
+  apiKeyPepper: required("MANTIS_API_KEY_PEPPER"),
   applePass: getApplePassConfig(),
 };
 

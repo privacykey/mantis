@@ -83,6 +83,55 @@ describe("validateDestination", () => {
     });
   });
 
+  describe("home_assistant", () => {
+    it("accepts https /api/webhook/<id>", () => {
+      expect(
+        validateDestination(
+          "home_assistant",
+          "https://ha.example.com/api/webhook/mantis-abc12345",
+        ).ok,
+      ).toBe(true);
+    });
+    it("accepts http (LAN/tailnet)", () => {
+      expect(
+        validateDestination(
+          "home_assistant",
+          "http://homeassistant.local:8123/api/webhook/mantis-test",
+        ).ok,
+      ).toBe(true);
+    });
+    it("accepts trailing slash", () => {
+      expect(
+        validateDestination(
+          "home_assistant",
+          "https://ha.example.com/api/webhook/abc/",
+        ).ok,
+      ).toBe(true);
+    });
+    it("rejects non-webhook path", () => {
+      const r = validateDestination(
+        "home_assistant",
+        "https://ha.example.com/api/states/light.kitchen",
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/\/api\/webhook\/<id>/);
+    });
+    it("rejects bare host", () => {
+      expect(
+        validateDestination("home_assistant", "https://ha.example.com").ok,
+      ).toBe(false);
+    });
+    it("rejects ftp", () => {
+      expect(
+        validateDestination("home_assistant", "ftp://ha.example.com/api/webhook/x")
+          .ok,
+      ).toBe(false);
+    });
+    it("rejects invalid URL", () => {
+      expect(validateDestination("home_assistant", "not-a-url").ok).toBe(false);
+    });
+  });
+
   describe("common", () => {
     it("rejects empty target", () => {
       expect(validateDestination("webhook", "").ok).toBe(false);
@@ -102,6 +151,8 @@ describe("detectChannelFromUrl", () => {
     ["https://discordapp.com/api/webhooks/1/2", "discord"],
     ["https://contoso.webhook.office.com/webhookb2/x", "teams"],
     ["alerts@example.com", "email"],
+    ["https://ha.example.com/api/webhook/mantis-abc", "home_assistant"],
+    ["http://homeassistant.local:8123/api/webhook/x/", "home_assistant"],
     ["https://example.com/raw", "webhook"],
     ["nonsense", null],
   ])("detects %j as %j", (input, expected) => {

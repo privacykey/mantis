@@ -1,19 +1,22 @@
 import { createHmac } from "node:crypto";
-import { assertSafeWebhookUrl } from "@/lib/ssrf";
+import { Agent, fetch as undiciFetch } from "undici";
+import { assertSafeWebhookUrl, safeLookup } from "@/lib/ssrf";
 
 const DEFAULT_TIMEOUT_MS = 5000;
+
+// Dispatcher whose connector re-validates the resolved address at connect
+// time. Combined with the pre-flight `assertSafeWebhookUrl`, this closes the
+// DNS-rebinding TOCTOU window — undici connects only to an address we just
+// confirmed is public. Uses undici's own fetch (not the global, which Next
+// may patch) so the dispatcher is honoured.
+const safeDispatcher = new Agent({
+  connect: { lookup: safeLookup },
+});
 
 export type SafePostOpts = {
   signingSecret?: string | null;
   userAgent?: string;
   timeoutMs?: number;
-  /**
-   * Echo up to 200 chars of the response body into the thrown error. Off by
-   * default — leaks response previews into the caller, useful as an
-   * internal-service probe. Only safe on paths that log the error
-   * internally and never surface it via the API.
-   */
-  includeBodyInError?: boolean;
 };
 
 /**
@@ -50,12 +53,13 @@ export async function safePostJson(
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
   try {
-    const res = await fetch(url, {
+    const res = await undiciFetch(url, {
       method: "POST",
       headers,
       body: bodyStr,
       signal: controller.signal,
       redirect: "manual",
+      dispatcher: safeDispatcher,
     });
     if (res.status >= 300 && res.status < 400) {
       throw new Error(
@@ -63,12 +67,10 @@ export async function safePostJson(
       );
     }
     if (!res.ok) {
-      if (opts.includeBodyInError) {
-        const text = await res.text().catch(() => "");
-        throw new Error(
-          `HTTP ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 200)}` : ""}`,
-        );
-      }
+      // Status line only — never echo the target's response body into the
+      // error. It surfaces to the key owner via notifications.last_error, and
+      // paired with any SSRF gap would turn the sender into an internal-
+      // response oracle.
       throw new Error(`HTTP ${res.status} ${res.statusText}`);
     }
   } finally {

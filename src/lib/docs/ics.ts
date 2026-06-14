@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { type DocOptions } from "./util";
 
 /**
@@ -14,7 +15,10 @@ export function generateIcs(opts: DocOptions): Promise<Buffer> {
   const title = icsEscape(opts.title);
   const url = opts.url;
   const description = icsEscape(opts.body?.join("\\n") ?? opts.title);
-  const uid = `${Math.random().toString(36).slice(2)}-${Date.now()}@mantis.local`;
+  // Crypto-grade random UID. Predictable UIDs would let a target who
+  // received this canary correlate it with other canaries (same generator,
+  // same Math.random seed-derived prefix) — so we use the OS RNG instead.
+  const uid = `${randomBytes(12).toString("hex")}-${Date.now()}@mantis.local`;
   const now = formatIcsDate(new Date());
   const start = formatIcsDate(midnightToday(12));
   const end = formatIcsDate(midnightToday(13));
@@ -47,7 +51,10 @@ function icsEscape(s: string): string {
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
-    .replace(/\r?\n/g, "\\n");
+    // Normalize ALL line breaks — CRLF, lone LF, and lone CR. A bare \r (not
+    // followed by \n) would otherwise survive and, in line-oriented ICS, let
+    // the memo break out of the property value and inject a property line.
+    .replace(/\r\n|\r|\n/g, "\\n");
 }
 
 function formatIcsDate(d: Date): string {

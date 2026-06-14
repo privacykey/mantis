@@ -3,6 +3,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { db } from "@/db/client";
 import { apiKeys, sessions, type ApiKey } from "@/db/schema";
+import { clientIpFromHeaders, isSecureRequest } from "@/lib/request-info";
 
 const COOKIE_NAME = "mantis_session";
 const SESSION_PREFIX = "mantis_sess_";
@@ -81,7 +82,10 @@ export async function setSessionCookie(apiKeyId: string): Promise<string> {
     value: minted.plaintext,
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    // Gate Secure on the actual request scheme (X-Forwarded-Proto), not on
+    // NODE_ENV: a non-prod self-host behind HTTPS still needs Secure, and a
+    // plain-HTTP deployment must not get it or the cookie is never sent back.
+    secure: isSecureRequest((n) => hdrs.get(n)),
     path: "/",
     maxAge: MAX_AGE_SECONDS,
   });
@@ -103,16 +107,5 @@ export async function clearSessionCookie(): Promise<void> {
 }
 
 function readClientIp(hdrs: Awaited<ReturnType<typeof headers>>): string | null {
-  const trust =
-    process.env.TRUST_PROXY_HEADERS === "1" ||
-    Boolean(process.env.VERCEL) ||
-    process.env.NODE_ENV !== "production";
-  if (!trust) return null;
-  return (
-    hdrs.get("cf-connecting-ip") ??
-    hdrs.get("x-vercel-forwarded-for") ??
-    hdrs.get("x-real-ip") ??
-    hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    null
-  );
+  return clientIpFromHeaders((n) => hdrs.get(n));
 }

@@ -12,6 +12,7 @@ import { env, keyUrl } from "@/lib/env";
 import { parseHostContext } from "@/lib/installers/headers";
 import { log } from "@/lib/log";
 import { sanitizeHeaderValue } from "@/lib/sanitize";
+import { escapeCode, escapeMarkdown, escapeSlack } from "./escape";
 import { safePostJson } from "./safe-post";
 
 let mailer: Transporter | null | undefined;
@@ -65,6 +66,8 @@ export async function send(
       return sendDiscord(ctx);
     case "teams":
       return sendTeams(ctx);
+    case "home_assistant":
+      return sendHomeAssistant(ctx);
     default:
       throw new Error(`unknown channel: ${String(channel)}`);
   }
@@ -105,23 +108,24 @@ export async function sendSlack(ctx: SendContext): Promise<void> {
   const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
 
   const fields: Array<{ type: "mrkdwn"; text: string }> = [
-    { type: "mrkdwn", text: `*IP*\n${hit.ip ?? "—"}` },
+    { type: "mrkdwn", text: `*IP*\n${escapeSlack(hit.ip ?? "—")}` },
     {
       type: "mrkdwn",
-      text: `*UA*\n${truncate(hit.userAgent ?? "—", 80)}`,
+      text: `*UA*\n${escapeSlack(truncate(hit.userAgent ?? "—", 80))}`,
     },
   ];
-  if (hostCtx?.user) fields.push({ type: "mrkdwn", text: `*User*\n${hostCtx.user}` });
-  if (hostCtx?.host) fields.push({ type: "mrkdwn", text: `*Host*\n${hostCtx.host}` });
+  if (hostCtx?.user) fields.push({ type: "mrkdwn", text: `*User*\n${escapeSlack(hostCtx.user)}` });
+  if (hostCtx?.host) fields.push({ type: "mrkdwn", text: `*Host*\n${escapeSlack(hostCtx.host)}` });
   if (hostCtx?.ssh_client_ip) {
-    fields.push({ type: "mrkdwn", text: `*SSH from*\n${hostCtx.ssh_client_ip}` });
+    fields.push({ type: "mrkdwn", text: `*SSH from*\n${escapeSlack(hostCtx.ssh_client_ip)}` });
   }
   if (hostCtx?.sudo_cmd) {
-    fields.push({ type: "mrkdwn", text: `*Sudo cmd*\n\`${hostCtx.sudo_cmd}\`` });
+    fields.push({ type: "mrkdwn", text: `*Sudo cmd*\n\`${escapeCode(escapeSlack(hostCtx.sudo_cmd))}\`` });
   }
 
   await postJson(ctx.target, {
-    text: `Mantis triggered: ${key.memo}`,
+    // top-level `text` is the notification fallback; plain_text header is literal.
+    text: `Mantis triggered: ${escapeSlack(key.memo)}`,
     blocks: [
       {
         type: "header",
@@ -149,22 +153,22 @@ export async function sendDiscord(ctx: SendContext): Promise<void> {
   const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
 
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [
-    { name: "IP", value: hit.ip ?? "—", inline: true },
+    { name: "IP", value: escapeMarkdown(hit.ip ?? "—"), inline: true },
     {
       name: "UA",
-      value: truncate(hit.userAgent ?? "—", 80),
+      value: escapeMarkdown(truncate(hit.userAgent ?? "—", 80)),
       inline: false,
     },
   ];
-  if (hostCtx?.user) fields.push({ name: "User", value: hostCtx.user, inline: true });
-  if (hostCtx?.host) fields.push({ name: "Host", value: hostCtx.host, inline: true });
+  if (hostCtx?.user) fields.push({ name: "User", value: escapeMarkdown(hostCtx.user), inline: true });
+  if (hostCtx?.host) fields.push({ name: "Host", value: escapeMarkdown(hostCtx.host), inline: true });
   if (hostCtx?.ssh_client_ip) {
-    fields.push({ name: "SSH from", value: hostCtx.ssh_client_ip, inline: true });
+    fields.push({ name: "SSH from", value: escapeMarkdown(hostCtx.ssh_client_ip), inline: true });
   }
   if (hostCtx?.sudo_cmd) {
     fields.push({
       name: "Sudo cmd",
-      value: "`" + truncate(hostCtx.sudo_cmd, 120) + "`",
+      value: "`" + escapeCode(truncate(hostCtx.sudo_cmd, 120)) + "`",
       inline: false,
     });
   }
@@ -193,17 +197,17 @@ export async function sendTeams(ctx: SendContext): Promise<void> {
   const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
 
   const facts: Array<{ title: string; value: string }> = [
-    { title: "IP", value: hit.ip ?? "—" },
+    { title: "IP", value: escapeMarkdown(hit.ip ?? "—") },
     { title: "Occurred", value: hit.occurredAt.toISOString() },
-    { title: "UA", value: truncate(hit.userAgent ?? "—", 120) },
+    { title: "UA", value: escapeMarkdown(truncate(hit.userAgent ?? "—", 120)) },
   ];
-  if (hostCtx?.user) facts.push({ title: "User", value: hostCtx.user });
-  if (hostCtx?.host) facts.push({ title: "Host", value: hostCtx.host });
+  if (hostCtx?.user) facts.push({ title: "User", value: escapeMarkdown(hostCtx.user) });
+  if (hostCtx?.host) facts.push({ title: "Host", value: escapeMarkdown(hostCtx.host) });
   if (hostCtx?.ssh_client_ip) {
-    facts.push({ title: "SSH from", value: hostCtx.ssh_client_ip });
+    facts.push({ title: "SSH from", value: escapeMarkdown(hostCtx.ssh_client_ip) });
   }
   if (hostCtx?.sudo_cmd) {
-    facts.push({ title: "Sudo cmd", value: hostCtx.sudo_cmd });
+    facts.push({ title: "Sudo cmd", value: escapeMarkdown(hostCtx.sudo_cmd) });
   }
 
   await postJson(ctx.target, {
@@ -220,7 +224,7 @@ export async function sendTeams(ctx: SendContext): Promise<void> {
               type: "TextBlock",
               size: "Medium",
               weight: "Bolder",
-              text: `Mantis triggered: ${key.memo}`,
+              text: `Mantis triggered: ${escapeMarkdown(key.memo)}`,
               wrap: true,
             },
             {
@@ -236,6 +240,38 @@ export async function sendTeams(ctx: SendContext): Promise<void> {
       },
     ],
   });
+}
+
+// ---------------------------------------------------------------------------
+// Home Assistant — POSTs to a webhook automation trigger
+// (https://<ha>/api/webhook/<id>). The webhook_id is the credential; HA
+// runs whatever automation the user wired to it. Payload is kept flat so
+// HA Jinja templates (`trigger.json.<field>`) stay readable.
+// ---------------------------------------------------------------------------
+
+export async function sendHomeAssistant(ctx: SendContext): Promise<void> {
+  const { key, hit } = ctx;
+  const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
+  await postJson(
+    ctx.target,
+    {
+      type: "mantis.hit",
+      memo: key.memo,
+      key_url: keyUrl(key.publicId),
+      key_public_id: key.publicId,
+      occurred_at: hit.occurredAt,
+      ip: hit.ip,
+      user_agent: hit.userAgent,
+      ua_browser: hit.uaBrowser,
+      ua_os: hit.uaOs,
+      ua_device: hit.uaDevice,
+      bot_label: hit.botLabel,
+      is_duplicate: hit.isDuplicate,
+      host_context: hostCtx,
+      hit_id: hit.id,
+    },
+    { signingSecret: ctx.signingSecret ?? null },
+  );
 }
 
 // ---------------------------------------------------------------------------

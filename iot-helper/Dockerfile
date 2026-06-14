@@ -1,11 +1,29 @@
-FROM node:24-alpine
+# Match the project's Node engine (>=25.8.0) so the container runtime tracks CI.
+# Digest-pinned for reproducible pulls (Dependabot's docker ecosystem bumps it).
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
 
-RUN apk add --no-cache iproute2 iputils
+# arp / `ip neigh` are passive neighbour-table reads (no privileges needed).
+# `ping` active probes need CAP_NET_RAW when running as non-root — grant it
+# (docker run --cap-add=NET_RAW, or --sysctl net.ipv4.ping_group_range=...)
+# only if you enable `ping` probes in the config; passive detection works
+# without any added capability.
+RUN apk add --no-cache iproute2 iputils \
+  && addgroup -S mantis && adduser -S mantis -G mantis \
+  && mkdir -p /config && chown -R mantis:mantis /config
+
 WORKDIR /app
-COPY package.json ./
-COPY bin ./bin
-COPY config.example.json ./config.example.json
+COPY --chown=mantis:mantis package.json ./
+COPY --chown=mantis:mantis bin ./bin
+COPY --chown=mantis:mantis config.example.json ./config.example.json
 
 ENV MANTIS_IOT_CONFIG=/config/mantis-iot.json
 VOLUME ["/config"]
+
+USER mantis
+
+# The helper can't run without a readable, valid-JSON config, so use that as
+# the liveness signal. Unhealthy until the operator mounts /config.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "JSON.parse(require('fs').readFileSync(process.env.MANTIS_IOT_CONFIG,'utf8'))" || exit 1
+
 CMD ["node", "bin/mantis-iot-helper.js"]

@@ -68,6 +68,28 @@ const DEFAULT_KDF_PARAMS = {
   p: 1,
 } as const;
 
+/**
+ * Hard bounds on the scrypt cost parameters we'll accept from a bundle
+ * envelope. The envelope is UNTRUSTED — N/r/p are read and fed to scrypt
+ * BEFORE the GCM tag (and thus the passphrase) can be verified, so a hostile
+ * bundle could otherwise inflate them to burn minutes-to-hours of CPU on the
+ * operator's machine during `mantis restore`. In particular `p` scales CPU
+ * linearly and slips past the fixed `maxmem` cap, so a bound on `p` (and `r`)
+ * is the load-bearing check, with `maxmem` kept as defense-in-depth.
+ *
+ * The legitimate defaults (N=32768, r=8, p=1) sit comfortably inside these,
+ * and the window is wide enough that an operator can still bump cost for a
+ * stronger backup and have it round-trip on a future CLI.
+ */
+const KDF_BOUNDS = {
+  // N must be a power of two; scrypt rejects non-powers anyway, but we bound
+  // the exponent so cost can't be cranked into denial-of-service territory.
+  N_MIN: 1 << 14, // 16384
+  N_MAX: 1 << 20, // 1048576
+  R_MAX: 32,
+  P_MAX: 16,
+} as const;
+
 // ---------------------------------------------------------------------------
 // Payload — the cleartext shape inside the encrypted envelope
 // ---------------------------------------------------------------------------
@@ -351,13 +373,7 @@ function assertEnvelope(v: unknown): BackupEnvelope {
     );
   }
   const params = requireObject(enc.kdfParams, "envelope.encryption.kdfParams");
-  if (
-    typeof params.N !== "number" ||
-    typeof params.r !== "number" ||
-    typeof params.p !== "number"
-  ) {
-    throw new Error("envelope.encryption.kdfParams must include numeric N, r, p");
-  }
+  assertKdfParams(params);
   if (typeof enc.saltB64 !== "string" || typeof enc.nonceB64 !== "string") {
     throw new Error("envelope.encryption.{saltB64,nonceB64} must be strings");
   }
@@ -365,6 +381,46 @@ function assertEnvelope(v: unknown): BackupEnvelope {
     throw new Error("envelope.ciphertextB64 must be a string");
   }
   return o as unknown as BackupEnvelope;
+}
+
+/**
+ * Validate the scrypt cost parameters from the (untrusted) envelope against
+ * hard bounds BEFORE they reach `deriveKey`. This is the DoS guard: a hostile
+ * bundle is rejected fast instead of pinning the CPU during key derivation.
+ */
+function assertKdfParams(params: Record<string, unknown>): void {
+  const { N, r, p } = params;
+  if (
+    typeof N !== "number" ||
+    typeof r !== "number" ||
+    typeof p !== "number"
+  ) {
+    throw new Error("envelope.encryption.kdfParams must include numeric N, r, p");
+  }
+  if (
+    !Number.isInteger(N) ||
+    !Number.isInteger(r) ||
+    !Number.isInteger(p)
+  ) {
+    throw new Error("envelope.encryption.kdfParams N, r, p must be integers");
+  }
+  // N: power of two within a sane range. The power-of-two test ((N & (N-1))
+  // === 0) is only valid for N > 0, which the range check already guarantees.
+  if (N < KDF_BOUNDS.N_MIN || N > KDF_BOUNDS.N_MAX || (N & (N - 1)) !== 0) {
+    throw new Error(
+      `envelope.encryption.kdfParams.N (${N}) is out of range — must be a power of two between ${KDF_BOUNDS.N_MIN} and ${KDF_BOUNDS.N_MAX}. Refusing to derive a key with an untrusted scrypt cost.`,
+    );
+  }
+  if (r < 1 || r > KDF_BOUNDS.R_MAX) {
+    throw new Error(
+      `envelope.encryption.kdfParams.r (${r}) is out of range — must be between 1 and ${KDF_BOUNDS.R_MAX}.`,
+    );
+  }
+  if (p < 1 || p > KDF_BOUNDS.P_MAX) {
+    throw new Error(
+      `envelope.encryption.kdfParams.p (${p}) is out of range — must be between 1 and ${KDF_BOUNDS.P_MAX}.`,
+    );
+  }
 }
 
 function assertPayload(v: unknown): BackupPayload {

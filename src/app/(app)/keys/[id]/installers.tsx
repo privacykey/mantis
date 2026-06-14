@@ -94,11 +94,19 @@ export function InstallersCard({ keyId }: { keyId: string }) {
         install steps.
       </p>
 
-      <div className="flex flex-wrap gap-1 mb-4 border-b border-neutral-900">
+      <div
+        role="tablist"
+        aria-label="install targets"
+        className="flex flex-wrap gap-1 mb-4 border-b border-neutral-900"
+      >
         {TABS.map((t) => (
           <button
             key={t.type}
             type="button"
+            role="tab"
+            id={`installer-tab-${t.type}`}
+            aria-selected={active === t.type}
+            aria-controls="installer-panel"
             onClick={() => setActive(t.type)}
             className={
               "text-xs px-3 py-1.5 border-b-2 transition-colors cursor-pointer font-[inherit] bg-transparent " +
@@ -136,7 +144,12 @@ export function InstallersCard({ keyId }: { keyId: string }) {
       )}
 
       {installer && (
-        <div className="space-y-3">
+        <div
+          role="tabpanel"
+          id="installer-panel"
+          aria-labelledby={`installer-tab-${active}`}
+          className="space-y-3"
+        >
           <p className="text-sm text-neutral-300">{installer.description}</p>
           {installer.notes && (
             <p className="text-xs text-neutral-500">{installer.notes}</p>

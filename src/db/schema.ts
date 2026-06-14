@@ -98,7 +98,13 @@ export const keys = pgTable(
       onDelete: "set null",
     }),
   },
-  (t) => [index("keys_created_at_idx").on(t.createdAt.desc())],
+  (t) => [
+    index("keys_created_at_idx").on(t.createdAt.desc()),
+    // Owner-scoped lists (non-admin /api/keys, dashboard keys page,
+    // /api/hits/recent) filter on created_by_api_key_id and order by
+    // created_at desc; the composite serves both in one index scan.
+    index("keys_created_by_idx").on(t.createdByApiKeyId, t.createdAt.desc()),
+  ],
 );
 
 export const notificationDestinations = pgTable(
@@ -163,6 +169,7 @@ export const notificationChannelEnum = pgEnum("notification_channel", [
   "slack",
   "discord",
   "teams",
+  "home_assistant",
 ]);
 
 export const notifications = pgTable(
@@ -203,6 +210,11 @@ export const notifications = pgTable(
       .on(t.nextAttemptAt)
       .where(sql`status = 'pending'`),
     index("notifications_hit_idx").on(t.hitId),
+    // Supports the hourly retention purge (DELETE ... WHERE status IN (...)
+    // AND updated_at < cutoff); without it the sweep seq-scans the table.
+    index("notifications_settled_updated_idx")
+      .on(t.updatedAt)
+      .where(sql`status IN ('succeeded', 'failed', 'aborted')`),
   ],
 );
 
@@ -303,6 +315,17 @@ export const walletRegistrations = pgTable(
 
 export type WalletRegistration = typeof walletRegistrations.$inferSelect;
 export type NewWalletRegistration = typeof walletRegistrations.$inferInsert;
+
+// Cluster-wide fixed-window rate limiter state — one row per limiter key
+// (e.g. "auth-fail:<ip>"). The window resets lazily on the next consume.
+// Shared across instances, unlike the in-memory fallback in lib/rate-limit.ts.
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  count: integer("count").notNull().default(0),
+});
 
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type Key = typeof keys.$inferSelect;

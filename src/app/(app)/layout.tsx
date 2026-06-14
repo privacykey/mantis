@@ -20,7 +20,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
             >
               mantis
             </Link>
-            <nav className="flex items-center gap-4 text-neutral-400">
+            <nav
+              aria-label="primary"
+              className="flex items-center gap-4 text-neutral-400"
+            >
               <Link href="/keys" className="text-neutral-400 no-underline hover:text-neutral-200">
                 keys
               </Link>
@@ -31,8 +34,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 href="/inbox"
                 className="text-neutral-400 no-underline hover:text-neutral-200"
                 target="_blank"
+                rel="noopener noreferrer"
               >
-                inbox ↗
+                inbox <span aria-hidden="true">↗</span>
+                <span className="sr-only">(opens in new tab)</span>
               </Link>
               {session.isAdmin && (
                 <Link

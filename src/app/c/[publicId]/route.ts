@@ -1,7 +1,8 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { type NextRequest, after } from "next/server";
 import { db } from "@/db/client";
 import { hits, keys, type Hit, type Key } from "@/db/schema";
+import { decideHitRecording, type HitRecordDecision } from "@/lib/hits";
 import { log } from "@/lib/log";
 import { enqueueNotifications } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
@@ -22,7 +23,6 @@ const SAFE_ID_RE = /^[A-Za-z0-9]{6,32}$/;
 
 // Generous per-IP cap on the public trigger; floods drop to a silent GIF.
 const TRIGGER_RATE_LIMIT = { limit: 120, windowMs: 60_000 } as const;
-const DEFAULT_DUPLICATE_LOG_LIMIT = 10;
 
 async function lookupKey(publicId: string): Promise<Key | null> {
   if (!SAFE_ID_RE.test(publicId)) return null;
@@ -38,58 +38,6 @@ function shouldFire(key: Key): boolean {
   if (key.disabledAt !== null) return false;
   if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return false;
   return true;
-}
-
-type HitRecordDecision =
-  | { record: true; isDuplicate: boolean }
-  | { record: false; isDuplicate: true };
-
-function duplicateLogLimit(): number {
-  const raw = process.env.MANTIS_DUPLICATE_LOG_LIMIT;
-  if (!raw) return DEFAULT_DUPLICATE_LOG_LIMIT;
-  const n = Number(raw);
-  if (!Number.isInteger(n)) return DEFAULT_DUPLICATE_LOG_LIMIT;
-  return Math.min(1000, Math.max(0, n));
-}
-
-async function decideHitRecording(
-  keyId: string,
-  windowSeconds: number,
-): Promise<HitRecordDecision> {
-  if (windowSeconds <= 0) return { record: true, isDuplicate: false };
-  const since = sql<Date>`now() - (${windowSeconds}::int * interval '1 second')`;
-  const [row] = await db
-    .select({ id: hits.id, occurredAt: hits.occurredAt })
-    .from(hits)
-    .where(
-      and(
-        eq(hits.keyId, keyId),
-        gt(hits.occurredAt, since),
-        eq(hits.isDuplicate, false),
-      ),
-    )
-    .orderBy(desc(hits.occurredAt))
-    .limit(1);
-  if (!row) return { record: true, isDuplicate: false };
-
-  const limit = duplicateLogLimit();
-  if (limit <= 0) return { record: false, isDuplicate: true };
-
-  const [dupes] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(hits)
-    .where(
-      and(
-        eq(hits.keyId, keyId),
-        gt(hits.occurredAt, row.occurredAt),
-        eq(hits.isDuplicate, true),
-      ),
-    );
-
-  const duplicateCount = dupes?.count ?? 0;
-  return duplicateCount < limit
-    ? { record: true, isDuplicate: true }
-    : { record: false, isDuplicate: true };
 }
 
 export async function GET(req: NextRequest, ctx: Ctx) {
@@ -110,10 +58,15 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 async function handle(req: NextRequest, publicId: string): Promise<Response> {
   const ip = extractIp(req);
 
-  // Rate-limit before the DB lookup. Over-cap → silent GIF so the limiter's
-  // engagement isn't observable through response-shape differences.
-  const rl = rateLimit(`trigger:${ip ?? "anonymous"}`, TRIGGER_RATE_LIMIT);
-  if (!rl.ok) {
+  // Per-IP flood guard before the DB lookup, to shed load from a single
+  // abusive source. Enforced only when we actually have a trusted client IP:
+  // without one, every request would share a single "anonymous" bucket, and an
+  // unauthenticated flood of /c/<anything> could silence (blind) EVERY canary
+  // instance-wide once the cap was hit. In that case we fail open here and rely
+  // on the per-key guard + dedupe window below, which bound work per key
+  // without ever suppressing a different key's notification. Over-cap → silent
+  // GIF so the limiter isn't observable through response-shape differences.
+  if (ip !== null && !rateLimit(`trigger:ip:${ip}`, TRIGGER_RATE_LIMIT).ok) {
     return buildTriggerResponse("gif", null);
   }
 
@@ -126,6 +79,17 @@ async function handle(req: NextRequest, publicId: string): Promise<Response> {
 
   if (!key || !shouldFire(key)) {
     return buildTriggerResponse("gif", null);
+  }
+
+  // Per-key flood guard on the record/notify path. Scoped to this key (and IP
+  // when present) so flooding one canary can never blind another, and a missing
+  // client IP can't collapse every canary into a single bucket. The first hit
+  // in a window has already enqueued a notification and the dedupe window below
+  // bounds per-key notification volume, so shedding the flood's extra recording
+  // work here costs no genuine alert. Over-cap → still serve the key's real
+  // response (the caller already knows the key exists) but skip record/notify.
+  if (!rateLimit(`trigger:key:${key.publicId}:${ip ?? "anon"}`, TRIGGER_RATE_LIMIT).ok) {
+    return buildTriggerResponse(key.responseKind, key.responsePayload as unknown);
   }
 
   const userAgent = capStoredRequestField(req.headers.get("user-agent"));

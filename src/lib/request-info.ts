@@ -38,19 +38,95 @@ function maybeWarnNoProxy(): void {
   }
 }
 
-export function extractIp(req: NextRequest): string | null {
+// Number of trusted reverse-proxy hops in front of this app. The client IP in
+// X-Forwarded-For is the entry this many positions from the RIGHT (your nearest
+// proxy appends the real peer to the right). Default 1 (a single front proxy).
+function trustProxyHops(): number {
+  return boundedIntEnv("TRUST_PROXY_HOPS", 1, 1, 16);
+}
+
+// When set, client-IP extraction trusts ONLY this header and ignores every
+// other one in IP_HEADERS. Pin it to the header your proxy authoritatively
+// sets (e.g. "x-real-ip" behind nginx/Caddy/Traefik) so an attacker cannot
+// smuggle a forged cf-connecting-ip past a proxy that doesn't strip inbound
+// copies of it. Unset = the legacy ordered fallback across all IP_HEADERS.
+function trustedIpHeader(): string | null {
+  const raw = process.env.TRUSTED_IP_HEADER;
+  if (!raw) return null;
+  const name = raw.trim().toLowerCase();
+  return name || null;
+}
+
+type HeaderGetter = (name: string) => string | null | undefined;
+
+/**
+ * Extract the client IP from a Headers-like object, applying the trust gate and
+ * the rightmost-hop X-Forwarded-For parsing. This is the single source of truth
+ * for client-IP attribution; `extractIp` (NextRequest) and the server-action /
+ * session paths (which only have `headers()`) all delegate here so none of them
+ * can drift back to trusting the spoofable leftmost XFF token.
+ *
+ * When TRUSTED_IP_HEADER is set, only that header is consulted; otherwise the
+ * IP_HEADERS list is tried in order (cf-connecting-ip first) for backward
+ * compatibility.
+ */
+export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (!trustProxyHeaders()) {
     maybeWarnNoProxy();
     return null;
   }
-  for (const h of IP_HEADERS) {
-    const v = req.headers.get(h);
-    if (v) {
-      const first = v.split(",")[0]?.trim();
-      if (first) return first;
+  const pinned = trustedIpHeader();
+  const headers: readonly string[] = pinned ? [pinned] : IP_HEADERS;
+  for (const h of headers) {
+    const v = get(h);
+    if (!v) continue;
+    const parts = v
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length === 0) continue;
+
+    if (h === "x-forwarded-for") {
+      // X-Forwarded-For is a client-first append chain ("client, proxy1, …").
+      // The LEFTMOST entry is supplied by the client and is fully spoofable;
+      // take the entry TRUST_PROXY_HOPS from the right (the nearest trusted
+      // hop), which a client cannot forge past your proxy layer.
+      const ip = parts[Math.max(0, parts.length - trustProxyHops())];
+      if (ip) return ip;
+    } else {
+      // cf-connecting-ip / x-real-ip / x-vercel-forwarded-for are single values
+      // set by the trusted proxy, not a client-controlled list.
+      const ip = parts[0];
+      if (ip) return ip;
     }
   }
   return null;
+}
+
+export function extractIp(req: NextRequest): string | null {
+  return clientIpFromHeaders((n) => req.headers.get(n));
+}
+
+/**
+ * Whether the inbound request reached the client over HTTPS, decided from the
+ * forwarded scheme rather than NODE_ENV. TLS is terminated by the reverse proxy
+ * / tunnel this app documents (Cloudflare, cloudflared, Tailscale Funnel,
+ * nginx), each of which sets X-Forwarded-Proto to the original client scheme.
+ *
+ * We return true only on a positive "https" signal. An over-eager Secure flag
+ * on a plaintext-HTTP deployment stops the browser from ever sending the cookie
+ * back, breaking login — so when the scheme isn't provably HTTPS we treat the
+ * request as insecure. Absence of the header means no TLS-terminating proxy is
+ * in front (local dev over http://localhost, or a direct HTTP deployment),
+ * which is likewise not secure.
+ */
+export function isSecureRequest(get: HeaderGetter): boolean {
+  const proto = get("x-forwarded-proto");
+  if (!proto) return false;
+  // X-Forwarded-Proto is appended per hop ("https, http"); the LEFTMOST entry
+  // is the scheme the client used to reach the outermost proxy.
+  const scheme = proto.split(",")[0]?.trim().toLowerCase();
+  return scheme === "https";
 }
 
 // Allowlist of request headers stored into hits.headers. The CREDENTIAL_PATTERNS
