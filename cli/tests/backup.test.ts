@@ -116,3 +116,95 @@ describe("backup bundle", () => {
     expect(await openBundle(envelope, "pw")).toEqual(empty);
   });
 });
+
+describe("backup bundle — KDF cost bounds (untrusted-input DoS guard)", () => {
+  // The envelope's scrypt cost params are read straight from the (untrusted)
+  // bundle and fed to scrypt BEFORE the GCM tag / passphrase can be verified.
+  // A hostile bundle that inflates `p` (linear CPU, slips past `maxmem`) or
+  // `N` could otherwise pin the operator's CPU for minutes-to-hours. These
+  // assert the validator rejects out-of-range cost FAST, before deriveKey.
+
+  function withKdfParams(
+    envelope: Awaited<ReturnType<typeof sealBundle>>,
+    kdfParams: Record<string, unknown>,
+  ) {
+    return {
+      ...envelope,
+      encryption: { ...envelope.encryption, kdfParams },
+    };
+  }
+
+  it("accepts the legitimate defaults (N=32768, r=8, p=1) on round-trip", async () => {
+    const envelope = await sealBundle(samplePayload(), "pw");
+    expect(envelope.encryption.kdfParams).toEqual({ N: 32768, r: 8, p: 1 });
+    expect(await openBundle(envelope, "pw")).toEqual(samplePayload());
+  });
+
+  it("rejects an inflated p before deriving a key", async () => {
+    const base = await sealBundle(samplePayload(), "pw");
+    // p=100000 would burn ~100000× the CPU of the default if it ever reached
+    // scrypt. The bound must reject it essentially instantly instead.
+    const hostile = withKdfParams(base, { N: 32768, r: 8, p: 100000 });
+
+    const start = performance.now();
+    await expect(openBundle(hostile, "pw")).rejects.toThrow(
+      /kdfParams\.p .* out of range/i,
+    );
+    // Generous ceiling: a real scrypt run with p=100000 would take many
+    // seconds-to-minutes. Rejecting in well under a second proves deriveKey
+    // was never reached.
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  it("rejects an inflated N before deriving a key", async () => {
+    const base = await sealBundle(samplePayload(), "pw");
+    const hostile = withKdfParams(base, { N: 1 << 30, r: 8, p: 1 });
+    await expect(openBundle(hostile, "pw")).rejects.toThrow(
+      /kdfParams\.N .* out of range/i,
+    );
+  });
+
+  it("rejects an N that isn't a power of two", async () => {
+    const base = await sealBundle(samplePayload(), "pw");
+    const hostile = withKdfParams(base, { N: 32768 + 1, r: 8, p: 1 });
+    await expect(openBundle(hostile, "pw")).rejects.toThrow(
+      /kdfParams\.N .* out of range/i,
+    );
+  });
+
+  it("rejects an out-of-range r", async () => {
+    const base = await sealBundle(samplePayload(), "pw");
+    const hostile = withKdfParams(base, { N: 32768, r: 1024, p: 1 });
+    await expect(openBundle(hostile, "pw")).rejects.toThrow(
+      /kdfParams\.r .* out of range/i,
+    );
+  });
+
+  it("rejects non-integer cost params", async () => {
+    const base = await sealBundle(samplePayload(), "pw");
+    const hostile = withKdfParams(base, { N: 32768, r: 8, p: 1.5 });
+    await expect(openBundle(hostile, "pw")).rejects.toThrow(/must be integers/i);
+  });
+
+  it("still rejects entirely non-numeric cost params", async () => {
+    const base = await sealBundle(samplePayload(), "pw");
+    const hostile = withKdfParams(base, { N: "32768", r: 8, p: 1 });
+    await expect(openBundle(hostile, "pw")).rejects.toThrow(
+      /must include numeric N, r, p/i,
+    );
+  });
+
+  it("accepts a higher-but-sane operator-bumped cost (N=2^16, r=8, p=4)", async () => {
+    // An operator who legitimately bumps cost within bounds (and within the
+    // maxmem cap: 128 * N * r ≈ 64 MiB here) must still round-trip — the
+    // guard isn't a straitjacket on the defaults.
+    const base = await sealBundle(samplePayload(), "pw");
+    const stronger = withKdfParams(base, { N: 1 << 16, r: 8, p: 4 });
+    // This envelope's ciphertext was sealed with the DEFAULT params, so it
+    // won't decrypt — but it must pass the bounds check and reach deriveKey
+    // (surfacing as a decrypt failure, NOT an out-of-range rejection).
+    await expect(openBundle(stronger, "pw")).rejects.toThrow(
+      /could not decrypt/i,
+    );
+  });
+});
