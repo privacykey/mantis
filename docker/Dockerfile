@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS base
+FROM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd242860889ac71842eba AS base
 # Node 25's alpine image no longer bundles corepack, so install pnpm directly.
 # Pinned to match packageManager in package.json / the version CI uses.
 RUN npm install -g pnpm@11.1.1
@@ -35,7 +35,7 @@ ENV PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 ENV MANTIS_API_KEY_PEPPER=${MANTIS_API_KEY_PEPPER}
 RUN pnpm run build
 
-FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS runner
+FROM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd242860889ac71842eba AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

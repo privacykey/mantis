@@ -13,9 +13,9 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
+    "@cloudflare/workers-types": "^4.20260613.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6",
-    "wrangler": "^4.0.0"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.100.0"
   }
 }
