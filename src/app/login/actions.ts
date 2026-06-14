@@ -29,22 +29,37 @@ export async function loginAction(
   formData: FormData,
 ): Promise<LoginState> {
   const ip = await loginClientIp();
-  // Postgres-backed so the cap holds across instances / serverless cold
-  // starts (the in-memory limiter under-counted there). Fails open on DB error.
-  const rl = await consumeRateLimit(`login:${ip ?? "anonymous"}`, {
-    limit: 10,
-    windowMs: 60_000,
-  });
-  if (!rl.ok) {
-    return { error: "too many attempts — try again in a minute" };
-  }
+
+  // Throttle FAILED logins per IP, mirroring requireApiKey in src/lib/auth.ts:
+  // the limiter is only consumed on a failed credential check, so a valid key
+  // can never be hard-blocked by the bucket (and a flood of bad attempts can't
+  // burn the operator's own quota). Postgres-backed (src/lib/rate-limit.ts) so
+  // the cap holds across instances / serverless cold starts; fails open on DB
+  // error. Enforced ONLY when we have a trusted client IP — without one
+  // (TRUST_PROXY_HEADERS unset and not on Vercel, the production default) every
+  // attempt would collapse into a single shared "login:anonymous" bucket, and
+  // an unauthenticated flood could exhaust it and lock the operator out of the
+  // dashboard. We fail open in that case, mirroring the trigger path in
+  // src/app/c/[publicId]/route.ts; the per-key check below is the real gate.
+  const fail = async (error: string): Promise<LoginState> => {
+    if (ip !== null) {
+      const rl = await consumeRateLimit(`login:${ip}`, {
+        limit: 10,
+        windowMs: 60_000,
+      });
+      if (!rl.ok) {
+        return { error: "too many attempts — try again in a minute" };
+      }
+    }
+    return { error };
+  };
 
   const raw = formData.get("api_key");
   const key = typeof raw === "string" ? raw.trim() : "";
 
-  if (!key) return { error: "API key is required" };
+  if (!key) return fail("API key is required");
   if (!isWellFormedApiKey(key)) {
-    return { error: "doesn't look like a mantis_live_… key" };
+    return fail("doesn't look like a mantis_live_… key");
   }
 
   // Match either the current v2 (HMAC) or legacy v1 (SHA-256) stored hash.
@@ -60,7 +75,7 @@ export async function loginAction(
     .limit(1);
 
   if (rows.length === 0) {
-    return { error: "invalid or revoked API key" };
+    return fail("invalid or revoked API key");
   }
 
   const apiKeyRow = rows[0]!;
