@@ -1,6 +1,6 @@
 # Match the project's Node engine (>=25.8.0) so the container runtime tracks CI.
 # Digest-pinned for reproducible pulls (Dependabot's docker ecosystem bumps it).
-FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
+FROM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd242860889ac71842eba
 
 # arp / `ip neigh` are passive neighbour-table reads (no privileges needed).
 # `ping` active probes need CAP_NET_RAW when running as non-root — grant it
