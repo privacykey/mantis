@@ -59,8 +59,17 @@ Outbound tests use a real loopback HTTP sink (`_sink.ts`) with `ALLOW_PRIVATE_WE
 the SSRF-block cases leave it off. The marquee security guards were mutation-checked
 (reverting the fix in source makes the test fail).
 
+## Coverage (P2 — done)
+
+| Test | Guards |
+| --- | --- |
+| `monitor-status` | Monitor latch: ok → tripped (503) → reset → ok; off/disabled/unknown → 404 not_monitored |
+| `cron-drain` | `/api/cron/notifications` fail-closed when `CRON_SECRET` unset, timing-safe bearer, per-IP 429, drains pending |
+| `retention-sweep` | Aged-only deletion per category, always-on rate_limits purge, audit purge via GUC, append-only DELETE refused |
+| `key-migration` | A v1 (SHA-256) key authenticates and its stored hash is upgraded to v2 (HMAC) on first use |
+
 ## Next (not yet built)
 
-P2: monitor/status round-trip, cron-drain authz, retention sweep + audit trigger,
-v1→v2 key migration. Two Tier-2 (`next start`) cases — middleware host-split and
-the real `Set-Cookie` `Secure` attribute — are deliberately deferred.
+Two Tier-2 (`next start`) cases — the middleware host-split applied by the Next
+runtime, and the real `Set-Cookie` `Secure` attribute the framework emits — are
+deliberately deferred (they need a running server, not direct handler imports).
