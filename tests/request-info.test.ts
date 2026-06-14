@@ -46,6 +46,52 @@ describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
       ),
     ).toBe("198.51.100.7");
   });
+
+  it("ignores a forged cf-connecting-ip when TRUSTED_IP_HEADER pins x-real-ip", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-real-ip");
+    // Behind nginx/Caddy/Traefik the attacker forges cf-connecting-ip; only the
+    // proxy-written x-real-ip is authoritative and must win.
+    expect(
+      clientIpFromHeaders(
+        get({
+          "cf-connecting-ip": "6.6.6.6",
+          "x-real-ip": "203.0.113.9",
+        }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("returns null when the pinned header is absent, even if others are present", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-real-ip");
+    expect(
+      clientIpFromHeaders(get({ "cf-connecting-ip": "6.6.6.6" })),
+    ).toBeNull();
+  });
+
+  it("normalises TRUSTED_IP_HEADER casing/whitespace", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "  X-Real-IP  ");
+    expect(
+      clientIpFromHeaders(
+        get({ "cf-connecting-ip": "6.6.6.6", "x-real-ip": "203.0.113.9" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("keeps rightmost-hop XFF parsing when pinned to x-forwarded-for", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-forwarded-for");
+    expect(
+      clientIpFromHeaders(
+        get({
+          "cf-connecting-ip": "6.6.6.6",
+          "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+        }),
+      ),
+    ).toBe("203.0.113.9");
+  });
 });
 
 describe("request info capture caps", () => {

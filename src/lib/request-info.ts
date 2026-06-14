@@ -45,6 +45,18 @@ function trustProxyHops(): number {
   return boundedIntEnv("TRUST_PROXY_HOPS", 1, 1, 16);
 }
 
+// When set, client-IP extraction trusts ONLY this header and ignores every
+// other one in IP_HEADERS. Pin it to the header your proxy authoritatively
+// sets (e.g. "x-real-ip" behind nginx/Caddy/Traefik) so an attacker cannot
+// smuggle a forged cf-connecting-ip past a proxy that doesn't strip inbound
+// copies of it. Unset = the legacy ordered fallback across all IP_HEADERS.
+function trustedIpHeader(): string | null {
+  const raw = process.env.TRUSTED_IP_HEADER;
+  if (!raw) return null;
+  const name = raw.trim().toLowerCase();
+  return name || null;
+}
+
 type HeaderGetter = (name: string) => string | null | undefined;
 
 /**
@@ -53,13 +65,19 @@ type HeaderGetter = (name: string) => string | null | undefined;
  * for client-IP attribution; `extractIp` (NextRequest) and the server-action /
  * session paths (which only have `headers()`) all delegate here so none of them
  * can drift back to trusting the spoofable leftmost XFF token.
+ *
+ * When TRUSTED_IP_HEADER is set, only that header is consulted; otherwise the
+ * IP_HEADERS list is tried in order (cf-connecting-ip first) for backward
+ * compatibility.
  */
 export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (!trustProxyHeaders()) {
     maybeWarnNoProxy();
     return null;
   }
-  for (const h of IP_HEADERS) {
+  const pinned = trustedIpHeader();
+  const headers: readonly string[] = pinned ? [pinned] : IP_HEADERS;
+  for (const h of headers) {
     const v = get(h);
     if (!v) continue;
     const parts = v
