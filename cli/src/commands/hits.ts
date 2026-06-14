@@ -1,5 +1,13 @@
 import type { Hit, MantisClient, NotificationSummary } from "../lib/api.js";
-import { c, emit, formatTime, isJsonMode, table } from "../lib/out.js";
+import {
+  c,
+  emit,
+  formatTime,
+  glyph,
+  isJsonMode,
+  table,
+  truncate,
+} from "../lib/out.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -111,6 +119,13 @@ async function followHits(
 }
 
 function printFollowLine(h: Hit): void {
+  // Under --json, --follow becomes an NDJSON stream: one hit object per line on
+  // stdout, so `mantis hits <id> --follow --json | jq -c .` works. The
+  // "following…" banner stays on stderr (see followHits) and doesn't pollute it.
+  if (isJsonMode()) {
+    process.stdout.write(JSON.stringify(h) + "\n");
+    return;
+  }
   process.stdout.write(
     `${c.dim(formatTime(h.occurred_at))} ${c.cyan(h.ip ?? "-")} ${c.dim(formatUaShort(h))}${h.bot_label ? " " + c.yellow(`bot:${h.bot_label}`) : ""}\n`,
   );
@@ -192,20 +207,21 @@ function formatHostCtxShort(ctx: NonNullable<Hit["host_context"]>): string {
   if (ctx.source) parts.push(c.green(ctx.source));
   if (ctx.user) parts.push(c.cyan(ctx.user));
   if (ctx.host) parts.push("@ " + ctx.host);
-  if (ctx.ssh_client_ip) parts.push(c.yellow("← " + ctx.ssh_client_ip));
+  if (ctx.ssh_client_ip)
+    parts.push(c.yellow(`${glyph("←", "<-")} ` + ctx.ssh_client_ip));
   if (ctx.sudo_cmd) parts.push(c.yellow("sudo " + ctx.sudo_cmd));
   if (ctx.network_interface) parts.push("iface=" + ctx.network_interface);
   if (ctx.event) parts.push(c.green(ctx.event));
   if (ctx.device) parts.push(c.cyan(ctx.device));
   if (ctx.entity_id) parts.push(ctx.entity_id);
   if (ctx.iot_mac) parts.push(ctx.iot_mac);
-  return parts.join(" · ");
+  return parts.join(` ${glyph("·", "|")} `);
 }
 
 function formatUaShort(h: Hit): string {
   if (h.ua_browser) {
     const ver = h.ua_browser_version ? ` ${h.ua_browser_version}` : "";
-    const os = h.ua_os ? ` · ${h.ua_os}` : "";
+    const os = h.ua_os ? ` ${glyph("·", "|")} ${h.ua_os}` : "";
     return `${h.ua_browser}${ver}${os}`;
   }
   return truncate(h.user_agent ?? "", 50);
@@ -248,8 +264,4 @@ function formatNotif(n: NotificationSummary): string {
   const attempts = n.attempts > 0 ? c.dim(` (${n.attempts}/${n.max_attempts})`) : "";
   const err = n.last_error ? `\n      ${c.red(n.last_error.slice(0, 80))}` : "";
   return `${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(n.target)}${attempts}${err}`;
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
 }

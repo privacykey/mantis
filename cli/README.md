@@ -43,7 +43,8 @@ Credentials are stored in:
 
 | Command | Purpose |
 |---|---|
-| `login [--url URL] [--no-switch]` | Prompt + store API key in keychain (under `--profile <name>` if given) |
+| `init` | Guided first-time setup: asks server or edge, then runs login / key setup and offers to create a first key |
+| `login [--url URL] [--key-stdin] [--no-switch]` | Prompt + store API key in keychain (under `--profile <name>` if given); `--key-stdin` reads the key from stdin |
 | `logout [--all]` | Remove stored credentials for the current profile (or all profiles) |
 | `backup [-o <file>] [--only <name>]` | Export profiles + plugin manifest into a passphrase-encrypted JSON bundle (scrypt + AES-256-GCM). Safe to commit to a private git-crypt repo. |
 | `restore <file> [--overwrite] [--skip-plugins]` | Decrypt a backup bundle and restore profiles into config + keychain. Re-installs plugins via `mantis plugin add <source>@<ref>`. |
@@ -63,9 +64,9 @@ Credentials are stored in:
 | `last` | Print the id of the most-recently-created key (also: pass `last` as `<id>` to any command) |
 | `open [id] [--dashboard] [--trigger]` | Open the key's dashboard page in the browser (no id → dashboard root) |
 | `hits <id> [-v] [--since DUR] [--ip IP] [--bot-only] [--follow]` | List hits with filters; `--follow` streams live |
-| `watch [--id ID] [-i N]` | Poll and print new hits across all keys (default: all keys, 5s) |
-| `disable <id>` / `enable <id>` | Toggle key without losing history |
-| `rm <id> [--yes]` | Delete key + cascade hits |
+| `watch [id] [-i N]` | Poll and print new hits; omit `id` for all keys (default: all keys, 5s) |
+| `disable <id...>` / `enable <id...>` | Toggle one or more keys without losing history |
+| `rm <id...> [--yes]` | Delete one or more keys + cascade hits (`mantis list --id-only \| xargs mantis rm -y`) |
 | `download <id> [--docx \| --xlsx \| --pptx \| --pdf \| --folder \| --svg \| --html \| --md \| --eml \| --ics \| --vcf] <path>` | Download artifacts for an existing key |
 | `install <id> --type <type> [--out <path>]` | Generate a host-event or web-embed installer snippet |
 | `monitor <id> --mode <off\|latch\|window> [--window <s>]` | Configure the Uptime Kuma status endpoint for a key |
@@ -76,6 +77,7 @@ Credentials are stored in:
 | `dest rm <id> <dest-id>` | Remove one destination from a key |
 | `dest test <id> [--yes]` | Fire a synthetic hit and report which destinations succeeded |
 | `completion <bash\|zsh\|fish>` | Print shell completion script |
+| `config list` / `get <key>` / `set <key> <value>` / `unset <key>` / `path` | Get/set machine-wide defaults (`output`, `color`); applied below explicit flags |
 | `cloudflare login [--app URL]` | Auth via Cloudflare Access SSO (opens browser; needs local `cloudflared`) |
 | `cloudflare logout` | Clear cached Cloudflare Access credentials |
 | `cloudflare set-service-auth [--client-id … --client-secret …]` | Configure headless Cloudflare Access Service Auth |
@@ -181,15 +183,22 @@ one snippet/key per profile and call both generated URLs from the automation.
 
 ### Global flags
 
-- `--base-url <url>` — override stored base URL for one command
-- `--key <key>` — override stored API key for one command
+- `--base-url <url>` — override stored base URL for one command (env: `MANTIS_BASE_URL`)
+- `--key <key>` — override stored API key for one command (env: `MANTIS_API_KEY`)
 - `-p, --profile <name>` — use a named profile (env: `MANTIS_PROFILE`)
 - `--json` — emit machine-readable JSON to stdout (errors go to stderr)
 - `--output table|json|wide` — choose table, JSON, or wider human table output
 - `-q, --quiet` — suppress human-readable stdout
 - `--no-headers` — hide table headers
+- `--color auto|always|never` — colorize output (env: `NO_COLOR`, `FORCE_COLOR`); `auto` colors only on a TTY
+- `--debug` — print resolved target + stack trace + HTTP details on failure (env: `MANTIS_DEBUG`)
 - `--timeout <duration>` — per-request timeout, e.g. `500ms`, `5s`, `1m`
 - `--retries <n>` — retry transient GET failures, from `0` to `5`
+
+Persist defaults for `--output` and `--color` so scripts/sessions don't repeat
+them (explicit flags still win): `mantis config set output json` (see the
+`config` rows in [Commands](#commands)). Set `MANTIS_ASCII=1` to force ASCII
+glyphs on terminals that can't render `✓`/`…`/`·`.
 
 ### Short-id resolution
 
@@ -314,14 +323,23 @@ mantis --profile=staging edge mint --worker=https://other-edge.workers.dev --web
 When a command needs to know which mantis to talk to, it picks the first match:
 
 1. `--base-url <url>` (ad-hoc; no profile lookup, no CF Access auto-config)
-2. `--profile <name>` flag
-3. `MANTIS_PROFILE` env var
+2. `--profile <name>` flag or `MANTIS_PROFILE` env var (the named profile must exist)
+3. `MANTIS_BASE_URL` env var (ad-hoc; for CI / containers with no stored profile)
 4. Stored `currentProfile`
 
 API key resolution:
 
 1. `--key <key>` flag
-2. Keychain entry indexed by the resolved base URL (`mantis-cli` service, account = base URL)
+2. `MANTIS_API_KEY` env var
+3. Keychain entry indexed by the resolved base URL (`mantis-cli` service, account = base URL)
+
+`MANTIS_BASE_URL` + `MANTIS_API_KEY` cover headless use (CI runners, containers)
+where there's no interactive `mantis login` and no OS keychain — and keep the
+key out of argv, where `--key` would leak it into `ps` output and shell history:
+
+```bash
+MANTIS_BASE_URL=https://mantis.example.com MANTIS_API_KEY=mantis_live_… mantis list
+```
 
 The keychain layout means **the same API key works across profiles that share a base URL** — useful when you have prod + a prod-with-different-CF-Access-mode profile pointing at the same server.
 
@@ -552,6 +570,56 @@ mantis --json hits "$ID" | jq '.data[] | {at: .occurred_at, ip}'
 ID=$(mantis new "daily bait" --id-only)
 URL=$(mantis show "$ID" --url-only)
 mantis list --id-only
+```
+
+`rm`, `disable`, and `enable` accept multiple ids, so the producer/consumer
+pipeline works directly:
+
+```bash
+# delete every key whose id you pipe in (-y because stdin isn't a TTY)
+mantis list --id-only | xargs mantis rm -y
+
+# without -y on a pipe, rm refuses with a non-zero exit instead of silently
+# deleting nothing
+```
+
+`--follow` / `watch` become NDJSON streams under `--json` (one hit object per
+line; the "following…/watching…" banner stays on stderr):
+
+```bash
+mantis hits last --follow --json | jq -c '{at: .occurred_at, ip}'
+mantis watch --json | jq -c .
+```
+
+### Exit codes
+
+Failures exit non-zero, with a distinct code per error class so scripts can
+branch without parsing stderr (`0` success, `1` generic):
+
+| Code | Meaning |
+|---|---|
+| `3` | usage error (bad flag/argument value) |
+| `4` | auth (missing/invalid credentials, 401/403, no profile) |
+| `5` | not found (unknown key id/prefix, 404) |
+| `6` | network (connection failed or timed out) |
+| `7` | server error (5xx) |
+
+(`detect` additionally uses `2` for "artifacts found", grep-style.)
+
+### Headless credentials
+
+For CI/containers with no keychain, supply credentials via env vars (see
+[Resolution order](#resolution-order)) and feed secrets through stdin rather
+than argv so they don't leak into `ps` / shell history:
+
+```bash
+export MANTIS_BASE_URL=https://mantis.example.com MANTIS_API_KEY=mantis_live_…
+mantis list
+
+# storing credentials non-interactively
+echo "$MANTIS_API_KEY" | mantis login --url "$MANTIS_BASE_URL" --key-stdin
+echo "$EDGE_KEY"       | mantis edge set-key https://edge.example.workers.dev --key-stdin
+echo "$CF_SECRET"      | mantis cloudflare set-service-auth --client-id abc.access --client-secret-stdin
 ```
 
 ## Single-binary build (optional)

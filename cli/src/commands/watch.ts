@@ -1,5 +1,5 @@
 import type { MantisClient, RecentHit } from "../lib/api.js";
-import { c, formatTime } from "../lib/out.js";
+import { c, formatTime, isJsonMode } from "../lib/out.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -76,6 +76,13 @@ async function fetchSince(
 }
 
 function print(h: RecentHit): void {
+  // Under --json, watch becomes an NDJSON stream: one hit object per line on
+  // stdout, so `mantis watch --json | jq -c .` works. The "watching…" banner
+  // stays on stderr (see watchCmd) and doesn't pollute the stream.
+  if (isJsonMode()) {
+    process.stdout.write(JSON.stringify(h) + "\n");
+    return;
+  }
   const memo = h.key.memo || h.key.id.slice(0, 8);
   const context = h.host_context?.event || h.host_context?.device
     ? ` ${c.green([h.host_context.event, h.host_context.device].filter(Boolean).join(":"))}`
