@@ -8,8 +8,21 @@ import {
   isWellFormedApiKey,
   legacySha256ApiKey,
 } from "@/lib/api-keys";
+import {
+  consumeRateLimit,
+  rateLimitHeaders,
+  type RateLimitResult,
+} from "@/lib/rate-limit";
+import { extractIp } from "@/lib/request-info";
 
 export type AuthResult = { ok: true; key: ApiKey } | { ok: false; res: NextResponse };
+
+// Throttle repeated API-key auth FAILURES per IP. Successful auths never touch
+// the limiter, so legitimate traffic is unaffected. Keys are 192-bit (online
+// brute force is already infeasible) — this is hygiene + a cluster-wide
+// speed-bump that the old in-memory limiter couldn't provide.
+const AUTH_FAIL_LIMIT = 60;
+const AUTH_FAIL_WINDOW_MS = 60_000;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,6 +55,13 @@ function unauthorized(message: string): NextResponse {
       status: 401,
       headers: { "WWW-Authenticate": 'Bearer realm="mantis"' },
     },
+  );
+}
+
+function tooManyRequests(rl: RateLimitResult): NextResponse {
+  return NextResponse.json(
+    { error: "rate_limited", message: "too many authentication attempts" },
+    { status: 429, headers: rateLimitHeaders(rl) },
   );
 }
 
@@ -83,16 +103,24 @@ async function resolveByPlaintext(presented: string): Promise<ApiKey | null> {
 
 export async function requireApiKey(req: NextRequest): Promise<AuthResult> {
   const presented = extractBearer(req);
-  if (!presented) {
-    return { ok: false, res: unauthorized("missing Authorization: Bearer token") };
-  }
-  if (!isWellFormedApiKey(presented)) {
-    return { ok: false, res: unauthorized("malformed API key") };
-  }
+
+  // Every failure path consumes a per-IP token; once the window is exhausted
+  // we return 429 instead of 401 to blunt brute force. Valid keys skip this
+  // entirely, so the DB is only touched on failed attempts.
+  const fail = async (message: string): Promise<AuthResult> => {
+    const ip = extractIp(req) ?? "unknown";
+    const rl = await consumeRateLimit(`auth-fail:${ip}`, {
+      limit: AUTH_FAIL_LIMIT,
+      windowMs: AUTH_FAIL_WINDOW_MS,
+    });
+    if (!rl.ok) return { ok: false, res: tooManyRequests(rl) };
+    return { ok: false, res: unauthorized(message) };
+  };
+
+  if (!presented) return fail("missing Authorization: Bearer token");
+  if (!isWellFormedApiKey(presented)) return fail("malformed API key");
   const key = await resolveByPlaintext(presented);
-  if (!key) {
-    return { ok: false, res: unauthorized("invalid or revoked API key") };
-  }
+  if (!key) return fail("invalid or revoked API key");
   return { ok: true, key };
 }
 

@@ -316,6 +316,17 @@ export const walletRegistrations = pgTable(
 export type WalletRegistration = typeof walletRegistrations.$inferSelect;
 export type NewWalletRegistration = typeof walletRegistrations.$inferInsert;
 
+// Cluster-wide fixed-window rate limiter state — one row per limiter key
+// (e.g. "auth-fail:<ip>"). The window resets lazily on the next consume.
+// Shared across instances, unlike the in-memory fallback in lib/rate-limit.ts.
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  count: integer("count").notNull().default(0),
+});
+
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type Key = typeof keys.$inferSelect;
 export type NewKey = typeof keys.$inferInsert;
