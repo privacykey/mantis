@@ -1,8 +1,52 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   capStoredRequestField,
+  clientIpFromHeaders,
   snapshotHeaders,
 } from "@/lib/request-info";
+
+describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
+
+  it("returns null when proxy headers aren't trusted", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "0");
+    expect(
+      clientIpFromHeaders(get({ "x-forwarded-for": "1.2.3.4" })),
+    ).toBeNull();
+  });
+
+  it("takes the rightmost (nearest-proxy) XFF entry, not the spoofable leftmost", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    // Attacker forges "6.6.6.6" as the leftmost; the real peer is appended right.
+    expect(
+      clientIpFromHeaders(get({ "x-forwarded-for": "6.6.6.6, 203.0.113.9" })),
+    ).toBe("203.0.113.9");
+  });
+
+  it("honours TRUST_PROXY_HOPS for multiple proxy layers", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUST_PROXY_HOPS", "2");
+    expect(
+      clientIpFromHeaders(
+        get({ "x-forwarded-for": "6.6.6.6, 203.0.113.9, 10.0.0.2" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("prefers single-valued trusted headers over XFF", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    expect(
+      clientIpFromHeaders(
+        get({
+          "cf-connecting-ip": "198.51.100.7",
+          "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+        }),
+      ),
+    ).toBe("198.51.100.7");
+  });
+});
 
 describe("request info capture caps", () => {
   afterEach(() => {

@@ -3,6 +3,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { db } from "@/db/client";
 import { apiKeys, sessions, type ApiKey } from "@/db/schema";
+import { clientIpFromHeaders } from "@/lib/request-info";
 
 const COOKIE_NAME = "mantis_session";
 const SESSION_PREFIX = "mantis_sess_";
@@ -103,16 +104,5 @@ export async function clearSessionCookie(): Promise<void> {
 }
 
 function readClientIp(hdrs: Awaited<ReturnType<typeof headers>>): string | null {
-  const trust =
-    process.env.TRUST_PROXY_HEADERS === "1" ||
-    Boolean(process.env.VERCEL) ||
-    process.env.NODE_ENV !== "production";
-  if (!trust) return null;
-  return (
-    hdrs.get("cf-connecting-ip") ??
-    hdrs.get("x-vercel-forwarded-for") ??
-    hdrs.get("x-real-ip") ??
-    hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    null
-  );
+  return clientIpFromHeaders((n) => hdrs.get(n));
 }

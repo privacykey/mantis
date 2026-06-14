@@ -11,26 +11,17 @@ import {
   legacySha256ApiKey,
 } from "@/lib/api-keys";
 import { audit } from "@/lib/audit";
-import { rateLimit } from "@/lib/rate-limit";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { clientIpFromHeaders } from "@/lib/request-info";
 import { setSessionCookie } from "@/lib/session";
 
 export type LoginState = { error?: string };
 
 async function loginClientIp(): Promise<string | null> {
-  // Mirrors request-info.ts:extractIp — server actions can't reach NextRequest.
-  const trust =
-    process.env.TRUST_PROXY_HEADERS === "1" ||
-    Boolean(process.env.VERCEL) ||
-    process.env.NODE_ENV !== "production";
-  if (!trust) return null;
+  // Server actions can't reach NextRequest; delegate to the shared helper so
+  // the trust gate + rightmost-hop XFF parsing stay in one place.
   const h = await headers();
-  return (
-    h.get("cf-connecting-ip") ??
-    h.get("x-vercel-forwarded-for") ??
-    h.get("x-real-ip") ??
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    null
-  );
+  return clientIpFromHeaders((n) => h.get(n));
 }
 
 export async function loginAction(
@@ -38,7 +29,9 @@ export async function loginAction(
   formData: FormData,
 ): Promise<LoginState> {
   const ip = await loginClientIp();
-  const rl = rateLimit(`login:${ip ?? "anonymous"}`, {
+  // Postgres-backed so the cap holds across instances / serverless cold
+  // starts (the in-memory limiter under-counted there). Fails open on DB error.
+  const rl = await consumeRateLimit(`login:${ip ?? "anonymous"}`, {
     limit: 10,
     windowMs: 60_000,
   });

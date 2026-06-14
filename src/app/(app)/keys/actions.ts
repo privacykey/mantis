@@ -14,6 +14,7 @@ import {
 } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { canAccessKey } from "@/lib/auth";
+import { clientIpFromHeaders } from "@/lib/request-info";
 import { getSessionApiKey } from "@/lib/session";
 
 const UUID_RE =
@@ -33,20 +34,9 @@ async function loadOwned(session: ApiKey, id: string): Promise<Key | null> {
 }
 
 async function actorIp(): Promise<string | null> {
-  // Trust gate mirrors request-info.ts:extractIp.
-  const trust =
-    process.env.TRUST_PROXY_HEADERS === "1" ||
-    Boolean(process.env.VERCEL) ||
-    process.env.NODE_ENV !== "production";
-  if (!trust) return null;
+  // Delegate to the shared helper (trust gate + rightmost-hop XFF parsing).
   const h = await headers();
-  return (
-    h.get("cf-connecting-ip") ??
-    h.get("x-vercel-forwarded-for") ??
-    h.get("x-real-ip") ??
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    null
-  );
+  return clientIpFromHeaders((n) => h.get(n));
 }
 
 export async function toggleKeyAction(formData: FormData): Promise<void> {

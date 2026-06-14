@@ -38,19 +38,55 @@ function maybeWarnNoProxy(): void {
   }
 }
 
-export function extractIp(req: NextRequest): string | null {
+// Number of trusted reverse-proxy hops in front of this app. The client IP in
+// X-Forwarded-For is the entry this many positions from the RIGHT (your nearest
+// proxy appends the real peer to the right). Default 1 (a single front proxy).
+function trustProxyHops(): number {
+  return boundedIntEnv("TRUST_PROXY_HOPS", 1, 1, 16);
+}
+
+type HeaderGetter = (name: string) => string | null | undefined;
+
+/**
+ * Extract the client IP from a Headers-like object, applying the trust gate and
+ * the rightmost-hop X-Forwarded-For parsing. This is the single source of truth
+ * for client-IP attribution; `extractIp` (NextRequest) and the server-action /
+ * session paths (which only have `headers()`) all delegate here so none of them
+ * can drift back to trusting the spoofable leftmost XFF token.
+ */
+export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (!trustProxyHeaders()) {
     maybeWarnNoProxy();
     return null;
   }
   for (const h of IP_HEADERS) {
-    const v = req.headers.get(h);
-    if (v) {
-      const first = v.split(",")[0]?.trim();
-      if (first) return first;
+    const v = get(h);
+    if (!v) continue;
+    const parts = v
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length === 0) continue;
+
+    if (h === "x-forwarded-for") {
+      // X-Forwarded-For is a client-first append chain ("client, proxy1, …").
+      // The LEFTMOST entry is supplied by the client and is fully spoofable;
+      // take the entry TRUST_PROXY_HOPS from the right (the nearest trusted
+      // hop), which a client cannot forge past your proxy layer.
+      const ip = parts[Math.max(0, parts.length - trustProxyHops())];
+      if (ip) return ip;
+    } else {
+      // cf-connecting-ip / x-real-ip / x-vercel-forwarded-for are single values
+      // set by the trusted proxy, not a client-controlled list.
+      const ip = parts[0];
+      if (ip) return ip;
     }
   }
   return null;
+}
+
+export function extractIp(req: NextRequest): string | null {
+  return clientIpFromHeaders((n) => req.headers.get(n));
 }
 
 // Allowlist of request headers stored into hits.headers. The CREDENTIAL_PATTERNS
