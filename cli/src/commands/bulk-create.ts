@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import type {
@@ -6,7 +7,7 @@ import type {
   MantisClient,
   NotificationChannel,
 } from "../lib/api.js";
-import { c, emit, fail } from "../lib/out.js";
+import { c, emit, ExitCode, fail, isJsonMode, isQuiet } from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type BulkCreateOpts = GlobalOpts & {
@@ -72,8 +73,8 @@ type PreparedRow = {
 };
 
 export async function bulkCreateCmd(opts: BulkCreateOpts): Promise<void> {
-  if (!opts.csv) fail("--csv is required");
-  if (!opts.out) fail("--out is required");
+  if (!opts.csv) fail("--csv is required", ExitCode.Usage);
+  if (!opts.out) fail("--out is required", ExitCode.Usage);
 
   const loaded = await loadCsv(opts.csv);
   const globalDestinations = parseGlobalDestinations(opts);
@@ -94,12 +95,65 @@ export async function bulkCreateCmd(opts: BulkCreateOpts): Promise<void> {
   }
 
   await withClient(opts, async (client) => {
-    const results = opts.failFast
-      ? await createSequentially(client, loaded.rows, opts, globalDestinations)
-      : await mapLimit(loaded.rows, concurrency, (row) =>
-          createOne(client, row, opts, globalDestinations),
-        );
+    const total = loaded.rows.length;
+    const onProgress = makeProgressReporter(total);
 
+    // Results land here as they complete (out of order under concurrency). The
+    // SIGINT handler reads it so an interrupt still flushes a valid id↔URL
+    // mapping — without it, keys created server-side would be unrecoverable
+    // locally, and a re-run would duplicate them (createKey has no idempotency
+    // key). Rows that never ran are marked so the operator sees what to retry.
+    const sink: (RowResult | undefined)[] = new Array(total);
+    const finalize = (uncreatedNote: string): RowResult[] =>
+      loaded.rows.map((row, i) => sink[i] ?? rowError(row, uncreatedNote));
+
+    let interrupted = false;
+    const onSigint = () => {
+      if (interrupted) return;
+      interrupted = true;
+      const results = finalize("interrupted before creation");
+      const outPath = resolve(opts.out!);
+      try {
+        writeFileSync(
+          outPath,
+          writeCsv(loaded.outputHeaders, results.map((r) => r.row)),
+          "utf8",
+        );
+      } catch {
+        /* best effort on the way out */
+      }
+      const created = results.filter((r) => r.created).length;
+      process.stderr.write(
+        `\n${c.yellow("interrupted")} — wrote ${created}/${total} created so far to ${outPath}. ` +
+          `Those keys exist on the server; a re-run will create duplicates.\n`,
+      );
+      process.exit(130);
+    };
+    process.on("SIGINT", onSigint);
+    try {
+      if (opts.failFast) {
+        await createSequentially(
+          client,
+          loaded.rows,
+          opts,
+          globalDestinations,
+          sink,
+          onProgress,
+        );
+      } else {
+        await mapLimit(
+          loaded.rows,
+          concurrency,
+          (row) => createOne(client, row, opts, globalDestinations),
+          sink,
+          onProgress,
+        );
+      }
+    } finally {
+      process.removeListener("SIGINT", onSigint);
+    }
+
+    const results = finalize("not created");
     await writeResults(opts.out!, loaded.outputHeaders, results);
     emitSummary(opts.out!, results, false);
     if (results.some((result) => result.failed)) process.exitCode = 1;
@@ -247,21 +301,25 @@ async function createSequentially(
   rows: InputRow[],
   opts: BulkCreateOpts,
   globalDestinations: DestinationInput[],
-): Promise<RowResult[]> {
-  const results: RowResult[] = [];
-  for (const row of rows) {
-    const result = await createOne(client, row, opts, globalDestinations);
-    results.push(result);
+  sink: (RowResult | undefined)[],
+  onProgress?: (result: RowResult) => void,
+): Promise<void> {
+  for (let i = 0; i < rows.length; i++) {
+    const result = await createOne(client, rows[i]!, opts, globalDestinations);
+    sink[i] = result;
+    onProgress?.(result);
     if (result.failed) {
-      for (const skipped of rows.slice(results.length)) {
-        results.push(
-          rowError(skipped, "skipped because --fail-fast stopped at an earlier row"),
+      for (let j = i + 1; j < rows.length; j++) {
+        const skipped = rowError(
+          rows[j]!,
+          "skipped because --fail-fast stopped at an earlier row",
         );
+        sink[j] = skipped;
+        onProgress?.(skipped);
       }
-      break;
+      return;
     }
   }
-  return results;
 }
 
 async function createOne(
@@ -534,12 +592,43 @@ function emitSummary(
   );
 }
 
+// Live progress for the create loop. Stays on stderr so it never pollutes the
+// --json/stdout contract or the results CSV, and is suppressed in JSON and
+// quiet modes. On a TTY it rewrites a single line; when stderr is redirected
+// (CI logs) it emits a throughput line every 50 rows so logs stay bounded.
+function makeProgressReporter(
+  total: number,
+): ((result: RowResult) => void) | undefined {
+  if (isJsonMode() || isQuiet()) return undefined;
+  const isTty = process.stderr.isTTY;
+  let done = 0;
+  let failed = 0;
+  let lastLogged = 0;
+  return (result: RowResult) => {
+    done += 1;
+    if (result.failed) failed += 1;
+    if (isTty) {
+      const failPart = failed > 0 ? c.yellow(` (${failed} failed)`) : "";
+      // Trailing spaces overwrite any longer previous line on rewrite.
+      process.stderr.write(
+        `\r${c.dim("creating")} ${done}/${total}${failPart}   `,
+      );
+      if (done >= total) process.stderr.write("\n");
+    } else if (done >= total || done - lastLogged >= 50) {
+      lastLogged = done;
+      const failPart = failed > 0 ? ` (${failed} failed)` : "";
+      process.stderr.write(`creating ${done}/${total}${failPart}\n`);
+    }
+  };
+}
+
 async function mapLimit<T, R>(
   items: T[],
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: Array<R | undefined> = new Array(items.length);
+  sink: Array<R | undefined>,
+  onProgress?: (result: R) => void,
+): Promise<void> {
   let next = 0;
   const workers = Array.from(
     { length: Math.min(limit, items.length) },
@@ -550,28 +639,20 @@ async function mapLimit<T, R>(
         if (index >= items.length) return;
         const item = items[index];
         if (item === undefined) return;
-        results[index] = await fn(item, index);
+        const result = await fn(item, index);
+        sink[index] = result;
+        onProgress?.(result);
       }
     },
   );
   await Promise.all(workers);
-
-  const complete: R[] = [];
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (result === undefined) {
-      throw new Error("internal error: bulk-create result missing");
-    }
-    complete.push(result);
-  }
-  return complete;
 }
 
 function parseConcurrency(raw: string | undefined): number {
   const value = raw ?? "4";
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > 20) {
-    fail("--concurrency must be an integer from 1 to 20");
+    fail("--concurrency must be an integer from 1 to 20", ExitCode.Usage);
   }
   return n;
 }

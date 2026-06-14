@@ -1,5 +1,12 @@
 import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
-import { c, emit, formatTime, isJsonMode, table } from "../lib/out.js";
+import {
+  c,
+  emit,
+  formatTime,
+  isJsonMode,
+  table,
+  truncate,
+} from "../lib/out.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -359,9 +366,4 @@ function formatRelativeFuture(d: Date): string {
 
 function shortId(id: string): string {
   return id.slice(0, 8);
-}
-
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return s.slice(0, n - 1) + "…";
 }

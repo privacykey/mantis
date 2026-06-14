@@ -30,3 +30,16 @@ export async function askRequired(
     process.stderr.write("Please enter a value.\n");
   }
 }
+
+/**
+ * Read a secret from stdin, draining fully and stripping one trailing newline.
+ * Backs the `--*-stdin` flags so credentials are never passed on argv (where
+ * they leak via `ps` / shell history). Mirrors backup.ts's passphrase reader.
+ */
+export async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8").replace(/\r?\n$/, "");
+}

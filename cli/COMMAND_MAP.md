@@ -102,10 +102,12 @@ These can be used with most commands:
 | `--base-url <url>` | Use a server URL just for this command |
 | `--key <key>` | Use an API key just for this command |
 | `-p, --profile <name>` | Use a named profile |
-| `--json` | Emit JSON to stdout |
+| `--json` | Emit JSON to stdout (NDJSON — one object per line — for `hits --follow` and `watch`) |
 | `--output table\|json\|wide` | Choose human table, JSON, or wider table output |
 | `-q, --quiet` | Suppress human-readable stdout |
 | `--no-headers` | Hide table headers |
+| `--color auto\|always\|never` | When to colorize output (env: `NO_COLOR`, `FORCE_COLOR`) |
+| `--debug` | Print resolved target + stack + HTTP details on failure (env: `MANTIS_DEBUG`) |
 | `--timeout <duration>` | Request timeout, e.g. `500ms`, `5s`, `1m` |
 | `--retries <n>` | Retry transient GET failures, `0` to `5` |
 
@@ -129,6 +131,7 @@ flowchart LR
 
 | Family | Command | What It Does | Talks To |
 |---|---|---|---|
+| Auth | `init` | Guided first-time setup (server or edge), interactive | Server / local keychain / edge |
 | Auth | `login` | Store API key for a profile, optionally creating/selecting it | Server + local keychain |
 | Auth | `logout` | Clear stored credentials for current/all profiles | Local config/keychain |
 | Auth | `whoami` | Show current profile, server, key prefix, Cloudflare state, edge worker | Local config |
@@ -150,9 +153,9 @@ flowchart LR
 | Keys | `show <id>` | Show one key | Server |
 | Keys | `last` | Print most-recent key id | Server |
 | Keys | `open [id]` | Open dashboard page or trigger URL in browser | Server for resolution |
-| Keys | `disable <id>` | Disable key without deleting history | Server |
-| Keys | `enable <id>` | Re-enable disabled key | Server |
-| Keys | `rm <id>` / `delete <id>` | Delete key and cascade hits | Server |
+| Keys | `disable <id...>` | Disable one or more keys without deleting history | Server |
+| Keys | `enable <id...>` | Re-enable one or more disabled keys | Server |
+| Keys | `rm <id...>` / `delete <id...>` | Delete one or more keys and cascade hits (`list --id-only \| xargs mantis rm -y`) | Server |
 | Hits | `hits <id>` | Show/filter recent hits for one key | Server |
 | Hits | `watch` | Live-tail recent hits across all keys or one key | Server |
 | Monitoring | `monitor <id>` | Configure Uptime Kuma status behavior | Server |
@@ -173,6 +176,7 @@ flowchart LR
 | Plugins | `plugin remove <name>` / `plugin rm` | Uninstall a plugin | Local plugin registry |
 | Plugins | `plugin upgrade <name>` | Refresh a plugin from its source when not SHA-pinned | Local plugin registry |
 | Shell | `completion <shell>` | Print shell completion script | Local stdout |
+| Config | `config list/get/set/unset/path` | Get/set machine-wide defaults (output, color) | Local config |
 
 `<id>` values usually accept a full UUID, a unique prefix of at least four hex
 characters, or `last`.
@@ -239,7 +243,7 @@ flowchart TD
 
 | Command | Key Options |
 |---|---|
-| `login` | `--url <url>`, `--no-switch` |
+| `login` | `--url <url>`, `--key-stdin`, `--no-switch` |
 | `logout` | `--all` |
 | `whoami` | none |
 | `doctor` | `--public-url <url>` |
@@ -262,7 +266,7 @@ flowchart TD
 |---|---|
 | `cloudflare login` | `--app <url>` |
 | `cloudflare logout` | none |
-| `cloudflare set-service-auth` | `--client-id <id>`, `--client-secret <secret>` |
+| `cloudflare set-service-auth` | `--client-id <id>`, `--client-secret <secret>`, `--client-secret-stdin` |
 | `cloudflare status` | none |
 
 ### Keys
@@ -275,9 +279,9 @@ flowchart TD
 | `show <id>` | `--copy`, `--qr-terminal`, `--id-only`, `--url-only` |
 | `last` | none |
 | `open [id]` | `--dashboard`, `--trigger` |
-| `disable <id>` | none |
-| `enable <id>` | none |
-| `rm <id>` / `delete <id>` | `--yes` |
+| `disable <id...>` | none (accepts multiple ids) |
+| `enable <id...>` | none (accepts multiple ids) |
+| `rm <id...>` / `delete <id...>` | `--yes` (accepts multiple ids; refuses on a non-TTY without `--yes`) |
 
 Artifact flags available on `new`:
 
@@ -330,7 +334,7 @@ Installer types:
 | Command | Key Options |
 |---|---|
 | `hits <id>` | `--limit <n>`, `--verbose`, `--since <duration-or-iso>`, `--ip <addr>`, `--bot-only`, `--follow`, `--interval <seconds>` |
-| `watch` | `--id <id>`, `--interval <seconds>` |
+| `watch [id]` | `--interval <seconds>` (positional `[id]` watches one key; `--id` is a deprecated alias) |
 | `monitor <id>` | `--mode off\|latch\|window`, `--window <seconds>` |
 | `reset <id>` | none |
 | `status [id]` | `--limit <n>`, `--watch`, `--interval <seconds>`, `--tripped-only` |
@@ -359,7 +363,7 @@ flowchart TD
 | Command | Key Options |
 |---|---|
 | `edge keygen` | none |
-| `edge set-key` | positional `[worker] [key]`, or `--worker <url>` (prompts for key if omitted) |
+| `edge set-key` | positional `[worker] [key]`, or `--worker <url>`; `--key-stdin` for CI (prompts for key if omitted) |
 | `edge delete-key` | `--worker <url>` |
 | `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy`, `--test`, `--install <type>` (with `--out`, `--ssh-only`, `--hostname`). Run bare on a TTY to launch the interactive wizard. |
 | `edge install <url>` | `--type <type>`, `--out <file>`, `--ssh-only` (shell types), `--hostname <host>` (js-clone-detector), `--memo <text>`. Generates the same snippet `mantis install` produces server-side, but for a stateless edge URL. |

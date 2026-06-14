@@ -14,7 +14,8 @@ import {
   patchProfile,
   setCloudflareServiceAuth,
 } from "../lib/config.js";
-import { c, emit, fail } from "../lib/out.js";
+import { c, emit, fail, isJsonMode } from "../lib/out.js";
+import { canPrompt, readStdin } from "../lib/prompt.js";
 
 async function requireCurrentProfile(): Promise<{
   name: string;
@@ -112,6 +113,8 @@ export async function cloudflareLogoutCmd(): Promise<void> {
 export type CfServiceAuthOpts = {
   clientId?: string;
   clientSecret?: string;
+  /** Read the client secret from stdin instead of prompting (leak-free for CI). */
+  clientSecretStdin?: boolean;
 };
 
 export async function cloudflareSetServiceAuthCmd(
@@ -124,47 +127,65 @@ export async function cloudflareSetServiceAuthCmd(
     return fail(err instanceof Error ? err.message : String(err));
   }
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-  });
-  try {
-    let clientId = opts.clientId;
-    let clientSecret = opts.clientSecret;
-    if (!clientId) {
-      clientId = (await rl.question("Cloudflare Access Client-ID: ")).trim();
-    }
+  let clientId = opts.clientId;
+  let clientSecret = opts.clientSecret;
+  if (!clientSecret && opts.clientSecretStdin) {
+    clientSecret = (await readStdin()).trim();
     if (!clientSecret) {
-      clientSecret = (
-        await rl.question("Cloudflare Access Client-Secret: ")
-      ).trim();
-    }
-    if (!clientId || !clientSecret) {
-      return fail("both --client-id and --client-secret are required");
-    }
-    if (!clientId.endsWith(".access")) {
-      process.stderr.write(
-        c.yellow(
-          "warning: Cloudflare Access service-token client IDs usually end in '.access'. Double-check this is correct.\n",
-        ),
+      return fail(
+        "cloudflare set-service-auth: --client-secret-stdin was set but stdin was empty",
       );
     }
-
-    setCloudflareServiceAuth(cfg.baseUrl, {
-      client_id: clientId,
-      client_secret: clientSecret,
-    });
-    await patchProfile(cfg.name, {
-      cloudflareAccessMode: "service-auth",
-      cloudflareAccessAppUrl: cfg.cloudflareAccessAppUrl ?? cfg.baseUrl,
-    });
-
-    process.stderr.write(
-      `${c.green("✓")} cloudflare access service-auth configured for profile ${c.bold(cfg.name)}\n`,
-    );
-  } finally {
-    rl.close();
   }
+
+  if ((!clientId || !clientSecret) && (isJsonMode() || !canPrompt())) {
+    return fail(
+      "cloudflare set-service-auth needs an interactive terminal. Pass --client-id and --client-secret (or --client-secret-stdin) to run non-interactively.",
+    );
+  }
+
+  if (!clientId || !clientSecret) {
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stderr,
+    });
+    try {
+      if (!clientId) {
+        clientId = (await rl.question("Cloudflare Access Client-ID: ")).trim();
+      }
+      if (!clientSecret) {
+        clientSecret = (
+          await rl.question("Cloudflare Access Client-Secret: ")
+        ).trim();
+      }
+    } finally {
+      rl.close();
+    }
+  }
+
+  if (!clientId || !clientSecret) {
+    return fail("both --client-id and --client-secret are required");
+  }
+  if (!clientId.endsWith(".access")) {
+    process.stderr.write(
+      c.yellow(
+        "warning: Cloudflare Access service-token client IDs usually end in '.access'. Double-check this is correct.\n",
+      ),
+    );
+  }
+
+  setCloudflareServiceAuth(cfg.baseUrl, {
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  await patchProfile(cfg.name, {
+    cloudflareAccessMode: "service-auth",
+    cloudflareAccessAppUrl: cfg.cloudflareAccessAppUrl ?? cfg.baseUrl,
+  });
+
+  process.stderr.write(
+    `${c.green("✓")} cloudflare access service-auth configured for profile ${c.bold(cfg.name)}\n`,
+  );
 }
 
 export async function cloudflareStatusCmd(): Promise<void> {

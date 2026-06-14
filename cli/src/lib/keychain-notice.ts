@@ -1,4 +1,4 @@
-import { c } from "./out.js";
+import { c, glyph } from "./out.js";
 
 let emitted = false;
 
@@ -23,7 +23,7 @@ export function maybeEmitKeychainNotice(): void {
   emitted = true;
   process.stderr.write(
     c.dim(
-      `🔐 mantis is reading a stored credential from ${keychainLabel()}. If you see a system password prompt, that's the OS asking your permission to release the credential to mantis-cli — click "Always Allow" once and you won't be prompted again on this machine.`,
+      `${glyph("🔐 ", "")}mantis is reading a stored credential from ${keychainLabel()}. If you see a system password prompt, that's the OS asking your permission to release the credential to mantis-cli — click "Always Allow" once and you won't be prompted again on this machine.`,
     ) + "\n",
   );
 }
