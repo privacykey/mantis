@@ -35,5 +35,8 @@ function vcfEscape(s: string): string {
     .replace(/\\/g, "\\\\")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,")
-    .replace(/\r?\n/g, "\\n");
+    // Normalize ALL line breaks — CRLF, lone LF, and lone CR. A bare \r (not
+    // followed by \n) would otherwise survive and, in line-oriented vCard, let
+    // the memo break out of the property value and inject a property line.
+    .replace(/\r\n|\r|\n/g, "\\n");
 }
