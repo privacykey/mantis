@@ -12,6 +12,15 @@ export function xmlEscape(s: string): string {
       // malformed .docx/.xlsx/.pptx/.svg that silently fails to open, breaking
       // the canary. See XML 1.0 §2.2 (Char production).
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+      // The Char production ALSO forbids lone (unpaired) UTF-16 surrogates.
+      // A truncated emoji or crafted input can leave a high surrogate with no
+      // trailing low surrogate (or vice versa), which is not a valid Unicode
+      // scalar value and yields a malformed document. Strip ONLY unpaired
+      // surrogates — a valid pair (e.g. 😀 = U+D83D U+DE00) must survive intact.
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
+      // ...and the permanent noncharacters U+FDD0–U+FDEF and U+FFFE/U+FFFF,
+      // which are likewise excluded from the Char production.
+      .replace(/[﷐-﷯￾￿]/g, "")
   );
 }
 
