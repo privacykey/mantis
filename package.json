@@ -41,7 +41,7 @@
     "postgres": "^3.4.9",
     "qrcode": "^1.5.4",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6",
+    "react-dom": "^19.2.7",
     "tailwindcss": "^4.3.0",
     "ua-parser-js": "^2.0.9",
     "undici": "^7.24.8",
