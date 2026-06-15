@@ -73,6 +73,11 @@ jobs:
         run: pnpm run db:migrate
       - name: test
         run: pnpm test
+      # Full-stack integration tests run the real route handlers against the
+      # Postgres service container above (migrations already applied). The
+      # suite's globalSetup re-applies migrations idempotently.
+      - name: integration tests (real Postgres)
+        run: pnpm run test:integration
 
   build:
     name: next build (catches lint/build-time errors)

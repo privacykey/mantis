@@ -7,7 +7,17 @@ const here = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   test: {
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
-    exclude: ["node_modules", ".next", "dist", "cli", "mantis-edge"],
+    // Full-stack DB integration tests live under tests/integration and run via
+    // vitest.integration.config.ts against a real Postgres — keep them out of
+    // the fast, mock-only unit run.
+    exclude: [
+      "node_modules",
+      ".next",
+      "dist",
+      "cli",
+      "mantis-edge",
+      "tests/integration/**",
+    ],
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
     // No global DB. Anything touching @/db should be tested via the actions
