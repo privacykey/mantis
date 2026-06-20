@@ -24,6 +24,11 @@ allowBuilds:
 #                      ^11.x deliberately avoids the re-vulnerable 12.0.0 / 13.0.0. Bench-only dep.
 #   form-data <4.0.6 → CRLF injection via unescaped multipart field names/filenames
 #                      (GHSA-hmw2-7cc7-3qxx); pulled in transitively via autocannon. Bench-only dep.
+#   vite <8.0.16     → server.fs.deny bypass via Windows alternate paths (GHSA-fx2h-pf6j-xcff)
+#                      and launch-editor NTLMv2 hash disclosure via UNC paths (GHSA-v6wh-96g9-6wx3),
+#                      both Windows-only dev-server issues. Pulled in transitively via vitest; we
+#                      never run the vite dev server (Next.js serves the app), so not exploitable
+#                      here — pinned for hygiene / to clear the alerts. Test-time devDep only.
 overrides:
   postcss: ^8.5.10
   esbuild: ^0.28.1
@@ -31,3 +36,4 @@ overrides:
   ws: ^8.20.1
   uuid: ^11.1.1
   form-data: ^4.0.6
+  vite: ^8.0.16
