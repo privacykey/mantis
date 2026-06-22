@@ -8,6 +8,7 @@ import {
   table,
   truncate,
 } from "../lib/out.js";
+import { parseLimit } from "../lib/parse.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -24,7 +25,7 @@ export type HitsOpts = GlobalOpts & {
 export async function hitsCmd(id: string, opts: HitsOpts): Promise<void> {
   await withClient(opts, async (client) => {
     const fullId = await resolveKeyRef(client, id);
-    const limit = opts.limit ? Number(opts.limit) : 50;
+    const limit = parseLimit(opts.limit);
     const filter = buildFilter(opts);
 
     if (opts.follow) {
