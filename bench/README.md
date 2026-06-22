@@ -20,16 +20,20 @@ investigating a regression, commit the resulting numbers to the tier's
 
 ## Quick Commands
 
+This repo is a pnpm workspace, so run the bench scripts with `pnpm` — they're
+defined in the root `package.json` and shell out to `pnpm --filter ...` for the
+per-tier workspaces.
+
 ```bash
 # CLI overhead; uses a local mock API
-npm run bench:cli
+pnpm run bench:cli
 
 # Cloudflare Worker edge benchmark; requires `npx wrangler dev` running
-npm run bench:edge
+pnpm run bench:edge
 
 # Main server/container benchmark; requires a running server and API key
-MANTIS_BENCH_KEY=mantis_live_... npm run bench:server
+MANTIS_BENCH_KEY=mantis_live_... pnpm run bench:server
 
 # Run every tier after setting up the edge worker and main server
-MANTIS_BENCH_KEY=mantis_live_... npm run bench:all
+MANTIS_BENCH_KEY=mantis_live_... pnpm run bench:all
 ```

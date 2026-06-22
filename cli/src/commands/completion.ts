@@ -5,6 +5,7 @@
 // both forms.
 
 const COMMANDS = [
+  "init",
   "login",
   "logout",
   "backup",
@@ -38,6 +39,7 @@ const COMMANDS = [
   "hits",
   "watch",
   "completion",
+  "config",
   "plugin",
 ];
 

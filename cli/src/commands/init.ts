@@ -53,16 +53,34 @@ export async function initCmd(): Promise<void> {
     return;
   }
 
-  // Edge: generate a key, guide the user to set it on the worker, store it.
+  // Edge: generate a key, guide the user to deploy the worker, then store it.
   const key = b64urlEncode(new Uint8Array(randomBytes(32)));
   w(`\n${c.green("✓")} generated an edge key.\n\n`);
-  w(`${c.dim("1. Set it on your worker:")}\n`);
-  w(`   cd mantis-edge && npx wrangler secret put MANTIS_EDGE_KEY\n`);
+  w(`${c.dim("You'll deploy the Cloudflare Worker first — it doesn't exist yet,")}\n`);
+  w(`${c.dim("and deploying is what gives you the *.workers.dev URL to paste below.")}\n`);
+  w(`${c.dim("(The mantis-edge dir ships with the repo. If you installed via brew,")}\n`);
+  w(`${c.dim(" clone it from https://github.com/privacykey/mantis or grab the worker")}\n`);
+  w(`${c.dim(" from the deploy docs linked below.)")}\n\n`);
+
+  w(`${c.dim("1. Deploy the worker (prints your *.workers.dev URL):")}\n`);
+  w(`   ${c.cyan("mantis edge deploy")}   ${c.dim("# wraps wrangler deploy and captures the URL for you")}\n`);
+  w(`   ${c.dim("# first time? run 'npx wrangler login' once, or set CLOUDFLARE_API_TOKEN")}\n\n`);
+  w(`${c.dim("2. Set the edge key as a secret on the now-deployed worker:")}\n`);
+  w(`   npx wrangler secret put MANTIS_EDGE_KEY\n`);
   w(`   ${c.dim("# paste this value:")} ${key}\n\n`);
+  w(`${c.dim("Deploy docs:")} mantis-edge/README.md ${c.dim("·")} https://github.com/privacykey/mantis-docs\n\n`);
 
   let worker = "";
   while (!URL_RE.test(worker)) {
-    worker = await ask("2. Worker URL (https://…): ");
+    worker = await ask("3. Worker URL from `wrangler deploy` (https://…), or blank to finish later: ");
+    if (!worker) {
+      w(
+        `\n${c.dim("No problem — once the worker is deployed, store the key with:")}\n` +
+          `   ${c.cyan("mantis edge set-key <worker-url>")}\n` +
+          `   ${c.dim("# paste this value:")} ${key}\n`,
+      );
+      return;
+    }
     if (!URL_RE.test(worker)) {
       w(c.dim("Enter a URL starting with http:// or https://\n"));
     }

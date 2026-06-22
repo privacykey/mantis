@@ -1,10 +1,18 @@
 import { createInterface } from "node:readline/promises";
-import { c, fail, isJsonMode } from "../lib/out.js";
+import { c, emit, fail, isJsonMode } from "../lib/out.js";
 import { canPrompt } from "../lib/prompt.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type RmOpts = GlobalOpts & { yes?: boolean };
+
+// Shared result shape so rm/disable/enable emit a consistent --json envelope.
+export type MutationResult = {
+  ref: string;
+  id?: string;
+  ok: boolean;
+  error?: string;
+};
 
 export async function rmCmd(ids: string[], opts: RmOpts): Promise<void> {
   await withClient(opts, async (client) => {
@@ -46,19 +54,28 @@ export async function rmCmd(ids: string[], opts: RmOpts): Promise<void> {
 
     // Best-effort per id: one bad ref or failed delete doesn't abort the rest,
     // but any failure makes the command exit non-zero (kubectl/docker pattern).
+    const results: MutationResult[] = [];
     let failed = 0;
     for (const ref of ids) {
       try {
         const fullId = await resolveKeyRef(client, ref);
         await client.deleteKey(fullId);
-        process.stderr.write(`${c.green("✓")} deleted ${fullId}\n`);
+        results.push({ ref, id: fullId, ok: true });
+        if (!isJsonMode()) {
+          process.stderr.write(`${c.green("✓")} deleted ${fullId}\n`);
+        }
       } catch (err) {
         failed += 1;
-        process.stderr.write(
-          `${c.red("✗")} ${ref}: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
+        const error = err instanceof Error ? err.message : String(err);
+        results.push({ ref, ok: false, error });
+        if (!isJsonMode()) {
+          process.stderr.write(`${c.red("✗")} ${ref}: ${error}\n`);
+        }
       }
     }
+    // In --json mode the human stderr lines above are suppressed; emit one
+    // results envelope on stdout instead (shared shape with disable/enable).
+    emit(() => {}, { action: "deleted", results, failed });
     if (failed > 0) process.exitCode = 1;
   });
 }

@@ -7,6 +7,7 @@ import {
   table,
   truncate,
 } from "../lib/out.js";
+import { parseLimit } from "../lib/parse.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type ListOpts = GlobalOpts & {
@@ -21,7 +22,7 @@ export async function listCmd(opts: ListOpts): Promise<void> {
     fail("choose only one of --id-only or --url-only");
   }
   await withClient(opts, async (client) => {
-    const limit = opts.limit ? Number(opts.limit) : 50;
+    const limit = parseLimit(opts.limit);
     const items = await collect(client.listKeys.bind(client), opts.all ? 1000 : limit);
     emit(
       () => {

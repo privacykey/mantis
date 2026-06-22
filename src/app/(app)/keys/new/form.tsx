@@ -43,6 +43,13 @@ export function NewKeyForm() {
 
   return (
     <form action={formAction} className="space-y-4">
+      <p className="text-sm text-neutral-400 leading-relaxed">
+        A mantis key is a tripwire. You mint a key and get back a URL (plus
+        downloadable file artifacts like docs, PDFs, and a honey-directory zip).
+        Plant it somewhere it shouldn't be touched. When something fetches the
+        URL or opens a file, mantis records the hit and notifies your
+        destinations below.
+      </p>
       <Field label="memo" hint="A label for you — not visible to triggers.">
         <input
           name="memo"

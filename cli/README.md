@@ -67,7 +67,7 @@ Credentials are stored in:
 | `watch [id] [-i N]` | Poll and print new hits; omit `id` for all keys (default: all keys, 5s) |
 | `disable <id...>` / `enable <id...>` | Toggle one or more keys without losing history |
 | `rm <id...> [--yes]` | Delete one or more keys + cascade hits (`mantis list --id-only \| xargs mantis rm -y`) |
-| `download <id> [--docx \| --xlsx \| --pptx \| --pdf \| --folder \| --svg \| --html \| --md \| --eml \| --ics \| --vcf] <path>` | Download artifacts for an existing key |
+| `download <id> [--docx \| --xlsx \| --pptx \| --pdf \| --folder \| --nfc-label \| --apple-wallet \| --svg \| --html \| --md \| --eml \| --ics \| --vcf] <path>` | Download artifacts for an existing key |
 | `install <id> --type <type> [--out <path>]` | Generate a host-event or web-embed installer snippet |
 | `monitor <id> --mode <off\|latch\|window> [--window <s>]` | Configure the Uptime Kuma status endpoint for a key |
 | `reset <id>` | Reset a key's tripped (latched) monitor state |
@@ -76,12 +76,15 @@ Credentials are stored in:
 | `dest add <id> <channel> <target>` | Add a notification destination (`dest` aliases `destinations`) |
 | `dest rm <id> <dest-id>` | Remove one destination from a key |
 | `dest test <id> [--yes]` | Fire a synthetic hit and report which destinations succeeded |
+| `dest rotate-secret <id> <dest-id> [--yes]` | Rotate a webhook destination's HMAC signing secret (the new secret is shown once) |
+| `audit log [-n <n>] [--since DUR] [--type TYPE] [--actor ID]` | List append-only audit events, most recent first (admin keys only) |
 | `completion <bash\|zsh\|fish>` | Print shell completion script |
 | `config list` / `get <key>` / `set <key> <value>` / `unset <key>` / `path` | Get/set machine-wide defaults (`output`, `color`); applied below explicit flags |
 | `cloudflare login [--app URL]` | Auth via Cloudflare Access SSO (opens browser; needs local `cloudflared`) |
 | `cloudflare logout` | Clear cached Cloudflare Access credentials |
 | `cloudflare set-service-auth [--client-id … --client-secret …]` | Configure headless Cloudflare Access Service Auth |
 | `cloudflare status` | Show Cloudflare Access auth state for the current server |
+| `edge deploy [-- <wrangler args>]` | Deploy the mantis-edge Worker (wraps `wrangler deploy`), capture its `*.workers.dev` URL, and print the next steps; `--set-key` stores the AES key locally afterward, `--dir <path>` points at the worker directory |
 | `edge mint [...opts]` | Mint a stateless edge URL. Run bare on a TTY for the interactive wizard; pass `--install <type>` to chain straight into installer generation |
 | `edge install <url> --type <type>` | Generate an installer snippet (shell, plist, systemd unit, CSS, JS, NFC, Home Assistant, …) for a previously-minted edge URL |
 | `plugin add <spec>` | Install a trusted local/GitHub CLI plugin that contributes installer types or file formats |
@@ -105,6 +108,12 @@ Credentials are stored in:
 - `--pptx <path>` — PowerPoint deck with external-image mantis
 - `--pdf <path>` — PDF with combined `/OpenAction → /URI` and visible link
 - `--folder <path>` — honey-directory `.zip` of 9 pre-baited files (Office trio + PDF + fake-creds .txt + Win/macOS shortcuts)
+- `--svg <path>` — `.svg` image that fires on browser render (Immich/PhotoPrism)
+- `--html <path>` — `.html` page that fires on browser open
+- `--md <path>` — `.md` note that fires when rendered (Joplin/Trilium/Gitea)
+- `--eml <path>` — `.eml` email that fires when opened in a mail client
+- `--ics <path>` — `.ics` calendar event with image-attachment URL
+- `--vcf <path>` — `.vcf` contact card with PHOTO URI
 
 ### Bulk CSV creation
 

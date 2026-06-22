@@ -46,6 +46,15 @@ primary_region = "iad"
     hard_limit = 250
     soft_limit = 200
 
+  # DB-aware health check: /api/health returns non-2xx when Postgres is down,
+  # so a DB-down deploy is marked unhealthy instead of serving broken pages.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "get"
+    path = "/api/health"
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1

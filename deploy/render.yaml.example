@@ -28,7 +28,7 @@ services:
     dockerfilePath: ./docker/Dockerfile
     plan: starter   # change to "free" if you accept cold-start latency
     region: oregon
-    healthCheckPath: /
+    healthCheckPath: /api/health   # DB-aware: fails when Postgres is unreachable
     envVars:
       - key: PUBLIC_BASE_URL
         value: https://mantis.onrender.com   # change to your mantis's URL after first deploy

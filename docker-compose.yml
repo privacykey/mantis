@@ -38,6 +38,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Optional: makes every var documented in .env.example reachable by the
+    # container without listing each one. Long form so an absent .env is fine.
+    env_file:
+      - path: .env
+        required: false
     environment:
       # If you override POSTGRES_PASSWORD in .env, update DATABASE_URL too
       # — they aren't auto-derived from each other.

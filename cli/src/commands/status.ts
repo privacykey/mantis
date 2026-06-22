@@ -7,6 +7,7 @@ import {
   table,
   truncate,
 } from "../lib/out.js";
+import { parseLimit } from "../lib/parse.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -97,7 +98,7 @@ async function detail(
   const status = await fetchStatusSafe(client, key.public_id);
 
   // Pull the hit slice we need to explain the trip.
-  const hitLimit = Math.max(1, Number(opts.limit ?? "50"));
+  const hitLimit = parseLimit(opts.limit);
   const hitsResp =
     key.monitor_mode === "off"
       ? { data: [] as Hit[], next_cursor: null }
