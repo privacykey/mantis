@@ -38,33 +38,43 @@ AES-256-GCM gives confidentiality + integrity. Tamper any byte → decrypt throw
 
 ## Deploy
 
-Prereq: a Cloudflare account and the mantis CLI (one directory up at `cli/`). Wrangler is bundled as a dev dependency — `npm install` (or `pnpm install` at the repo root) installs it locally, and the snippets below invoke it via `npx wrangler` so no global install is needed.
+Prereqs:
+
+- **A Cloudflare account with Workers enabled** (the free tier is fine).
+- **The mantis CLI**, which provides the `mantis edge *` commands used below. Install it globally with `npm i -g @mantis/cli` (or `brew install mantis`). The CLI is all you need to *mint* and *manage* edge URLs against an already-deployed worker.
+- **Only to deploy the worker from source:** `cd mantis-edge && npm install`. Wrangler is bundled as a dev dependency, so this installs it locally and the snippets below invoke it via `npx wrangler` — no global wrangler install needed.
+- **Cloudflare auth for wrangler.** Run `npx wrangler login` once; the first wrangler command opens a browser to authorize against your account. For CI / headless environments where no browser is available, set the `CLOUDFLARE_API_TOKEN` env var (a Workers-scoped API token) instead of logging in interactively.
 
 See [deploy.md](./deploy.md) for custom domains, CI deploys, allowlisting, local dev, and verification. The short path:
 
 ```bash
 cd mantis-edge
 npm install
+npx wrangler login   # one-time; opens a browser. CI: set CLOUDFLARE_API_TOKEN instead.
 
 # 1. Generate the encryption key
 mantis edge keygen
 # → prints a base64url key on stdout, save it
-# → also prints the two next commands to stderr
+# → also prints the next commands to stderr
 
-# 2. Set it on the worker as a secret.
+# 2. Deploy. This creates the worker on your account and prints its URL.
+mantis edge deploy   # wraps `wrangler deploy` and captures the *.workers.dev URL for you
+# → or run `npx wrangler deploy` directly
+# → prints your worker URL, e.g. https://mantis-edge.<your-subdomain>.workers.dev
+
+# 3. Set the encryption key on the (now-existing) worker as a secret.
 # Wrangler prompts: paste the base64url key that `mantis edge keygen` just printed.
 npx wrangler secret put MANTIS_EDGE_KEY
 
-# Optional defense-in-depth: restrict where edge URLs can POST.
+# 4. Optional defense-in-depth: restrict where edge URLs can POST.
 # When wrangler prompts, paste a comma-separated allowlist
 # (e.g. hooks.slack.com,discord.com,*.example.com).
 npx wrangler secret put MANTIS_EDGE_WEBHOOK_ALLOWLIST
 
-# 3. Deploy
-npx wrangler deploy
-# → prints your worker URL, e.g. https://mantis-edge.<your-subdomain>.workers.dev
+# Setting a secret takes effect on the next request without a redeploy. If you
+# changed wrangler.toml (e.g. added routes), run `npx wrangler deploy` again.
 
-# 4. Save the same key locally so the CLI can mint URLs against it.
+# 5. Save the same key locally so the CLI can mint URLs against it.
 # This prompts for the key — paste the value from `mantis edge keygen` again.
 mantis edge set-key https://mantis-edge.<your-subdomain>.workers.dev
 ```
@@ -146,7 +156,7 @@ mantis edge mint \
   --test
 ```
 
-All 17 installer types from the stateful CLI work here verbatim: `shell`, `shell-sudo`, `macos-{login,boot,wake,network}`, `linux-{boot,wake,network}`, `windows-{logon,wake,network}`, `css-background`, `js-clone-detector` (needs `--hostname`), `nfc-ndef`, `homeassistant`, `scrypted`. The default trigger response is auto-set per installer (`empty` for back-channel curls, `gif` for browser-facing CSS/NFC) and can be overridden via `--response-kind` or the wizard's edit step.
+All 18 installer types from the stateful CLI work here verbatim: `shell`, `shell-sudo`, `macos-{login,boot,wake,network}`, `linux-{boot,wake,network}`, `windows-{logon,wake,network}`, `css-background`, `js-clone-detector` (needs `--hostname`), `nfc-ndef`, `homeassistant`, `homeassistant-receiver`, `scrypted`. The default trigger response is auto-set per installer (`empty` for back-channel curls, `gif` for browser-facing CSS/NFC) and can be overridden via `--response-kind` or the wizard's edit step.
 
 Trigger manually any time after:
 

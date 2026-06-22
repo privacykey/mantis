@@ -56,6 +56,7 @@ mindmap
     Edge worker
       edge
         keygen
+        deploy
         set-key
         delete-key
         mint
@@ -137,6 +138,7 @@ flowchart LR
 | Auth | `whoami` | Show current profile, server, key prefix, Cloudflare state, edge worker | Local config |
 | Auth | `doctor` | Check config, auth, server health, and split public/private hosts | Server + optional public URL |
 | Auth | `detect` | Offline self-audit for Mantis-style installer artifacts on this machine | Local filesystem |
+| Auth | `audit log` | List append-only audit events, most recent first (admin keys only) | Server |
 | Profiles | `profile list` / `profile ls` | List profiles | Local config |
 | Profiles | `profile current` | Print active profile name | Local config |
 | Profiles | `profile use <name>` | Switch active profile | Local config |
@@ -168,6 +170,7 @@ flowchart LR
 | Artifacts | `download <id>` | Download generated bait files for an existing key | Server |
 | Artifacts | `install <id>` | Generate host/web/NFC/smart-home installer snippets | Server |
 | Edge | `edge keygen` | Generate AES key for stateless edge worker | Local crypto |
+| Edge | `edge deploy` | Deploy the worker (`wrangler deploy`) + capture its URL | Shells out to wrangler |
 | Edge | `edge set-key` | Store edge AES key for worker URL | Local keychain |
 | Edge | `edge delete-key` | Remove stored edge AES key | Local keychain |
 | Edge | `edge mint` | Mint stateless Cloudflare Worker URL | Local crypto + keychain |
@@ -228,7 +231,9 @@ flowchart TD
 ```mermaid
 flowchart TD
   A["edge keygen"] --> B["Create AES key"]
-  B --> C["edge set-key --worker <url>"]
+  B --> J["edge deploy"]
+  J --> K["wrangler deploy → capture *.workers.dev URL"]
+  K --> C["edge set-key --worker <url>"]
   C --> D["Store AES key in keychain"]
   E["profile set-edge prod --worker <url>"] --> F["Profile remembers default worker"]
   D --> G["edge mint"]
@@ -248,6 +253,7 @@ flowchart TD
 | `whoami` | none |
 | `doctor` | `--public-url <url>` |
 | `detect` | `--scope user\|system\|all`, `--verbose`, `--deep` |
+| `audit log` | `-n, --limit <n>` (1-500, default 100), `--since <duration-or-iso>`, `-t, --type <event_type>`, `--actor <api_key_id>` |
 
 ### Profiles
 
@@ -357,12 +363,14 @@ flowchart TD
 | `destinations add <key-id> [channel] [target]` / `dest add` | `--channel webhook\|email\|slack\|discord\|teams`, `--target <target>` |
 | `destinations rm <key-id> <destination-id>` / `dest rm` | none |
 | `destinations test <key-id>` / `dest test` | `--yes` |
+| `destinations rotate-secret <key-id> <destination-id>` / `dest rotate-secret` | `--yes` (rotates a webhook destination's HMAC signing secret; new secret shown once) |
 
 ### Edge Worker
 
 | Command | Key Options |
 |---|---|
 | `edge keygen` | none |
+| `edge deploy` | `--dir <path>` (worker dir; defaults to `./` or `./mantis-edge`), `--set-key` (store the AES key locally after deploy), and any extra args after `--` forwarded to `wrangler deploy` |
 | `edge set-key` | positional `[worker] [key]`, or `--worker <url>`; `--key-stdin` for CI (prompts for key if omitted) |
 | `edge delete-key` | `--worker <url>` |
 | `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy`, `--test`, `--install <type>` (with `--out`, `--ssh-only`, `--hostname`). Run bare on a TTY to launch the interactive wizard. |
