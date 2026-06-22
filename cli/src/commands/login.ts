@@ -62,10 +62,20 @@ export async function loginCmd(opts: {
 
     if (interactive && !key) {
       rl ??= createInterface({ input: process.stdin, output: process.stderr });
+      process.stderr.write(
+        `${c.dim('This is the bootstrap admin key printed to the server logs on first boot:')}\n` +
+          `${c.dim('  docker compose logs mantis | grep "bootstrap API key" -A1')}\n` +
+          `${c.dim("(or whatever you set via BOOTSTRAP_API_KEY)")}\n`,
+      );
       key = (await rl.question("API key (mantis_live_...): ")).trim();
     }
     if (!KEY_RE.test(key)) {
-      return fail("invalid API key format", ExitCode.Usage);
+      return fail(
+        'invalid API key format. The key is the bootstrap admin key printed to the server logs on first boot:\n' +
+          '  docker compose logs mantis | grep "bootstrap API key" -A1\n' +
+          "(or whatever you set via BOOTSTRAP_API_KEY)",
+        ExitCode.Usage,
+      );
     }
 
     const client = new MantisClient({ baseUrl: url, key });
@@ -91,6 +101,9 @@ export async function loginCmd(opts: {
 
     process.stderr.write(
       `${c.green("✓")} stored credentials for ${c.cyan(url)} as profile ${c.bold(profileName)}${opts.noSwitch ? c.dim(" (not switched to)") : ""}\n`,
+    );
+    process.stderr.write(
+      `${c.dim("Next:")} ${c.cyan("mantis doctor")} ${c.dim("# verify server health & auth")}\n`,
     );
   } finally {
     rl?.close();

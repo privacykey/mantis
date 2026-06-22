@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { createInterface, type Interface } from "node:readline/promises";
 import {
   getCurrentProfileName,
@@ -24,7 +26,7 @@ import {
   type InstallType,
   type Installer,
 } from "../lib/installers.js";
-import { c, emit, fail, isJsonMode } from "../lib/out.js";
+import { c, emit, ExitCode, fail, isJsonMode } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 import {
   URL_RE,
@@ -144,6 +146,161 @@ export function deleteKeyCmd(opts: { worker?: string }): void {
       );
     },
     { worker: workerUrl, deleted: true },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// deploy — thin wrapper around `wrangler deploy` that captures the worker URL
+// ---------------------------------------------------------------------------
+
+/**
+ * Lift the deployed worker URL out of `wrangler deploy`'s output. Wrangler
+ * prints the `*.workers.dev` URL (and any custom-domain routes) on success; we
+ * prefer a workers.dev URL and fall back to the first valid https URL, so the
+ * common case "just works" without the user copy-pasting it by hand.
+ */
+export function parseWorkerUrl(output: string): string | null {
+  const urls = (output.match(/https?:\/\/[^\s'"]+/g) ?? [])
+    .map((u) => u.replace(/[).,]+$/, ""))
+    .filter((u) => {
+      try {
+        new URL(u);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  return urls.find((u) => u.includes(".workers.dev")) ?? urls[0] ?? null;
+}
+
+/** Locate the mantis-edge worker directory (the one holding wrangler.toml). */
+function resolveWorkerDir(explicit?: string): string | null {
+  const candidates = explicit
+    ? [resolvePath(explicit)]
+    : [process.cwd(), join(process.cwd(), "mantis-edge")];
+  return (
+    candidates.find((dir) => existsSync(join(dir, "wrangler.toml"))) ?? null
+  );
+}
+
+export async function deployCmd(opts: {
+  dir?: string;
+  setKey?: boolean;
+  /** Extra args forwarded verbatim to `wrangler deploy` (passed after `--`). */
+  args?: string[];
+}): Promise<void> {
+  const workerDir = resolveWorkerDir(opts.dir);
+  if (!workerDir) {
+    fail(
+      "couldn't find the mantis-edge worker — no wrangler.toml here or in ./mantis-edge.\n" +
+        "Run this from a mantis repo clone, or point at the worker with --dir <path>.\n" +
+        "Installed via brew? Clone the worker first: git clone https://github.com/privacykey/mantis",
+      ExitCode.Usage,
+    );
+  }
+  if (!existsSync(join(workerDir, "node_modules"))) {
+    process.stderr.write(
+      `${c.yellow("⚠")} ${workerDir}/node_modules is missing — wrangler isn't installed there yet.\n` +
+        `  If deploy fails, run ${c.cyan("npm install")} in that directory first.\n`,
+    );
+  }
+
+  // `npx wrangler` resolves the worker's local wrangler (a devDependency) — no
+  // global install or network fetch needed. No shell on POSIX, so the fixed
+  // command and any passthrough args can't be re-parsed by a shell; Windows
+  // needs shell:true to resolve the npx.cmd shim.
+  const isWin = process.platform === "win32";
+  const cmd = isWin ? "npx.cmd" : "npx";
+  const args = ["wrangler", "deploy", ...(opts.args ?? [])];
+
+  if (!isJsonMode()) {
+    process.stderr.write(
+      `${c.dim("▸ deploying mantis-edge worker (")}${c.cyan("wrangler deploy")}${c.dim(`) in ${workerDir}\n`)}`,
+    );
+  }
+
+  // Tee wrangler's stdout/stderr to the user in real time while capturing it,
+  // so we can read the deployed URL out afterward. stdin is inherited so an
+  // interactive `wrangler login` still works on first run.
+  let captured = "";
+  const exitCode = await new Promise<number>((resolveExit) => {
+    let child;
+    try {
+      child = spawn(cmd, args, {
+        cwd: workerDir,
+        stdio: ["inherit", "pipe", "pipe"],
+        shell: isWin,
+      });
+    } catch (err) {
+      process.stderr.write(
+        `${c.red("✗")} couldn't launch wrangler (${err instanceof Error ? err.message : String(err)}).\n` +
+          `  Deploy manually: cd ${workerDir} && npx wrangler deploy\n`,
+      );
+      resolveExit(-1);
+      return;
+    }
+    child.stdout?.on("data", (d: Buffer) => {
+      captured += d.toString();
+      process.stderr.write(d);
+    });
+    child.stderr?.on("data", (d: Buffer) => {
+      captured += d.toString();
+      process.stderr.write(d);
+    });
+    child.on("error", (err) => {
+      process.stderr.write(
+        `${c.red("✗")} couldn't launch wrangler (${err.message}).\n` +
+          `  Deploy manually: cd ${workerDir} && npx wrangler deploy\n`,
+      );
+      resolveExit(-1);
+    });
+    child.on("close", (code) => resolveExit(code ?? 1));
+  });
+
+  if (exitCode !== 0) {
+    fail(
+      `wrangler deploy failed (exit ${exitCode}).\n` +
+        "Most common cause: not authenticated — run `npx wrangler login` (or set CLOUDFLARE_API_TOKEN for CI), then retry.",
+      ExitCode.Generic,
+    );
+  }
+
+  const url = parseWorkerUrl(captured);
+  if (!url) {
+    emit(
+      () =>
+        process.stderr.write(
+          `\n${c.green("✓")} deploy finished, but I couldn't detect the worker URL from wrangler's output.\n` +
+            `  Copy it from above, then run ${c.cyan("mantis edge set-key <worker-url>")}.\n`,
+        ),
+      { deployed: true, worker: null },
+    );
+    return;
+  }
+  const workerUrl = normalizeWorker(url);
+
+  if (opts.setKey) {
+    if (!isJsonMode()) {
+      process.stderr.write(
+        `\n${c.green("✓")} deployed: ${c.cyan(workerUrl)}\n` +
+          `${c.dim("The worker also needs the key as a secret:")} ${c.cyan("npx wrangler secret put MANTIS_EDGE_KEY")}\n` +
+          `${c.dim("Storing the key locally so the CLI can mint against it:")}\n`,
+      );
+    }
+    await setKeyCmd({ worker: workerUrl });
+    return;
+  }
+
+  emit(
+    () =>
+      process.stderr.write(
+        `\n${c.green("✓")} deployed: ${c.cyan(workerUrl)}\n\n` +
+          `${c.dim("Next:")}\n` +
+          `  ${c.cyan("npx wrangler secret put MANTIS_EDGE_KEY")}   ${c.dim("# set the AES key ON the worker")}\n` +
+          `  ${c.cyan(`mantis edge set-key ${workerUrl}`)}   ${c.dim("# store it locally for minting")}\n` +
+          `  ${c.cyan("mantis edge mint")}                        ${c.dim("# mint your first stateless URL")}\n`,
+      ),
+    { deployed: true, worker: workerUrl },
   );
 }
 

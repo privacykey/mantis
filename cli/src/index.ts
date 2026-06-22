@@ -19,6 +19,7 @@ import {
 import { downloadCmd } from "./commands/download.js";
 import {
   deleteKeyCmd as edgeDeleteKeyCmd,
+  deployCmd as edgeDeployCmd,
   installCmd as edgeInstallCmd,
   keygenCmd as edgeKeygenCmd,
   mintCmd as edgeMintCmd,
@@ -469,6 +470,34 @@ edge
   .action(() => {
     edgeKeygenCmd();
   });
+
+edge
+  .command("deploy")
+  .description("deploy the mantis-edge Worker (wraps `wrangler deploy`) and capture its URL")
+  .option(
+    "--dir <path>",
+    "worker directory to deploy from (defaults to ./ or ./mantis-edge)",
+  )
+  .option(
+    "--set-key",
+    "after a successful deploy, store the AES key locally for the deployed URL (prompts)",
+  )
+  .argument(
+    "[wranglerArgs...]",
+    "extra args forwarded to `wrangler deploy` (put them after `--`)",
+  )
+  .action(
+    async (
+      wranglerArgs: string[],
+      opts: { dir?: string; setKey?: boolean },
+    ) => {
+      await edgeDeployCmd({
+        dir: opts.dir,
+        setKey: opts.setKey,
+        args: wranglerArgs,
+      });
+    },
+  );
 
 edge
   .command("set-key")
@@ -1125,6 +1154,9 @@ program.addHelpText(
   "after",
   `
 ${c.bold("Common commands, grouped:")}
+
+  ${c.dim("Getting started")}
+    init, login, doctor, completion
 
   ${c.dim("Auth & profiles")}
     login, logout, whoami, profile (list|use|show|rm|set-edge), cloudflare ...
