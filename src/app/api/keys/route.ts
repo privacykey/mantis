@@ -8,6 +8,12 @@ import { newPublicId, serializeKey } from "@/lib/keys";
 import { validateDestination } from "@/lib/notify/channels";
 import { extractIp } from "@/lib/request-info";
 import {
+  BodyParseError,
+  BodyTooLargeError,
+  MAX_API_JSON_BYTES,
+  readBodyJson,
+} from "@/lib/safe-body";
+import {
   replaceDestinations,
   serializeResult,
 } from "@/lib/notify/destinations";
@@ -22,12 +28,21 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "bad_request", message: "invalid JSON body" },
-      { status: 400 },
-    );
+    body = await readBodyJson(req, MAX_API_JSON_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: err.message },
+        { status: 413 },
+      );
+    }
+    if (err instanceof BodyParseError) {
+      return NextResponse.json(
+        { error: "bad_request", message: "invalid JSON body" },
+        { status: 400 },
+      );
+    }
+    throw err;
   }
 
   const parsed = createKeySchema.safeParse(body);

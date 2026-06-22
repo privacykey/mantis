@@ -971,9 +971,12 @@ function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer 
 #      should see this automation run once with type "mantis.activation".
 #
 # Tailscale note: if Mantis reaches HA over the tailnet (100.64.0.0/10
-# CGNAT range), set ALLOW_PRIVATE_WEBHOOKS=1 in the Mantis environment.
-# Otherwise the SSRF guard will refuse to call private addresses and the
-# activation ping will fail with "resolves to a private address".
+# CGNAT range) the SSRF guard refuses the private address and the activation
+# ping fails with "resolves to a private address".
+# WARNING: ALLOW_PRIVATE_WEBHOOKS=1 lifts that block, but it is a GLOBAL switch
+# — it disables SSRF protection for EVERY destination and channel instance-wide,
+# not just this HA webhook. Prefer restricting egress to the HA host at the
+# network layer over enabling it for the whole instance.
 
 automation:
   - alias: "Mantis hit — ${memo}"
@@ -1035,7 +1038,7 @@ automation:
       "# Reload automations or restart Home Assistant.",
     ],
     notes:
-      "If Mantis reaches HA over Tailscale (100.64.0.0/10) or any RFC1918 network, set ALLOW_PRIVATE_WEBHOOKS=1 in the Mantis environment. The activation ping will surface unreachable-URL errors immediately via `mantis dest add`.",
+      "If Mantis reaches HA over Tailscale (100.64.0.0/10) or any RFC1918 network, the SSRF guard blocks the private address. ALLOW_PRIVATE_WEBHOOKS=1 lifts it, but it is GLOBAL — it disables SSRF protection for every destination and channel instance-wide, so prefer restricting egress to the HA host at the network layer. The activation ping surfaces unreachable-URL errors immediately via `mantis dest add`.",
   };
 }
 

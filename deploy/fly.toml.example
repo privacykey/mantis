@@ -5,8 +5,15 @@
 #   fly launch --no-deploy --copy-config
 #   fly postgres create --name <db-name>
 #   fly postgres attach <db-name>
-#   fly secrets set PUBLIC_BASE_URL=https://<app-name>.fly.dev BOOTSTRAP_API_KEY=mantis_live_...
+#   fly secrets set \
+#     PUBLIC_BASE_URL=https://<app-name>.fly.dev \
+#     MANTIS_API_KEY_PEPPER="$(openssl rand -base64 32)" \
+#     BOOTSTRAP_API_KEY=mantis_live_...
 #   fly deploy
+#
+# MANTIS_API_KEY_PEPPER is required — the app refuses to boot without it.
+# Do NOT rotate after the first API key is minted; rotating invalidates
+# every existing key.
 #
 # Public edge limits:
 #   Fly concurrency protects Machines from overload, but it is not a WAF.

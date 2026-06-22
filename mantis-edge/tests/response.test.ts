@@ -62,4 +62,32 @@ describe("buildResponse", () => {
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(await res.text()).toBe("<h1>hi</h1>");
   });
+
+  it("sandboxes HTML responses with a CSP matching the stateful server", () => {
+    const res = buildResponse({
+      w: "https://x.com/h",
+      r: "html",
+      p: { html: "<h1>hi</h1>" },
+    });
+    const csp = res.headers.get("content-security-policy");
+    expect(csp).not.toBeNull();
+    // Critical pieces: no scripts (default-src 'none'), no plugins/JS via
+    // sandbox without `allow-scripts`, no <base> hijack, no form action.
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("sandbox");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("form-action 'none'");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("redirects with cache-control: no-store so caches/proxies don't snapshot the target", () => {
+    const res = buildResponse({
+      w: "https://x.com/h",
+      r: "redirect",
+      p: { url: "https://example.com/target" },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("https://example.com/target");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
 });

@@ -3,6 +3,14 @@ import type { Payload } from "./types";
 // 43-byte 1×1 transparent GIF89a
 const GIF_B64 = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
+// Mirror of the stateful server's HTML response CSP (src/lib/response.ts).
+// Operator-controlled HTML is sandboxed to: no JS, no plugins, no
+// top-level navigation, no <base> hijack, no form submission. Inline
+// styles and HTTPS image fetches are allowed because most paste-in HTML
+// includes them. KEEP IN SYNC with the server.
+const HTML_CSP =
+  "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox";
+
 function gifBytes(): Uint8Array<ArrayBuffer> {
   const bin = atob(GIF_B64);
   const bytes = new Uint8Array(bin.length);
@@ -37,7 +45,15 @@ export function buildResponse(payload: Payload): Response {
         // Mis-formed payload — fall back to gif so we don't expose the misconfig
         return gifResponse();
       }
-      return Response.redirect(target, 302);
+      // Hand-built so we can attach cache-control. `Response.redirect()`
+      // doesn't accept extra headers.
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: target,
+          "cache-control": "no-store",
+        },
+      });
     }
 
     case "html": {
@@ -54,6 +70,7 @@ export function buildResponse(payload: Payload): Response {
         headers: {
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
+          "content-security-policy": HTML_CSP,
         },
       });
     }

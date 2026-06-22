@@ -13,7 +13,10 @@ import { type DocOptions } from "./util";
  */
 export function generateIcs(opts: DocOptions): Promise<Buffer> {
   const title = icsEscape(opts.title);
-  const url = opts.url;
+  // Line-safe the URL too: a \r/\n or special char in the operator/key URL
+  // would otherwise break out of the URL/ATTACH property value and inject a
+  // property line, the same way an unescaped memo could.
+  const url = icsEscape(opts.url);
   const description = icsEscape(opts.body?.join("\\n") ?? opts.title);
   // Crypto-grade random UID. Predictable UIDs would let a target who
   // received this canary correlate it with other canaries (same generator,

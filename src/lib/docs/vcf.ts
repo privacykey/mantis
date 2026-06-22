@@ -12,7 +12,10 @@ import { type DocOptions } from "./util";
  */
 export function generateVcf(opts: DocOptions): Promise<Buffer> {
   const name = vcfEscape(opts.title);
-  const url = opts.url;
+  // Line-safe the URL too: a \r/\n or special char in the operator/key URL
+  // would otherwise break out of the PHOTO/URL property value and inject a
+  // property line, the same way an unescaped note could.
+  const url = vcfEscape(opts.url);
   const note = vcfEscape(opts.body?.join("\\n") ?? opts.title);
 
   const vcf = [
