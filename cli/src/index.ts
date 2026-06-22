@@ -136,7 +136,7 @@ program
 
 ${c.dim("Fastest:")} ${c.cyan("mantis init")} ${c.dim("— guided setup (asks server or edge, does the rest)")}
 
-Or set it up yourself — two ways to use mantis, pick whichever fits, or both:
+Or set up by hand — two ways to use mantis, pick whichever fits, or both:
 
   ${c.dim("1. Stateful server")} ${c.dim("(dashboard, hit history, multi-destination keys)")}
        ${c.cyan("mantis login")}                       ${c.dim("# interactive: server URL + API key")}

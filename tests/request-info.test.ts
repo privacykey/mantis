@@ -93,9 +93,59 @@ describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
       ),
     ).toBe("203.0.113.9");
   });
+
+  it("takes the rightmost hop when pinned to a chain header (x-vercel-forwarded-for)", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-vercel-forwarded-for");
+    // x-vercel-forwarded-for can arrive comma-joined "client, proxy"; the
+    // leftmost is the spoofable client token, so the rightmost hop must win.
+    expect(
+      clientIpFromHeaders(
+        get({ "x-vercel-forwarded-for": "6.6.6.6, 203.0.113.9" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("applies rightmost-hop parsing to x-vercel-forwarded-for even when unpinned", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    // No TRUSTED_IP_HEADER: the default ordered list still treats the Vercel
+    // chain header as a chain, not as a single leftmost token.
+    expect(
+      clientIpFromHeaders(
+        get({ "x-vercel-forwarded-for": "6.6.6.6, 203.0.113.9" }),
+      ),
+    ).toBe("203.0.113.9");
+  });
+
+  it("warns once and falls back to the default list for an unknown TRUSTED_IP_HEADER", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-typo-ip");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // A typo'd header name must NOT silently null out every IP. It is ignored
+      // and the legacy ordered list (cf-connecting-ip first) is consulted.
+      expect(
+        clientIpFromHeaders(
+          get({
+            "cf-connecting-ip": "198.51.100.7",
+            "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+          }),
+        ),
+      ).toBe("198.51.100.7");
+      // The fallback applies on every call, but the warning is emitted once.
+      expect(
+        clientIpFromHeaders(get({ "cf-connecting-ip": "198.51.100.7" })),
+      ).toBe("198.51.100.7");
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 describe("isSecureRequest (session cookie Secure scheme detection)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
 
   it("marks Secure when the forwarded scheme is https", () => {
@@ -125,6 +175,55 @@ describe("isSecureRequest (session cookie Secure scheme detection)", () => {
 
   it("normalises forwarded-proto casing and whitespace", () => {
     expect(isSecureRequest(get({ "x-forwarded-proto": "  HTTPS " }))).toBe(true);
+  });
+
+  it("marks Secure from a bare RFC 7239 Forwarded: proto=https header", () => {
+    // A front end (or misconfigured nginx) that emits only the RFC 7239
+    // Forwarded header, never X-Forwarded-Proto, still proves HTTPS.
+    expect(isSecureRequest(get({ forwarded: "proto=https" }))).toBe(true);
+  });
+
+  it("parses proto=https among other Forwarded params, quoted or cased", () => {
+    expect(
+      isSecureRequest(
+        get({ forwarded: "for=192.0.2.60;proto=https;by=203.0.113.43" }),
+      ),
+    ).toBe(true);
+    expect(isSecureRequest(get({ forwarded: 'proto="https"' }))).toBe(true);
+    expect(isSecureRequest(get({ forwarded: "For=192.0.2.60;Proto=HTTPS" }))).toBe(
+      true,
+    );
+  });
+
+  it("does not mark Secure for a Forwarded header without https proto", () => {
+    expect(isSecureRequest(get({ forwarded: "proto=http" }))).toBe(false);
+    expect(isSecureRequest(get({ forwarded: "for=192.0.2.60" }))).toBe(false);
+  });
+
+  it("reads the leftmost element of a multi-hop Forwarded header", () => {
+    // First (outermost) element is the client-facing hop, mirroring XFP.
+    expect(
+      isSecureRequest(get({ forwarded: "proto=https, proto=http" })),
+    ).toBe(true);
+    expect(
+      isSecureRequest(get({ forwarded: "proto=http, proto=https" })),
+    ).toBe(false);
+  });
+
+  it("forces Secure when FORCE_SECURE_COOKIES=1 with no scheme headers", () => {
+    vi.stubEnv("FORCE_SECURE_COOKIES", "1");
+    expect(isSecureRequest(get({}))).toBe(true);
+  });
+
+  it("forces Secure OFF when FORCE_SECURE_COOKIES=0 despite https headers", () => {
+    vi.stubEnv("FORCE_SECURE_COOKIES", "0");
+    expect(isSecureRequest(get({ "x-forwarded-proto": "https" }))).toBe(false);
+    expect(isSecureRequest(get({ forwarded: "proto=https" }))).toBe(false);
+  });
+
+  it("falls back to header auto-detection when FORCE_SECURE_COOKIES is unset", () => {
+    expect(isSecureRequest(get({ "x-forwarded-proto": "https" }))).toBe(true);
+    expect(isSecureRequest(get({}))).toBe(false);
   });
 });
 

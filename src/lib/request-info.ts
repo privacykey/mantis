@@ -11,6 +11,18 @@ const IP_HEADERS = [
   "x-forwarded-for",
 ] as const;
 
+const IP_HEADER_SET: ReadonlySet<string> = new Set(IP_HEADERS);
+
+// Headers whose value is a client-first append chain ("client, proxy1, …"),
+// where the LEFTMOST entry is client-supplied and therefore spoofable. These
+// get rightmost-hop parsing (the entry TRUST_PROXY_HOPS from the right). The
+// remaining IP_HEADERS (cf-connecting-ip, x-real-ip) carry a single
+// proxy-written value and keep taking the leftmost token.
+const CHAIN_IP_HEADERS: ReadonlySet<string> = new Set([
+  "x-forwarded-for",
+  "x-vercel-forwarded-for",
+]);
+
 // Honour the IP_HEADERS values when this app sits behind a proxy that
 // strips & re-injects them; otherwise treat them as spoofable. Auto-on
 // under Vercel and in non-production; explicit opt-in everywhere else.
@@ -57,6 +69,24 @@ function trustedIpHeader(): string | null {
   return name || null;
 }
 
+let warnedUnknownTrustedHeader = false;
+function maybeWarnUnknownTrustedHeader(): void {
+  if (warnedUnknownTrustedHeader) return;
+  warnedUnknownTrustedHeader = true;
+  // Avoid pulling in the pino logger here to keep this module edge-safe.
+  // Deliberately do NOT echo the configured value back into the log: it is
+  // operator-supplied environment data, and logging it verbatim trips
+  // js/clear-text-logging and risks log injection via crafted values. Naming
+  // the accepted set is equally actionable — the operator set the value.
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[mantis] TRUSTED_IP_HEADER is set to an unrecognised value (expected one " +
+      `of: ${IP_HEADERS.join(", ")}). Ignoring it and falling back to the ` +
+      "default ordered header list. Fix the value or unset it to silence this " +
+      "warning.",
+  );
+}
+
 type HeaderGetter = (name: string) => string | null | undefined;
 
 /**
@@ -66,9 +96,11 @@ type HeaderGetter = (name: string) => string | null | undefined;
  * session paths (which only have `headers()`) all delegate here so none of them
  * can drift back to trusting the spoofable leftmost XFF token.
  *
- * When TRUSTED_IP_HEADER is set, only that header is consulted; otherwise the
- * IP_HEADERS list is tried in order (cf-connecting-ip first) for backward
- * compatibility.
+ * When TRUSTED_IP_HEADER is set to a recognised header, only that header is
+ * consulted; an unrecognised value (e.g. a typo) is ignored with a one-time
+ * warning so a misconfiguration can't silently null out every client IP.
+ * Otherwise the IP_HEADERS list is tried in order (cf-connecting-ip first) for
+ * backward compatibility.
  */
 export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (!trustProxyHeaders()) {
@@ -76,7 +108,13 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
     return null;
   }
   const pinned = trustedIpHeader();
-  const headers: readonly string[] = pinned ? [pinned] : IP_HEADERS;
+  let headers: readonly string[];
+  if (pinned && IP_HEADER_SET.has(pinned)) {
+    headers = [pinned];
+  } else {
+    if (pinned) maybeWarnUnknownTrustedHeader();
+    headers = IP_HEADERS;
+  }
   for (const h of headers) {
     const v = get(h);
     if (!v) continue;
@@ -86,16 +124,17 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
       .filter(Boolean);
     if (parts.length === 0) continue;
 
-    if (h === "x-forwarded-for") {
-      // X-Forwarded-For is a client-first append chain ("client, proxy1, …").
-      // The LEFTMOST entry is supplied by the client and is fully spoofable;
-      // take the entry TRUST_PROXY_HOPS from the right (the nearest trusted
-      // hop), which a client cannot forge past your proxy layer.
+    if (CHAIN_IP_HEADERS.has(h)) {
+      // A client-first append chain ("client, proxy1, …"): the LEFTMOST entry
+      // is supplied by the client and is fully spoofable. Take the entry
+      // TRUST_PROXY_HOPS from the right (the nearest trusted hop), which a
+      // client cannot forge past your proxy layer. Applies to x-forwarded-for
+      // and x-vercel-forwarded-for, both of which can arrive comma-joined.
       const ip = parts[Math.max(0, parts.length - trustProxyHops())];
       if (ip) return ip;
     } else {
-      // cf-connecting-ip / x-real-ip / x-vercel-forwarded-for are single values
-      // set by the trusted proxy, not a client-controlled list.
+      // cf-connecting-ip / x-real-ip are single values set by the trusted
+      // proxy, not a client-controlled list.
       const ip = parts[0];
       if (ip) return ip;
     }
@@ -107,26 +146,78 @@ export function extractIp(req: NextRequest): string | null {
   return clientIpFromHeaders((n) => req.headers.get(n));
 }
 
+// Operator override for the session-cookie Secure flag. "1" forces Secure ON,
+// "0" forces it OFF; anything else (incl. unset) defers to the header-derived
+// auto-detection. Use "1" behind a genuine-HTTPS front end that sets NEITHER
+// X-Forwarded-Proto NOR a RFC 7239 `Forwarded: proto=https` directive (a
+// non-standard proxy/tunnel), so the cookie still gets Secure over real TLS.
+function forceSecureCookies(): boolean | null {
+  const flag = process.env.FORCE_SECURE_COOKIES;
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  return null;
+}
+
+// Whether the FIRST (outermost, client-facing) element of an RFC 7239
+// `Forwarded` header declares proto=https. Elements are comma-separated and
+// parameters semicolon-separated; parameter names are case-insensitive and the
+// value may be quoted (proto="https"). We read the leftmost element to mirror
+// the X-Forwarded-Proto leftmost-hop logic.
+function forwardedHeaderIsHttps(forwarded: string): boolean {
+  const firstElement = forwarded.split(",")[0];
+  if (!firstElement) return false;
+  for (const pair of firstElement.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const key = pair.slice(0, eq).trim().toLowerCase();
+    if (key !== "proto") continue;
+    let value = pair.slice(eq + 1).trim().toLowerCase();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    return value === "https";
+  }
+  return false;
+}
+
 /**
  * Whether the inbound request reached the client over HTTPS, decided from the
  * forwarded scheme rather than NODE_ENV. TLS is terminated by the reverse proxy
  * / tunnel this app documents (Cloudflare, cloudflared, Tailscale Funnel,
- * nginx), each of which sets X-Forwarded-Proto to the original client scheme.
+ * nginx), each of which sets X-Forwarded-Proto — or the RFC 7239 `Forwarded`
+ * header — to the original client scheme.
+ *
+ * Resolution order:
+ *   1. FORCE_SECURE_COOKIES, if set to "1"/"0", wins outright — the operator
+ *      escape hatch for a non-standard HTTPS proxy that sets no scheme header.
+ *   2. Otherwise: secure if EITHER X-Forwarded-Proto's leftmost hop is "https"
+ *      OR the leftmost `Forwarded` element declares proto=https.
  *
  * We return true only on a positive "https" signal. An over-eager Secure flag
  * on a plaintext-HTTP deployment stops the browser from ever sending the cookie
- * back, breaking login — so when the scheme isn't provably HTTPS we treat the
- * request as insecure. Absence of the header means no TLS-terminating proxy is
+ * back, breaking login — so when nothing proves HTTPS we treat the request as
+ * insecure. Absence of every scheme signal means no TLS-terminating proxy is
  * in front (local dev over http://localhost, or a direct HTTP deployment),
  * which is likewise not secure.
  */
 export function isSecureRequest(get: HeaderGetter): boolean {
-  const proto = get("x-forwarded-proto");
-  if (!proto) return false;
+  const override = forceSecureCookies();
+  if (override !== null) return override;
+
   // X-Forwarded-Proto is appended per hop ("https, http"); the LEFTMOST entry
   // is the scheme the client used to reach the outermost proxy.
-  const scheme = proto.split(",")[0]?.trim().toLowerCase();
-  return scheme === "https";
+  const proto = get("x-forwarded-proto");
+  if (proto) {
+    const scheme = proto.split(",")[0]?.trim().toLowerCase();
+    if (scheme === "https") return true;
+  }
+
+  // A front end may emit only the RFC 7239 `Forwarded: proto=https` header
+  // instead of X-Forwarded-Proto; honour it so genuine HTTPS still gets Secure.
+  const forwarded = get("forwarded");
+  if (forwarded && forwardedHeaderIsHttps(forwarded)) return true;
+
+  return false;
 }
 
 // Allowlist of request headers stored into hits.headers. The CREDENTIAL_PATTERNS
