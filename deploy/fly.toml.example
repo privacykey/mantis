@@ -5,6 +5,7 @@
 #   fly launch --no-deploy --copy-config
 #   fly postgres create --name <db-name>
 #   fly postgres attach <db-name>
+#   fly secrets set MANTIS_API_KEY_PEPPER=$(openssl rand -base64 32)
 #   fly secrets set PUBLIC_BASE_URL=https://<app-name>.fly.dev BOOTSTRAP_API_KEY=mantis_live_...
 #   fly deploy
 #
@@ -38,6 +39,15 @@ primary_region = "iad"
     type = "requests"
     hard_limit = 250
     soft_limit = 200
+
+  # DB-aware health check: /api/health returns non-2xx when Postgres is down,
+  # so a DB-down deploy is marked unhealthy instead of serving broken pages.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "get"
+    path = "/api/health"
 
 [[vm]]
   cpu_kind = "shared"

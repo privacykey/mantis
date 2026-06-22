@@ -23,10 +23,12 @@ services:
     dockerfilePath: ./docker/Dockerfile
     plan: starter   # change to "free" if you accept cold-start latency
     region: oregon
-    healthCheckPath: /
+    healthCheckPath: /api/health   # DB-aware: fails when Postgres is unreachable
     envVars:
       - key: PUBLIC_BASE_URL
         value: https://mantis.onrender.com   # change to your mantis's URL after first deploy
+      - key: MANTIS_API_KEY_PEPPER
+        generateValue: true   # required; Render generates a stable random value once
       - key: AUTO_MIGRATE
         value: "1"
       - key: LOG_LEVEL

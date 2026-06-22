@@ -22,8 +22,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Optional: makes every var documented in .env.example reachable by the
+    # container without listing each one. Long form so an absent .env is fine.
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgres://mantis:mantis@postgres:5432/mantis
+      # Required: the app crash-loops if this is unset. Fail fast with a hint.
+      # Generate with: openssl rand -base64 32  (set it in a sibling .env)
+      MANTIS_API_KEY_PEPPER: "${MANTIS_API_KEY_PEPPER:?set MANTIS_API_KEY_PEPPER — generate with: openssl rand -base64 32}"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       PUBLIC_ONLY_HOSTS: ${PUBLIC_ONLY_HOSTS:-}
       PUBLIC_ONLY_ALLOW_HEALTH: ${PUBLIC_ONLY_ALLOW_HEALTH:-0}
