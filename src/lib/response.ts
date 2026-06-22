@@ -11,8 +11,14 @@ const NO_STORE: HeadersInit = {
   Pragma: "no-cache",
 };
 
-// Operator-supplied HTML is same-origin with the dashboard. The CSP blocks
-// scripts, forms, and outbound fetches so embedded JS can't ride a session.
+// Operator-supplied HTML is served from the dashboard origin. The bare
+// `sandbox` token (no allow-* flags) is the real boundary: it drops the
+// document into a unique opaque origin, so embedded markup can't read the
+// dashboard's cookies/storage or run script even if the rest of the policy
+// regressed. default-src 'none' + form-action/base-uri 'none' close the
+// remaining vectors. NEVER add allow-same-origin / allow-scripts here.
+// (A fully separate content origin is the stronger, ops-level upgrade —
+// host operator content on its own hostname; see docs.)
 const HTML_CSP =
   "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox";
 
@@ -77,6 +83,11 @@ export function buildTriggerResponse(
           ...NO_STORE,
           "Content-Type": "text/html; charset=utf-8",
           "Content-Security-Policy": HTML_CSP,
+          // Defense-in-depth around the sandbox: don't let the browser sniff
+          // a different type, and refuse cross-origin embedding of this
+          // operator-controlled content.
+          "X-Content-Type-Options": "nosniff",
+          "Cross-Origin-Resource-Policy": "same-origin",
         },
       });
     }
