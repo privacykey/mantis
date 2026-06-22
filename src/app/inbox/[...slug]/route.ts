@@ -1,5 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { isEnabled, pushCapture, truncateBody } from "@/lib/inbox";
+import {
+  BodyTooLargeError,
+  MAX_INBOX_CAPTURE_BYTES,
+  readBodyText,
+} from "@/lib/safe-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,7 +16,20 @@ async function handle(req: NextRequest, ctx: Ctx): Promise<Response> {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
   const { slug } = await ctx.params;
-  const rawBody = await req.text();
+  // The inbox is a dev-only webhook capture; accept generously, but still
+  // bound. 1 MiB is well above any sane real webhook payload.
+  let rawBody: string;
+  try {
+    rawBody = await readBodyText(req, MAX_INBOX_CAPTURE_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: err.message },
+        { status: 413 },
+      );
+    }
+    throw err;
+  }
   const { body, truncated } = truncateBody(rawBody);
 
   const headers: Record<string, string> = {};
