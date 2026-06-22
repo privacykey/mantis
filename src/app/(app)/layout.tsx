@@ -33,10 +33,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               <Link
                 href="/inbox"
                 className="text-neutral-400 no-underline hover:text-neutral-200"
+                title="Catch-all dev inbox: captures notifications when no real destination is configured"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                inbox <span aria-hidden="true">↗</span>
+                dev inbox <span aria-hidden="true">↗</span>
                 <span className="sr-only">(opens in new tab)</span>
               </Link>
               {session.isAdmin && (
@@ -47,6 +48,16 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                   settings
                 </Link>
               )}
+              <a
+                href="https://github.com/privacykey/mantis-docs"
+                className="text-neutral-400 no-underline hover:text-neutral-200"
+                title="Documentation (opens in new tab)"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                docs <span aria-hidden="true">↗</span>
+                <span className="sr-only">(opens in new tab)</span>
+              </a>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-neutral-500">

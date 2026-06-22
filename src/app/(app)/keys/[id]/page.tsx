@@ -282,6 +282,38 @@ export default async function KeyDetailPage({ params }: Props) {
           </span>
         </div>
 
+        {recent.length > 0 && (
+          <p className="text-xs text-neutral-600 mb-3 leading-relaxed">
+            <span
+              className="text-neutral-500"
+              title={
+                key.dedupeWindowSeconds === 0
+                  ? "Repeat hit (deduplication is off, so these still notify)"
+                  : `Repeat hit within the ${key.dedupeWindowSeconds}s dedupe window`
+              }
+            >
+              dup
+            </span>{" "}
+            = repeat hit inside the dedupe window
+            {key.dedupeWindowSeconds === 0 ? " (off)" : ` (${key.dedupeWindowSeconds}s)`}
+            {"; "}
+            <span
+              className="text-neutral-500"
+              title="Notifications were skipped because this hit was a duplicate"
+            >
+              suppressed
+            </span>{" "}
+            = notifications skipped for that duplicate;{" "}
+            <span
+              className="text-amber-500"
+              title="Request matched a known crawler or bot user-agent"
+            >
+              bot
+            </span>{" "}
+            = matched a known crawler/bot.
+          </p>
+        )}
+
         {recent.length === 0 ? (
           <div className="text-center py-12 text-neutral-500 border border-dashed border-neutral-900 rounded">
             no hits yet. fetch the URL above to trigger one.
