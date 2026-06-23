@@ -22,6 +22,10 @@ services:
       # Override in .env for anything beyond `docker compose up` on a laptop.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mantis}
       POSTGRES_DB: ${POSTGRES_DB:-mantis}
+      # postgres:18+ refuses to initialize when a volume is mounted directly at
+      # /var/lib/postgresql/data (the pre-18 path). Point PGDATA at a
+      # subdirectory of the mount so init succeeds while keeping the volume here.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - mantis-pg:/var/lib/postgresql/data
     healthcheck:
