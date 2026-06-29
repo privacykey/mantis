@@ -34,6 +34,7 @@ const key: Key = {
   monitorMode: "off",
   monitorWindowSeconds: 300,
   monitorResetAt: null,
+  firstDownloadFormat: null,
   createdAt: new Date("2026-05-17T00:00:00Z"),
   disabledAt: null,
   expiresAt: null,

@@ -1,10 +1,14 @@
+import { and, eq, isNull } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
+import { db } from "@/db/client";
+import { keys } from "@/db/schema";
 import { loadOwnedKey, requireApiKeyOrSession } from "@/lib/auth";
 import {
   ALL_FORMATS,
   FILE_EXT,
   FILE_MIME,
   generateFile,
+  isAttributionFormat,
   type FileFormat,
 } from "@/lib/docs";
 import { keyUrl } from "@/lib/env";
@@ -60,6 +64,19 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     }
     throw err;
   }
+
+  // One filetype per key, for clean attribution: stamp the first single-file
+  // document format this key is pulled as. The detail page reads it to nudge
+  // operators toward minting a fresh key for any other filetype. The conditional
+  // WHERE keeps the very first download the winner under concurrent requests.
+  // `folder` and the wallet/NFC vectors are exempt — they aren't lone documents.
+  if (isAttributionFormat(format) && key.firstDownloadFormat == null) {
+    await db
+      .update(keys)
+      .set({ firstDownloadFormat: format })
+      .where(and(eq(keys.id, key.id), isNull(keys.firstDownloadFormat)));
+  }
+
   const filename = sanitizeFilename(key.memo) + "." + FILE_EXT[format];
   return new NextResponse(new Uint8Array(buf), {
     status: 200,

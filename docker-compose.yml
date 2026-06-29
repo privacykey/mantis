@@ -1,13 +1,22 @@
 # SECURITY NOTES — read before running in any environment that isn't your
 # laptop:
-#   1. The default Postgres password below is `mantis` — fine for `docker
-#      compose up` on localhost, dangerous on a shared / public host.
-#      Override via .env: POSTGRES_PASSWORD=$(openssl rand -base64 32)
-#      and update DATABASE_URL below to match.
-#   2. MANTIS_API_KEY_PEPPER is REQUIRED. The mantis service will refuse
-#      to boot without it. Generate one with `openssl rand -base64 32`
-#      and set it in your .env. Do NOT rotate after the first key is
-#      minted — rotating invalidates every existing API key.
+#   1. Run ./scripts/setup.sh first. It creates .env and fills in a random
+#      POSTGRES_PASSWORD and MANTIS_API_KEY_PEPPER. Both are required — the
+#      services below refuse to start without them (there are no insecure
+#      defaults to fall back on).
+#   2. POSTGRES_PASSWORD (from .env) is the single source of truth for the
+#      database password; the mantis DATABASE_URL is derived from it below, so
+#      there is nothing to keep in sync.
+#   3. MANTIS_API_KEY_PEPPER is REQUIRED. The mantis service will refuse to
+#      boot without it. Do NOT rotate it after the first key is minted —
+#      rotating invalidates every existing API key.
+#   4. Postgres publishes NO host port and sits on an internal-only docker
+#      network (see `networks:` at the bottom) — it's reachable only by the
+#      mantis service, never from the host or the LAN.
+#   5. Do NOT expose mantis over plain HTTP on a routable interface. Front it
+#      with a tunnel (tailscale / cloudflared profiles below) or a
+#      TLS-terminating reverse proxy. Over plain HTTP the API key
+#      (Authorization: Bearer) and the session cookie travel in cleartext.
 
 services:
   postgres:
@@ -18,9 +27,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mantis}
-      # Default `mantis` is intentional for the localhost quickstart only.
-      # Override in .env for anything beyond `docker compose up` on a laptop.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mantis}
+      # Required — no insecure default. Generated into .env by ./scripts/setup.sh
+      # and the single source of truth for the DB password (mantis derives its
+      # DATABASE_URL from it below).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Run ./scripts/setup.sh to generate one (or set it in .env).}
       POSTGRES_DB: ${POSTGRES_DB:-mantis}
       # postgres:18+ refuses to initialize when a volume is mounted directly at
       # /var/lib/postgresql/data (the pre-18 path). Point PGDATA at a
@@ -33,6 +43,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Intentionally NO `ports:` — Postgres is never published to the host. It
+    # lives only on the internal-only `db` network and is reachable as
+    # `postgres:5432` from the mantis service and nowhere else.
+    networks:
+      - db
 
   mantis:
     build:
@@ -48,9 +63,12 @@ services:
       - path: .env
         required: false
     environment:
-      # If you override POSTGRES_PASSWORD in .env, update DATABASE_URL too
-      # — they aren't auto-derived from each other.
-      DATABASE_URL: ${DATABASE_URL:-postgres://mantis:mantis@postgres:5432/mantis}
+      # Derived from POSTGRES_* so the password has a single source of truth
+      # (POSTGRES_PASSWORD in .env). The `@postgres` host is the internal
+      # docker-network DNS name, so this is correct inside the container
+      # regardless of any localhost DATABASE_URL kept in .env for
+      # run-from-source.
+      DATABASE_URL: postgres://${POSTGRES_USER:-mantis}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Run ./scripts/setup.sh to generate one (or set it in .env).}@postgres:5432/${POSTGRES_DB:-mantis}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       # REQUIRED. Server refuses to boot without it. Generate with:
       #   openssl rand -base64 32
@@ -65,9 +83,18 @@ services:
       AUTO_MIGRATE: "1"
     # Bind to localhost by default. The tunnel sidecars (tailscale, cloudflared)
     # reach mantis via the docker network — they don't need the published port.
-    # Set MANTIS_BIND_HOST=0.0.0.0 to expose to LAN when running without a tunnel.
+    # Set MANTIS_BIND_HOST=0.0.0.0 to expose to LAN when running without a tunnel
+    # — but only behind a TLS-terminating proxy. Never serve mantis over plain
+    # HTTP on a routable interface: the API key and session cookie travel in
+    # cleartext.
     ports:
       - "${MANTIS_BIND_HOST:-127.0.0.1}:${MANTIS_HOST_PORT:-3000}:3000"
+    networks:
+      # `default` carries inbound (published port / tunnels) and the app's
+      # outbound calls (webhooks, SMTP, APNs); `db` is the internal-only link to
+      # Postgres. mantis is the only service on both.
+      - default
+      - db
 
   # --- Tailscale profile -----------------------------------------------------
   # Enables: docker compose --profile tailscale up
@@ -165,6 +192,17 @@ services:
       mantis:
         condition: service_started
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+networks:
+  # Internal-only network for app <-> database traffic. `internal: true` gives
+  # containers on it no gateway to the host or the internet, so Postgres has no
+  # outbound path and is unreachable from outside the compose project. mantis is
+  # multi-homed (also on `default`), so its outbound traffic still routes out.
+  db:
+    internal: true
+  # The normal bridge network compose creates. mantis and the tunnel sidecars
+  # share it; declared here only to reference it explicitly above.
+  default:
 
 volumes:
   mantis-pg:

@@ -89,6 +89,12 @@ export const keys = pgTable(
       .notNull()
       .default(300),
     monitorResetAt: timestamp("monitor_reset_at", { withTimezone: true }),
+    // The first single-file document format this key was downloaded as (docx,
+    // pdf, …). Set once, on the first such download (see the download route).
+    // The dashboard uses it to nudge operators toward one filetype per key so
+    // each hit traces back to a single planted file. null = not yet downloaded
+    // as a document; the `folder` bundle and wallet/NFC vectors never set it.
+    firstDownloadFormat: text("first_download_format"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

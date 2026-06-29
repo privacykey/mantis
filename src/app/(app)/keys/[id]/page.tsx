@@ -1,31 +1,22 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { db } from "@/db/client";
-import {
-  hits,
-  notifications,
-  keys,
-  type Hit,
-  type Notification,
-} from "@/db/schema";
+import { keys } from "@/db/schema";
 import { canAccessKey } from "@/lib/auth";
 import { statusUrl as buildStatusUrl, keyUrl } from "@/lib/env";
 import { isApplePassEnabled } from "@/lib/installers/apple-wallet";
-import {
-  parseHostContext,
-  type HostContext,
-} from "@/lib/installers/headers";
 import {
   fingerprintSecret,
   listDestinations,
 } from "@/lib/notify/destinations";
 import { computeMonitorState } from "@/lib/monitor";
 import { getSessionApiKey } from "@/lib/session";
-import { relativeTime } from "@/lib/ui";
 import { toggleKeyAction } from "../actions";
 import { CopyUrl } from "./copy-url";
 import { DeleteButton } from "./delete-button";
+import { DownloadFormats } from "./download-formats";
+import { HitsFeed } from "./hits-feed";
 import { InstallersCard } from "./installers";
 import { MonitorCard } from "./monitor-card";
 import { SecretReveal } from "./secret-reveal";
@@ -46,29 +37,6 @@ export default async function KeyDetailPage({ params }: Props) {
 
   const [key] = await db.select().from(keys).where(eq(keys.id, id)).limit(1);
   if (!key || !canAccessKey(session, key)) notFound();
-
-  const recent = await db
-    .select()
-    .from(hits)
-    .where(eq(hits.keyId, id))
-    .orderBy(desc(hits.occurredAt))
-    .limit(100);
-
-  const hitIds = recent.map((h) => h.id);
-  const notifs =
-    hitIds.length > 0
-      ? await db
-          .select()
-          .from(notifications)
-          .where(inArray(notifications.hitId, hitIds))
-      : [];
-
-  const notifsByHit = new Map<string, Notification[]>();
-  for (const n of notifs) {
-    const arr = notifsByHit.get(n.hitId);
-    if (arr) arr.push(n);
-    else notifsByHit.set(n.hitId, [n]);
-  }
 
   const url = keyUrl(key.publicId);
   const monitorState = await computeMonitorState(key);
@@ -121,44 +89,11 @@ export default async function KeyDetailPage({ params }: Props) {
         <Card title="mantis URL">
           <CopyUrl url={url} />
           <div className="mt-3 pt-3 border-t border-neutral-900 text-xs text-neutral-500">
-            <span className="block mb-1">file keys</span>
-            <div className="flex flex-wrap gap-3">
-              {(["docx", "xlsx", "pptx", "pdf"] as const).map((fmt) => (
-                <a
-                  key={fmt}
-                  href={`/api/keys/${key.id}/download?format=${fmt}`}
-                  className="text-blue-400 no-underline hover:underline"
-                  download
-                >
-                  ↓ .{fmt}
-                </a>
-              ))}
-            </div>
-            <span className="block mt-2 mb-1">self-hosted app formats</span>
-            <div className="flex flex-wrap gap-3">
-              {(["svg", "html", "md", "eml", "ics", "vcf"] as const).map((fmt) => (
-                <a
-                  key={fmt}
-                  href={`/api/keys/${key.id}/download?format=${fmt}`}
-                  className="text-blue-400 no-underline hover:underline"
-                  download
-                >
-                  ↓ .{fmt}
-                </a>
-              ))}
-            </div>
-            <span className="block text-neutral-600 mt-1">
-              for Immich / Paperless / Joplin / calendar / contacts etc. — see{" "}
-              <a
-                href="https://github.com/privacykey/mantis-docs/blob/main/self-hosted-apps.md"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 no-underline hover:underline"
-              >
-                mantis-docs: self-hosted-apps.md
-              </a>
-              .
-            </span>
+            <DownloadFormats
+              keyId={key.id}
+              memo={key.memo}
+              initialLockedFormat={key.firstDownloadFormat}
+            />
             <span className="block mt-2 mb-1">honey directory (zip)</span>
             <a
               href={`/api/keys/${key.id}/download?format=folder`}
@@ -274,62 +209,7 @@ export default async function KeyDetailPage({ params }: Props) {
         }
       />
 
-      <section className="mt-8">
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="text-base font-semibold">hits</h2>
-          <span className="text-xs text-neutral-500">
-            {recent.length === 100 ? "showing latest 100" : `${recent.length} total`}
-          </span>
-        </div>
-
-        {recent.length > 0 && (
-          <p className="text-xs text-neutral-600 mb-3 leading-relaxed">
-            <span
-              className="text-neutral-500"
-              title={
-                key.dedupeWindowSeconds === 0
-                  ? "Repeat hit (deduplication is off, so these still notify)"
-                  : `Repeat hit within the ${key.dedupeWindowSeconds}s dedupe window`
-              }
-            >
-              dup
-            </span>{" "}
-            = repeat hit inside the dedupe window
-            {key.dedupeWindowSeconds === 0 ? " (off)" : ` (${key.dedupeWindowSeconds}s)`}
-            {"; "}
-            <span
-              className="text-neutral-500"
-              title="Notifications were skipped because this hit was a duplicate"
-            >
-              suppressed
-            </span>{" "}
-            = notifications skipped for that duplicate;{" "}
-            <span
-              className="text-amber-500"
-              title="Request matched a known crawler or bot user-agent"
-            >
-              bot
-            </span>{" "}
-            = matched a known crawler/bot.
-          </p>
-        )}
-
-        {recent.length === 0 ? (
-          <div className="text-center py-12 text-neutral-500 border border-dashed border-neutral-900 rounded">
-            no hits yet. fetch the URL above to trigger one.
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {recent.map((h) => (
-              <HitRow
-                key={h.id}
-                hit={h}
-                notifications={notifsByHit.get(h.id) ?? []}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      <HitsFeed keyId={key.id} dedupeWindowSeconds={key.dedupeWindowSeconds} />
     </div>
   );
 }
@@ -341,238 +221,6 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
         {title}
       </div>
       {children}
-    </div>
-  );
-}
-
-function HitRow({
-  hit,
-  notifications: notifs,
-}: {
-  hit: Hit;
-  notifications: Notification[];
-}) {
-  const headers = (hit.headers ?? {}) as Record<string, string>;
-  const ctx = parseHostContext(headers);
-  const uaLabel = formatUaLabel(hit);
-  return (
-    <details className="border border-neutral-900 rounded bg-neutral-950 overflow-hidden">
-      <summary className="px-3 py-2 cursor-pointer flex items-center gap-3 text-sm hover:bg-neutral-900/50">
-        <span className="text-neutral-500 text-xs w-20 shrink-0">
-          {relativeTime(hit.occurredAt)}
-        </span>
-        <span className="font-mono text-neutral-300 w-32 shrink-0">
-          {hit.ip ?? "—"}
-        </span>
-        <span className="text-neutral-400 truncate flex-1">
-          {ctx ? <HostContextChip ctx={ctx} /> : uaLabel}
-        </span>
-        {hit.botLabel && !ctx && (
-          <span className="text-amber-500 text-xs shrink-0 bg-amber-950/40 px-1.5 py-0.5 rounded">
-            {hit.botLabel}
-          </span>
-        )}
-        {hit.isDuplicate && (
-          <span className="text-neutral-500 text-xs shrink-0 bg-neutral-900 px-1.5 py-0.5 rounded">
-            dup
-          </span>
-        )}
-        <NotifySummary notifs={notifs} isDup={hit.isDuplicate} />
-      </summary>
-      <div className="px-3 pb-3 pt-1 border-t border-neutral-900 text-xs space-y-3">
-        {ctx && (
-          <div className="bg-emerald-950/30 border border-emerald-950 rounded p-2">
-            <div className="text-emerald-400 text-xs mb-1 uppercase tracking-wide">
-              host event ({ctx.source ?? "unknown"})
-            </div>
-            <div className="space-y-0.5">
-              {ctx.event && <Row k="event" v={ctx.event} className="text-emerald-300" />}
-              {ctx.device && <Row k="device" v={ctx.device} />}
-              {ctx.entity_id && <Row k="entity" v={ctx.entity_id} />}
-              {ctx.automation && <Row k="automation" v={ctx.automation} />}
-              {ctx.area && <Row k="area" v={ctx.area} />}
-              {ctx.user && <Row k="user" v={ctx.user} />}
-              {ctx.host && <Row k="host" v={ctx.host} />}
-              {ctx.ssh_client_ip && (
-                <Row
-                  k="ssh from"
-                  v={ctx.ssh_client_ip}
-                  className="text-amber-300"
-                />
-              )}
-              {ctx.ssh_connection && (
-                <Row k="ssh full" v={ctx.ssh_connection} />
-              )}
-              {ctx.tty && <Row k="tty" v={ctx.tty} />}
-              {ctx.sudo_cmd && (
-                <Row k="sudo cmd" v={ctx.sudo_cmd} className="text-amber-300" />
-              )}
-              {ctx.network_interface && (
-                <Row k="interface" v={ctx.network_interface} />
-              )}
-              {ctx.iot_mac && <Row k="mac" v={ctx.iot_mac} />}
-              {ctx.iot_ip && <Row k="iot ip" v={ctx.iot_ip} />}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <Row k="when" v={hit.occurredAt.toISOString()} />
-          <Row k="ip" v={hit.ip ?? "—"} />
-          <Row
-            k="ua"
-            v={
-              hit.uaBrowser
-                ? `${hit.uaBrowser} ${hit.uaBrowserVersion ?? ""} on ${hit.uaOs ?? "?"} (${hit.uaDevice ?? "?"})`
-                : (hit.userAgent ?? "—")
-            }
-          />
-          {hit.botLabel && <Row k="bot" v={hit.botLabel} className="text-amber-400" />}
-          <Row k="referer" v={hit.referer ?? "—"} />
-        </div>
-
-        {notifs.length > 0 && (
-          <div>
-            <div className="text-neutral-500 mb-1">notifications</div>
-            <div className="space-y-1">
-              {notifs.map((n) => (
-                <NotifLine key={n.id} n={n} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <div className="text-neutral-500 mb-1">request headers</div>
-          <pre className="bg-neutral-950 border border-neutral-900 rounded p-2 overflow-auto max-h-48 text-neutral-400">
-            {Object.entries(headers)
-              .map(([k, v]) => `${k}: ${v}`)
-              .join("\n")}
-          </pre>
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function HostContextChip({ ctx }: { ctx: HostContext }) {
-  const parts: string[] = [];
-  if (ctx.source) parts.push(ctx.source);
-  if (ctx.user) parts.push(ctx.user);
-  if (ctx.host) parts.push(`@ ${ctx.host}`);
-  if (ctx.ssh_client_ip) parts.push(`← ${ctx.ssh_client_ip}`);
-  if (ctx.sudo_cmd) parts.push(`sudo ${ctx.sudo_cmd}`);
-  if (ctx.network_interface) parts.push(`iface=${ctx.network_interface}`);
-  if (ctx.event) parts.push(ctx.event);
-  if (ctx.device) parts.push(ctx.device);
-  if (ctx.entity_id) parts.push(ctx.entity_id);
-  if (ctx.iot_mac) parts.push(ctx.iot_mac);
-  return (
-    <span className="text-emerald-400">
-      {parts.join(" · ")}
-    </span>
-  );
-}
-
-function NotifLine({ n }: { n: Notification }) {
-  const colorClass =
-    n.status === "succeeded"
-      ? "text-emerald-400"
-      : n.status === "failed"
-        ? "text-red-400"
-        : n.status === "aborted"
-          ? "text-neutral-500"
-          : n.status === "in_flight"
-            ? "text-blue-400"
-            : "text-amber-400";
-  return (
-    <div className="flex items-start gap-3">
-      <span className={`${colorClass} w-20 shrink-0`}>{n.status}</span>
-      <span className="text-neutral-400 w-16 shrink-0">{n.channel}</span>
-      <span className="text-neutral-300 break-all flex-1 min-w-0">
-        {n.target}
-        {n.attempts > 0 && (
-          <span className="text-neutral-500 ml-1">
-            ({n.attempts}/{n.maxAttempts} attempts
-            {n.status === "pending" && n.nextAttemptAt
-              ? `, next ${relativeTime(n.nextAttemptAt)}`
-              : ""}
-            )
-          </span>
-        )}
-        {n.lastError && (
-          <div className="text-red-400 mt-0.5 break-words">{n.lastError}</div>
-        )}
-      </span>
-    </div>
-  );
-}
-
-function NotifySummary({
-  notifs,
-  isDup,
-}: {
-  notifs: Notification[];
-  isDup: boolean;
-}) {
-  if (isDup) {
-    return <span className="text-neutral-600 text-xs shrink-0">suppressed</span>;
-  }
-  if (notifs.length === 0) {
-    return <span className="text-neutral-600 text-xs shrink-0">—</span>;
-  }
-  const succeeded = notifs.filter((n) => n.status === "succeeded").length;
-  const failed = notifs.filter((n) => n.status === "failed").length;
-  const pending = notifs.filter(
-    (n) => n.status === "pending" || n.status === "in_flight",
-  ).length;
-  return (
-    <span className="text-xs shrink-0 flex gap-1">
-      {succeeded > 0 && (
-        <span className="text-emerald-500">
-          <span aria-hidden="true">✓</span>
-          {succeeded}
-          <span className="sr-only"> succeeded</span>
-        </span>
-      )}
-      {pending > 0 && (
-        <span className="text-amber-400">
-          <span aria-hidden="true">⏳</span>
-          {pending}
-          <span className="sr-only"> pending</span>
-        </span>
-      )}
-      {failed > 0 && (
-        <span className="text-red-400">
-          <span aria-hidden="true">⚠</span>
-          {failed}
-          <span className="sr-only"> failed</span>
-        </span>
-      )}
-    </span>
-  );
-}
-
-function formatUaLabel(hit: Hit): string {
-  if (hit.uaBrowser) {
-    return `${hit.uaBrowser}${hit.uaBrowserVersion ? ` ${hit.uaBrowserVersion}` : ""} · ${hit.uaOs ?? "?"}`;
-  }
-  return hit.userAgent ?? "no UA";
-}
-
-function Row({
-  k,
-  v,
-  className,
-}: {
-  k: string;
-  v: string;
-  className?: string;
-}) {
-  return (
-    <div className="flex gap-3 py-0.5">
-      <span className="text-neutral-500 w-20 shrink-0">{k}</span>
-      <span className={`text-neutral-300 break-all ${className ?? ""}`}>{v}</span>
     </div>
   );
 }

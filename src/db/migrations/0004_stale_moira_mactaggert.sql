@@ -1,0 +1,1 @@
+ALTER TABLE "keys" ADD COLUMN "first_download_format" text;

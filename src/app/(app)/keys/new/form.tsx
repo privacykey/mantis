@@ -22,7 +22,7 @@ const CHANNELS = [
 
 type Destination = { channel: string; target: string };
 
-export function NewKeyForm() {
+export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
   const [state, formAction] = useActionState<CreateState, FormData>(
     createKeyAction,
     {},
@@ -56,6 +56,7 @@ export function NewKeyForm() {
           required
           autoFocus
           maxLength={500}
+          defaultValue={defaultMemo}
           placeholder="e.g. honeypot doc in /finance"
           className={inputCls}
         />
