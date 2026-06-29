@@ -2,7 +2,7 @@ import { and, desc, eq, gt, inArray, lt, type SQL } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { hits, keys, notifications, type Notification } from "@/db/schema";
-import { requireApiKey } from "@/lib/auth";
+import { requireApiKeyOrSession } from "@/lib/auth";
 import { parseHostContext } from "@/lib/installers/headers";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET(req: NextRequest) {
-  const auth = await requireApiKey(req);
+  const auth = await requireApiKeyOrSession(req);
   if (!auth.ok) return auth.res;
 
   const url = new URL(req.url);

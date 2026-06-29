@@ -12,6 +12,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "setup": "bash scripts/setup.sh",
     "typecheck": "tsc --noEmit",
     "check": "pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
     "build:cli-bin": "bash cli/scripts/build-bin.sh",

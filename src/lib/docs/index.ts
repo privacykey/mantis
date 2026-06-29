@@ -12,14 +12,16 @@ import { generateSvg } from "./svg";
 import { generateVcf } from "./vcf";
 import { generateXlsx } from "./xlsx";
 import {
+  ATTRIBUTION_FORMATS,
   FILE_EXT,
   FILE_MIME,
+  isAttributionFormat,
   type DocOptions,
   type FileFormat,
 } from "./util";
 
 export type { DocOptions, FileFormat };
-export { FILE_EXT, FILE_MIME };
+export { ATTRIBUTION_FORMATS, FILE_EXT, FILE_MIME, isAttributionFormat };
 
 const generators: Record<FileFormat, (opts: DocOptions) => Promise<Buffer>> = {
   docx: generateDocx,

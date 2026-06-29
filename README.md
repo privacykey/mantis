@@ -49,13 +49,13 @@ mantis init
 
 ```bash
 git clone https://github.com/privacykey/mantis && cd mantis
-cp .env.example .env
-# Generate the required hashing pepper — without it the server crash-loops on boot
-echo "MANTIS_API_KEY_PEPPER=$(openssl rand -base64 32)" >> .env
+./scripts/setup.sh   # creates .env with a random DB password + API-key pepper
 docker compose up -d
 # Wait for the boot banner, then read the one-time bootstrap admin key
 docker compose logs -f mantis | grep -m1 -A1 "bootstrap API key"
 ```
+
+`setup.sh` is idempotent — re-running it leaves existing secrets untouched. Postgres is never published to the host (it sits on an internal-only docker network), and the DB password is the single value you set in `.env`; the app's `DATABASE_URL` is derived from it.
 
 The `mantis_live_...` value printed above is the **bootstrap admin key** — it is both your CLI token and your dashboard login. To know it up front instead, pre-set `BOOTSTRAP_API_KEY=mantis_live_...` in `.env` before the first boot.
 
@@ -67,6 +67,8 @@ mantis new "first mantis" -w http://localhost:3000/inbox/demo
 ```
 
 This is fine for evaluation but **don't rely on a laptop deploy for canaries that need to fire when you're away from your machine.** For a real public-reachable deploy — Tailscale Funnel, Cloudflare Tunnel, Railway, Fly.io, or Render — see **[deployment options](https://github.com/privacykey/mantis-docs/blob/main/deployment/README.md)**.
+
+> **Serve it over HTTPS, never plain HTTP.** Mantis authenticates with an API key sent as a bearer token and a session cookie — over plain HTTP on a routable address both travel in cleartext and can be sniffed. Put it behind a tunnel (the `tailscale` / `cloudflared` compose profiles terminate TLS for you) or a TLS reverse proxy. The compose setup keeps Postgres on an internal-only network with no published port, so the database is never reachable from the host or LAN.
 
 ### Quickstart (no server / edge)
 

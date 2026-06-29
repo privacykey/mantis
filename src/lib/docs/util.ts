@@ -55,6 +55,29 @@ export type FileFormat =
   | "ics"
   | "vcf";
 
+// Single-file document formats that embed the key's beacon and are meant to be
+// planted one at a time. The first of these a key is downloaded as is recorded
+// on the key (keys.firstDownloadFormat); the dashboard then nudges operators to
+// keep one filetype per key so each hit traces back to a single planted file.
+// Excludes the `folder` bundle (deliberately many files under one key) and the
+// `apple-wallet` / `nfc-label` physical vectors, which aren't planted documents.
+export const ATTRIBUTION_FORMATS = [
+  "docx",
+  "xlsx",
+  "pptx",
+  "pdf",
+  "svg",
+  "html",
+  "md",
+  "eml",
+  "ics",
+  "vcf",
+] as const satisfies readonly FileFormat[];
+
+export function isAttributionFormat(v: string): v is FileFormat {
+  return (ATTRIBUTION_FORMATS as readonly string[]).includes(v);
+}
+
 export const FILE_MIME: Record<FileFormat, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
