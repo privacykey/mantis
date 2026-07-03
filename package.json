@@ -32,7 +32,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4.3.1",
+    "@tailwindcss/postcss": "^4.3.2",
     "drizzle-orm": "^0.45.2",
     "jszip": "^3.10.1",
     "nanoid": "^5.1.16",
