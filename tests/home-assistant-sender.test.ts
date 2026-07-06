@@ -28,6 +28,7 @@ const key: Key = {
   publicId: "abc123def456",
   kind: "http",
   memo: "SSH honeypot",
+  externalId: null,
   responseKind: "gif",
   responsePayload: null,
   dedupeWindowSeconds: 60,

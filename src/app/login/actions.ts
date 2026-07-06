@@ -79,6 +79,13 @@ export async function loginAction(
   }
 
   const apiKeyRow = rows[0]!;
+  // Valid credential, wrong scope — reject without burning the per-IP
+  // limiter, mirroring the 403 (not 401) in requireApiKey.
+  if (apiKeyRow.scope === "enroll") {
+    return {
+      error: "enrollment-scoped keys can't log in to the dashboard",
+    };
+  }
   if (apiKeyRow.hash !== v2) {
     void db
       .update(apiKeys)
