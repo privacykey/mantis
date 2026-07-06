@@ -37,7 +37,7 @@
     "jszip": "^3.10.1",
     "nanoid": "^5.1.16",
     "next": "^16.2.9",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.0.3",
     "passkit-generator": "^3.5.7",
     "pdf-lib": "^1.17.1",
     "pino": "^10.3.1",
