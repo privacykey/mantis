@@ -36,7 +36,7 @@
     "drizzle-orm": "^0.45.2",
     "jszip": "^3.10.1",
     "nanoid": "^5.1.16",
-    "next": "^16.2.9",
+    "next": "^16.2.10",
     "nodemailer": "^9.0.3",
     "passkit-generator": "^3.5.7",
     "pdf-lib": "^1.17.1",
