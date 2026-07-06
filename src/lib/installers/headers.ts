@@ -8,7 +8,7 @@
  *   X-Mantis-Host               — local hostname
  *   X-Mantis-SSH-Client         — sshd-set "<ip> <port> <port>" (shell only)
  *   X-Mantis-SSH-Connection     — sshd-set "<cip> <cport> <sip> <sport>" (shell only)
- *   X-Mantis-TTY                — pty path (shell only)
+ *   X-Mantis-TTY                — pty path (shell / shell-sudo only)
  *   X-Mantis-Sudo-Cmd           — original args passed to sudo (shell-sudo only)
  *   X-Mantis-Network-Interface  — network device name (linux-network only)
  *   X-Mantis-Event              — structured event label ("door-opened", etc.)
