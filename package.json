@@ -37,7 +37,7 @@
     "jszip": "^3.10.1",
     "nanoid": "^5.1.16",
     "next": "^16.2.10",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.0.3",
     "passkit-generator": "^3.5.7",
     "pdf-lib": "^1.17.1",
     "pino": "^10.3.1",
@@ -47,7 +47,7 @@
     "react-dom": "^19.2.7",
     "tailwindcss": "^4.3.2",
     "ua-parser-js": "^2.0.10",
-    "undici": "^8.5.0",
+    "undici": "^8.7.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -56,10 +56,10 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.10",
     "drizzle-kit": "^0.31.10",
     "pino-pretty": "^13.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   }
 }

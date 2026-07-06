@@ -40,7 +40,7 @@ export type SeededApiKey = { plaintext: string; row: ApiKey };
  * mintApiKey() so the stored hash matches what requireApiKey() recomputes.
  */
 export async function seedApiKey(
-  opts: { admin?: boolean; name?: string } = {},
+  opts: { admin?: boolean; name?: string; scope?: "full" | "enroll" } = {},
 ): Promise<SeededApiKey> {
   const minted = mintApiKey();
   const [row] = await db
@@ -50,6 +50,7 @@ export async function seedApiKey(
       prefix: minted.prefix,
       hash: minted.hash,
       isAdmin: opts.admin ?? false,
+      scope: opts.scope ?? "full",
     })
     .returning();
   if (!row) throw new Error("seedApiKey: insert returned no row");

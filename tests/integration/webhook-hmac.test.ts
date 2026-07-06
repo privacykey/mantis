@@ -29,6 +29,7 @@ function fakeKey(): Key {
     publicId: "hmackey01",
     kind: "http",
     memo: "hmac canary",
+    externalId: null,
     responseKind: "gif",
     responsePayload: null,
     dedupeWindowSeconds: 60,

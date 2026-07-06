@@ -58,6 +58,17 @@ function unauthorized(message: string): NextResponse {
   );
 }
 
+function forbiddenScope(): NextResponse {
+  return NextResponse.json(
+    {
+      error: "forbidden",
+      message:
+        "this API key is enrollment-scoped; it can only create keys via POST /api/keys",
+    },
+    { status: 403 },
+  );
+}
+
 function tooManyRequests(rl: RateLimitResult): NextResponse {
   return NextResponse.json(
     { error: "rate_limited", message: "too many authentication attempts" },
@@ -101,7 +112,20 @@ async function resolveByPlaintext(presented: string): Promise<ApiKey | null> {
   return key;
 }
 
-export async function requireApiKey(req: NextRequest): Promise<AuthResult> {
+export type RequireApiKeyOpts = {
+  /**
+   * Accept enrollment-scoped keys. Default false — every route is full-scope
+   * only unless it explicitly opts in, so a new route can't accidentally
+   * widen what a fleet-embedded enroll key can reach. Only POST /api/keys
+   * (key creation) sets this.
+   */
+  allowEnroll?: boolean;
+};
+
+export async function requireApiKey(
+  req: NextRequest,
+  opts: RequireApiKeyOpts = {},
+): Promise<AuthResult> {
   const presented = extractBearer(req);
 
   // Every failure path consumes a per-IP token; once the window is exhausted
@@ -121,16 +145,24 @@ export async function requireApiKey(req: NextRequest): Promise<AuthResult> {
   if (!isWellFormedApiKey(presented)) return fail("malformed API key");
   const key = await resolveByPlaintext(presented);
   if (!key) return fail("invalid or revoked API key");
+  // Valid credential, insufficient scope — 403 without consuming the
+  // brute-force limiter (this isn't a guessing attempt).
+  if (key.scope === "enroll" && !opts.allowEnroll) {
+    return { ok: false, res: forbiddenScope() };
+  }
   return { ok: true, key };
 }
 
 // Allow either Bearer token (CLI/API) or the session cookie (dashboard browser).
+// Always full-scope: everything session-reachable is dashboard surface, which
+// enrollment-scoped keys must not touch (login rejects them too).
 export async function requireApiKeyOrSession(
   req: NextRequest,
 ): Promise<AuthResult> {
   const bearer = extractBearer(req);
   if (bearer) {
     const key = await resolveByPlaintext(bearer);
+    if (key?.scope === "enroll") return { ok: false, res: forbiddenScope() };
     if (key) return { ok: true, key };
     return { ok: false, res: unauthorized("invalid or revoked API key") };
   }

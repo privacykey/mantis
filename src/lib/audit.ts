@@ -8,6 +8,8 @@ export type AuditEventType =
   | "api_key.created"
   | "api_key.revoked"
   | "key.created"
+  /** POST /api/keys matched an existing external_id and returned it instead of creating. */
+  | "key.claimed"
   | "key.updated"
   | "key.deleted"
   | "key.disabled"

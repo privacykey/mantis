@@ -32,6 +32,7 @@ function fakeKey(): Key {
     publicId: "escapekey1",
     kind: "http",
     memo: "escape canary",
+    externalId: null,
     responseKind: "gif",
     responsePayload: null,
     dedupeWindowSeconds: 60,

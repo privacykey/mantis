@@ -22,6 +22,8 @@ export const responseKindEnum = pgEnum("response_kind", [
 
 export const keyKindEnum = pgEnum("key_kind", ["http"]);
 
+export const apiKeyScopeEnum = pgEnum("api_key_scope", ["full", "enroll"]);
+
 export const monitorModeEnum = pgEnum("monitor_mode", [
   "off",
   "latch",
@@ -35,6 +37,14 @@ export const apiKeys = pgTable("api_keys", {
   hash: text("hash").notNull().unique(),
   /** Admins see all data + revoke other keys. Non-admins are scoped to their own rows. */
   isAdmin: boolean("is_admin").notNull().default(false),
+  /**
+   * "full" keys use the whole API. "enroll" keys can ONLY create canary keys
+   * (POST /api/keys) — no list/read/update/delete, no hits, no destinations
+   * management, no dashboard login. Meant to be embedded in fleet provisioning
+   * scripts (MDM), where extraction by a device user must not expose or
+   * disable the rest of the fleet's tripwires.
+   */
+  scope: apiKeyScopeEnum("scope").notNull().default("full"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -81,6 +91,14 @@ export const keys = pgTable(
     publicId: text("public_id").notNull().unique(),
     kind: keyKindEnum("kind").notNull().default("http"),
     memo: text("memo").notNull(),
+    /**
+     * Caller-supplied stable identity for idempotent creation (e.g. a machine
+     * serial number in MDM enrollment). POST /api/keys with an external_id
+     * that already exists returns the existing row instead of minting a
+     * duplicate. Unique across live rows; NULLs are distinct so ordinary keys
+     * are unaffected.
+     */
+    externalId: text("external_id").unique(),
     responseKind: responseKindEnum("response_kind").notNull().default("gif"),
     responsePayload: jsonb("response_payload"),
     dedupeWindowSeconds: integer("dedupe_window_seconds").notNull().default(60),
@@ -341,6 +359,9 @@ export type NewHit = typeof hits.$inferInsert;
 
 export const responseKinds = responseKindEnum.enumValues;
 export type ResponseKind = (typeof responseKinds)[number];
+
+export const apiKeyScopes = apiKeyScopeEnum.enumValues;
+export type ApiKeyScope = (typeof apiKeyScopes)[number];
 
 export const monitorModes = monitorModeEnum.enumValues;
 export type MonitorMode = (typeof monitorModes)[number];

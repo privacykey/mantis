@@ -2,9 +2,13 @@ import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { keys, notificationDestinations } from "@/db/schema";
-import { requireApiKey } from "@/lib/auth";
+import { canAccessKey, requireApiKey } from "@/lib/auth";
 import { audit } from "@/lib/audit";
-import { newPublicId, serializeKey } from "@/lib/keys";
+import {
+  newPublicId,
+  serializeKey,
+  serializeKeyForEnroll,
+} from "@/lib/keys";
 import { validateDestination } from "@/lib/notify/channels";
 import { extractIp } from "@/lib/request-info";
 import {
@@ -14,6 +18,7 @@ import {
   readBodyJson,
 } from "@/lib/safe-body";
 import {
+  listDestinations,
   replaceDestinations,
   serializeResult,
 } from "@/lib/notify/destinations";
@@ -23,8 +28,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  const auth = await requireApiKey(req);
+  // The one route enrollment-scoped keys may call (see lib/auth.ts).
+  const auth = await requireApiKey(req, { allowEnroll: true });
   if (!auth.ok) return auth.res;
+  const isEnroll = auth.key.scope === "enroll";
 
   let body: unknown;
   try {
@@ -71,26 +78,77 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const [row] = await db
-    .insert(keys)
-    .values({
-      publicId: newPublicId(),
-      memo: input.memo,
-      responseKind: input.response_kind ?? "gif",
-      responsePayload: (input.response_payload ?? null) as object | null,
-      expiresAt: input.expires_at ? new Date(input.expires_at) : null,
-      ...(input.dedupe_window_seconds !== undefined
-        ? { dedupeWindowSeconds: input.dedupe_window_seconds }
-        : {}),
-      ...(input.monitor_mode !== undefined
-        ? { monitorMode: input.monitor_mode }
-        : {}),
-      ...(input.monitor_window_seconds !== undefined
-        ? { monitorWindowSeconds: input.monitor_window_seconds }
-        : {}),
-      createdByApiKeyId: auth.key.id,
-    })
-    .returning();
+  const insertValues = {
+    publicId: newPublicId(),
+    memo: input.memo,
+    externalId: input.external_id ?? null,
+    responseKind: input.response_kind ?? "gif",
+    responsePayload: (input.response_payload ?? null) as object | null,
+    expiresAt: input.expires_at ? new Date(input.expires_at) : null,
+    ...(input.dedupe_window_seconds !== undefined
+      ? { dedupeWindowSeconds: input.dedupe_window_seconds }
+      : {}),
+    ...(input.monitor_mode !== undefined
+      ? { monitorMode: input.monitor_mode }
+      : {}),
+    ...(input.monitor_window_seconds !== undefined
+      ? { monitorWindowSeconds: input.monitor_window_seconds }
+      : {}),
+    createdByApiKeyId: auth.key.id,
+  };
+
+  // external_id makes creation idempotent: the unique constraint absorbs the
+  // duplicate insert and we return the existing row instead. Everything else
+  // in the body (memo, destinations, …) applies only when the row is actually
+  // created — a claim never mutates what IT configured on the existing key.
+  const [row] = input.external_id
+    ? await db
+        .insert(keys)
+        .values(insertValues)
+        .onConflictDoNothing({ target: keys.externalId })
+        .returning()
+    : await db.insert(keys).values(insertValues).returning();
+
+  if (!row && input.external_id) {
+    const [existing] = await db
+      .select()
+      .from(keys)
+      .where(eq(keys.externalId, input.external_id))
+      .limit(1);
+    if (!existing) {
+      // The conflicting row was deleted between our insert and select.
+      return NextResponse.json(
+        {
+          error: "conflict",
+          message: "enrollment raced a concurrent delete — retry",
+        },
+        { status: 409 },
+      );
+    }
+    await audit({
+      type: "key.claimed",
+      actorApiKeyId: auth.key.id,
+      actorLabel: auth.key.name,
+      subjectKind: "key",
+      subjectId: existing.id,
+      metadata: { external_id: input.external_id, memo: existing.memo },
+      ip: extractIp(req),
+    });
+    // Full shape only for callers who could read the key anyway; a shared
+    // enroll credential (or an unrelated full key) gets the reduced shape so
+    // it can't read another creator's alert routing.
+    if (!isEnroll && canAccessKey(auth.key, existing)) {
+      const existingDests = await listDestinations(existing.id);
+      return NextResponse.json(
+        { ...serializeKey(existing, existingDests), reused: true },
+        { status: 200 },
+      );
+    }
+    return NextResponse.json(
+      { ...serializeKeyForEnroll(existing), reused: true },
+      { status: 200 },
+    );
+  }
 
   if (!row) {
     return NextResponse.json(
@@ -116,15 +174,31 @@ export async function POST(req: NextRequest) {
     metadata: {
       memo: row.memo,
       response_kind: row.responseKind,
+      ...(row.externalId ? { external_id: row.externalId } : {}),
       destination_count: dests.length,
       destination_channels: dests.map((d) => d.channel),
     },
     ip: extractIp(req),
   });
 
+  if (isEnroll) {
+    // Reduced shape + activation status for the destinations this caller just
+    // supplied. No signing-secret reveal: fleet-embedded keys never see
+    // signing material (an admin can rotate the secret later to obtain one).
+    return NextResponse.json(
+      {
+        ...serializeKeyForEnroll(row),
+        reused: false,
+        destinations: results.map((r) => serializeResult(r)),
+      },
+      { status: 201 },
+    );
+  }
+
   return NextResponse.json(
     {
       ...serializeKey(row, dests),
+      reused: false,
       // Plaintext-secret reveal — only response shape that exposes it.
       destinations: results.map((r) => serializeResult(r, { reveal: true })),
     },
