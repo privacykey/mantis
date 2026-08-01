@@ -42,6 +42,11 @@ const DASHBOARD_HEADERS = isProd
 
 const config: NextConfig = {
   output: "standalone",
+  // Pin the workspace root: in a git worktree (or any layout where a parent
+  // directory also holds a lockfile) the root inference picks the parent
+  // checkout, which nests the standalone output under the worktree's relative
+  // path and breaks `node .next/standalone/server.js`.
+  turbopack: { root: import.meta.dirname },
   // Don't advertise the framework/version on every response.
   poweredByHeader: false,
   serverExternalPackages: ["postgres"],
