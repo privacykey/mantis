@@ -29,7 +29,11 @@ allowBuilds:
 #                      both Windows-only dev-server issues. Pulled in transitively via vitest; we
 #                      never run the vite dev server (Next.js serves the app), so not exploitable
 #                      here — pinned for hygiene / to clear the alerts. Test-time devDep only.
+#   sharp <0.35.0    → inherited libvips heap overflows / OOB reads (GHSA-f88m-g3jw-g9cj:
+#                      CVE-2026-33327/33328/35590/35591); optional dep of next (image
+#                      optimization) which pins ^0.34.5, so forced here.
 overrides:
+  sharp: ^0.35.3
   postcss: ^8.5.10
   esbuild: ^0.28.1
   joi: ^17.13.4
