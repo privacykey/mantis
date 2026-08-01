@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:db": "bash scripts/test-integration.sh",
+    "test:tier2": "bash scripts/test-tier2.sh",
     "setup:hooks": "bash scripts/install-hooks.sh",
     "bench": "pnpm run bench:cli",
     "bench:all": "pnpm run bench:cli && pnpm run bench:edge && pnpm run bench:server",

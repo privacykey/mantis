@@ -7,9 +7,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   test: {
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
-    // Full-stack DB integration tests live under tests/integration and run via
-    // vitest.integration.config.ts against a real Postgres — keep them out of
-    // the fast, mock-only unit run.
+    // Full-stack DB integration tests live under tests/integration (real
+    // Postgres, vitest.integration.config.ts) and tier-2 e2e tests under
+    // tests/tier2 (running standalone server, vitest.tier2.config.ts) — keep
+    // both out of the fast, mock-only unit run.
     exclude: [
       "node_modules",
       ".next",
@@ -17,6 +18,7 @@ export default defineConfig({
       "cli",
       "mantis-edge",
       "tests/integration/**",
+      "tests/tier2/**",
     ],
     environment: "node",
     setupFiles: ["./tests/setup.ts"],

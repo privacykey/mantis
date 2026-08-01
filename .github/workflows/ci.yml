@@ -78,6 +78,15 @@ jobs:
       # suite's globalSetup re-applies migrations idempotently.
       - name: integration tests (real Postgres)
         run: pnpm run test:integration
+      # Tier-2 e2e: production `next build` + the standalone server entrypoint
+      # (node .next/standalone/server.js) hit over real HTTP. Covers the two
+      # things handler-level tests cannot see — the proxy host-split as applied
+      # by the runtime matcher, and the wire-level Set-Cookie Secure attribute.
+      # Reuses this job's Postgres service instead of spawning Docker.
+      - name: tier-2 e2e (standalone server, real HTTP)
+        run: pnpm run test:tier2
+        env:
+          MANTIS_TIER2_USE_EXISTING_DB: "1"
 
   build:
     name: next build (catches lint/build-time errors)

@@ -68,8 +68,26 @@ the SSRF-block cases leave it off. The marquee security guards were mutation-che
 | `retention-sweep` | Aged-only deletion per category, always-on rate_limits purge, audit purge via GUC, append-only DELETE refused |
 | `key-migration` | A v1 (SHA-256) key authenticates and its stored hash is upgraded to v2 (HMAC) on first use |
 
-## Next (not yet built)
+## Tier-2 (e2e against the production server) — done
 
-Two Tier-2 (`next start`) cases — the middleware host-split applied by the Next
-runtime, and the real `Set-Cookie` `Secure` attribute the framework emits — are
-deliberately deferred (they need a running server, not direct handler imports).
+The two cases handler imports can't reach live in `tests/tier2/` with their own
+config (`vitest.tier2.config.ts`) and runner:
+
+```bash
+# One-shot: docker PG → migrate → next build → standalone server → suite.
+pnpm test:tier2
+```
+
+The runner (`scripts/test-tier2.sh`) serves the real production entrypoint
+(`node .next/standalone/server.js`, same as `docker/Dockerfile`) and the tests
+drive it over raw HTTP (`node:http`, because fetch forbids the Host header):
+
+| Test | Guards |
+| --- | --- |
+| `host-split` | The proxy gate is APPLIED by the runtime matcher: dashboard pages/API 404 (empty, `no-store`) on the public-only host but reach handlers on the dashboard host; `/c` still serves; unknown Host fails closed |
+| `session-cookie-secure` | The wire-level `Set-Cookie` on a real (no-JS server-action) login: `Secure` present iff `X-Forwarded-Proto: https` / `Forwarded: proto=https`, absent on plain HTTP; `HttpOnly`, `SameSite=Lax`, `Path=/` |
+
+In CI the tier-2 step runs in the `test` job after the integration suite,
+reusing its Postgres service (`MANTIS_TIER2_USE_EXISTING_DB=1`). Both processes
+(server + vitest) must share `DATABASE_URL` and `MANTIS_API_KEY_PEPPER`; the
+script exports matching values to each.
