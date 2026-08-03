@@ -55,6 +55,37 @@ run() {
   fi
 }
 
+# Validate the public origin before provisioning or deploying. A stale
+# *.fly.dev hostname silently mints every canary URL against the wrong app,
+# while plain HTTP exposes the API key and session cookie in cleartext.
+# Intentional custom HTTPS domains are valid and cannot be derived from --app,
+# so accept them after surfacing what will be used.
+validate_public_base_url() {
+  local config_file="$1" configured expected
+  configured="$(sed -n 's/^[[:space:]]*PUBLIC_BASE_URL[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$config_file" | head -n1)"
+  expected="https://$APP.fly.dev"
+
+  [ -n "$configured" ] || die "$config_file has no quoted PUBLIC_BASE_URL in [env].
+  Set it to $expected (or your custom HTTPS domain) before deploying."
+
+  case "$configured" in
+    "$expected") ;;
+    https://*.fly.dev)
+      die "$config_file PUBLIC_BASE_URL points at a different Fly app:
+  configured: $configured
+  --app:      $APP
+  expected:   $expected
+Update PUBLIC_BASE_URL or rerun with the matching --app value."
+      ;;
+    https://*)
+      info "custom PUBLIC_BASE_URL: $configured"
+      ;;
+    *)
+      die "$config_file PUBLIC_BASE_URL must be an absolute https:// URL (got: $configured)"
+      ;;
+  esac
+}
+
 # --- preflight -------------------------------------------------------------
 
 [ -n "$APP" ] || die "--app is required (e.g. --app my-mantis)"
@@ -87,13 +118,29 @@ fi
 ORG_ARGS=()
 [ -n "$ORG" ] && ORG_ARGS=(--org "$ORG")
 
+case "$DB_MODE" in
+  mpg)       DB_NOTE="Fly Managed Postgres, plan '$DB_PLAN' — BILLED HOURLY.
+             The 'basic' plan was ~\$38/mo + ~\$0.28/GB storage at time of
+             writing; check https://fly.io/docs/mpg/ for current pricing.
+             Cheaper options: --db external with a Neon/Supabase free tier,
+             or --db unmanaged (a plain Fly machine, no support)." ;;
+  unmanaged) DB_NOTE="legacy 'fly postgres' — cheap, but UNMANAGED: Fly support
+             does not cover it. If it OOMs or fills its disk, that's on you." ;;
+  external)  DB_NOTE="using the DATABASE_URL you supplied (nothing provisioned).
+             Pooled/PgBouncer URLs are fine — the client sets prepare:false." ;;
+  none)      DB_NOTE="skipped — set DATABASE_URL yourself before deploying." ;;
+esac
+
 cat <<EOF
 
   app        $APP   →  https://$APP.fly.dev
   region     $REGION
-  database   $DB_MODE$([ "$DB_MODE" = mpg ] && echo " (plan: $DB_PLAN)")
   org        ${ORG:-<personal>}
   config     fly.toml (generated from deploy/fly.toml.example)
+  machine    shared-cpu-1x / 512MB  (~\$3-4/mo; measured peak use ~150MB)
+
+  database   $DB_MODE
+             $DB_NOTE
 $([ "$DRY_RUN" = "1" ] && echo "
   DRY RUN — nothing will be created.")
 EOF
@@ -123,6 +170,12 @@ else
         deploy/fly.toml.example > fly.toml
     grep -q "CHANGE-ME" fly.toml && die "fly.toml still contains CHANGE-ME — template drift, fix deploy/fly.toml.example"
   fi
+fi
+
+# Under --dry-run a missing fly.toml is only described, not generated, so
+# there is no file to validate. Existing files are always checked.
+if [ -f fly.toml ]; then
+  validate_public_base_url fly.toml
 fi
 
 # --- app -------------------------------------------------------------------
