@@ -1,19 +1,29 @@
 # Fly.io app config for mantis.
-# Usage:
+#
+# Fastest path — the launch script does everything below in one command:
+#   bash deploy/fly-launch.sh --app my-mantis --region iad
+#
+# Manual equivalent:
 #   cp deploy/fly.toml.example fly.toml
-#   # edit `app =` to a unique name
-#   fly launch --no-deploy --copy-config
-#   fly postgres create --name <db-name>
-#   fly postgres attach <db-name>
-#   fly secrets set \
-#     PUBLIC_BASE_URL=https://<app-name>.fly.dev \
-#     MANTIS_API_KEY_PEPPER="$(openssl rand -base64 32)" \
-#     BOOTSTRAP_API_KEY=mantis_live_...
-#   fly deploy
+#   # edit `app =` and PUBLIC_BASE_URL to your app name
+#   fly apps create my-mantis
+#   fly mpg create --name my-mantis-db --region iad --plan basic
+#   fly mpg list                               # copy the cluster ID
+#   fly mpg attach <cluster-id> -a my-mantis   # sets DATABASE_URL for you
+#   fly secrets set MANTIS_API_KEY_PEPPER="$(openssl rand -base64 32)" -a my-mantis
+#   fly deploy -a my-mantis
+#   fly logs -a my-mantis | grep -A1 "bootstrap API key"   # first boot only
 #
 # MANTIS_API_KEY_PEPPER is required — the app refuses to boot without it.
 # Do NOT rotate after the first API key is minted; rotating invalidates
-# every existing key.
+# every existing key. (deploy/fly-launch.sh refuses to overwrite an existing
+# pepper for exactly this reason.)
+#
+# Postgres note: `fly mpg` (Managed Postgres) is Fly's supported database
+# product. The older `fly postgres create` builds an UNMANAGED cluster that
+# Fly support explicitly does not cover — if it OOMs or fills its disk,
+# recovery is your problem. Prefer mpg. Any external Postgres works too:
+#   fly secrets set DATABASE_URL=postgres://... -a my-mantis
 #
 # Public edge limits:
 #   Fly concurrency protects Machines from overload, but it is not a WAF.
@@ -31,6 +41,28 @@ primary_region = "iad"
   AUTO_MIGRATE = "1"
   LOG_LEVEL = "info"
   PORT = "3000"
+
+  # REQUIRED ON FLY. The image sets NODE_ENV=production, and in production
+  # mantis distrusts forwarding headers unless told otherwise — so without
+  # this EVERY hit records ip = null (verified against this exact image),
+  # which silently guts the point of a tripwire. The per-IP login limiter
+  # also fails open with no IP to bucket on.
+  TRUST_PROXY_HEADERS = "1"
+
+  # Pin IP attribution to the one header Fly's proxy authoritatively sets.
+  # Fly does NOT strip an inbound CF-Connecting-IP, and mantis tries that
+  # header first by default — so without this pin a client can forge its own
+  # recorded IP with a single request header. With it, a forged
+  # CF-Connecting-IP is ignored and the rightmost (real) X-Forwarded-For hop
+  # wins. Both behaviours verified against the production image.
+  #
+  # IF YOU FRONT THIS WITH A CLOUDFLARE-PROXIED DOMAIN, change this to
+  # "cf-connecting-ip": Cloudflare then sets that header and strips inbound
+  # copies, and it stays a single trusted value (no hop counting needed).
+  # Leaving it as x-forwarded-for behind Cloudflare records Cloudflare's edge
+  # IP rather than your visitor's, because Fly appends the CF edge as the
+  # rightmost hop.
+  TRUSTED_IP_HEADER = "x-forwarded-for"
 
 [http_service]
   internal_port = 3000
@@ -60,6 +92,5 @@ primary_region = "iad"
   cpus = 1
   memory = "512mb"
 
-# DATABASE_URL is set by `fly postgres attach`.
-# To use an external Postgres (Neon, Supabase, etc.) instead:
-#   fly secrets set DATABASE_URL=postgres://...
+# DATABASE_URL is set for you by `fly mpg attach` (or `fly secrets set` for an
+# external Postgres). Never commit it here — fly.toml is not a secret store.

@@ -68,6 +68,18 @@ mantis new "first mantis" -w http://localhost:3000/inbox/demo
 
 This is fine for evaluation but **don't rely on a laptop deploy for canaries that need to fire when you're away from your machine.** For a real public-reachable deploy — Tailscale Funnel, Cloudflare Tunnel, Railway, Fly.io, or Render — see **[deployment options](https://github.com/privacykey/mantis-docs/blob/main/deployment/README.md)**.
 
+For Fly.io specifically, one command provisions the app, a Managed Postgres
+cluster, the secrets and the first admin key:
+
+```bash
+bash deploy/fly-launch.sh --app my-mantis --region iad
+```
+
+Add `--dry-run` to see every command it would run first. See
+[`deploy/fly.toml.example`](./deploy/fly.toml.example) for the config it
+generates, and [`.github/workflows/fly-deploy.yml`](./.github/workflows/fly-deploy.yml)
+to make later pushes deploy themselves.
+
 > **Serve it over HTTPS, never plain HTTP.** Mantis authenticates with an API key sent as a bearer token and a session cookie — over plain HTTP on a routable address both travel in cleartext and can be sniffed. Put it behind a tunnel (the `tailscale` / `cloudflared` compose profiles terminate TLS for you) or a TLS reverse proxy. The compose setup keeps Postgres on an internal-only network with no published port, so the database is never reachable from the host or LAN.
 
 ### Quickstart (no server / edge)
@@ -103,7 +115,7 @@ Each part of the repo has its own reference:
 - **Edge worker** — [`mantis-edge/README.md`](./mantis-edge/README.md)
 - **IoT / LAN helper** — [`iot-helper/README.md`](./iot-helper/README.md)
 - **Benchmarks** — [`bench/README.md`](./bench/README.md)
-- **Deploy assets** — [`deploy/`](./deploy/) (Fly.io and Render examples)
+- **Deploy assets** — [`deploy/`](./deploy/) (one-command Fly.io launch, Render example)
 - **MDM fleet canaries** — [`deploy/kandji/`](./deploy/kandji/) (one key per managed Mac, terminal-open alerts)
 
 ## Fleet / MDM provisioning
