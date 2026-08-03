@@ -87,13 +87,29 @@ fi
 ORG_ARGS=()
 [ -n "$ORG" ] && ORG_ARGS=(--org "$ORG")
 
+case "$DB_MODE" in
+  mpg)       DB_NOTE="Fly Managed Postgres, plan '$DB_PLAN' — BILLED HOURLY.
+             The 'basic' plan was ~\$38/mo + ~\$0.28/GB storage at time of
+             writing; check https://fly.io/docs/mpg/ for current pricing.
+             Cheaper options: --db external with a Neon/Supabase free tier,
+             or --db unmanaged (a plain Fly machine, no support)." ;;
+  unmanaged) DB_NOTE="legacy 'fly postgres' — cheap, but UNMANAGED: Fly support
+             does not cover it. If it OOMs or fills its disk, that's on you." ;;
+  external)  DB_NOTE="using the DATABASE_URL you supplied (nothing provisioned).
+             Pooled/PgBouncer URLs are fine — the client sets prepare:false." ;;
+  none)      DB_NOTE="skipped — set DATABASE_URL yourself before deploying." ;;
+esac
+
 cat <<EOF
 
   app        $APP   →  https://$APP.fly.dev
   region     $REGION
-  database   $DB_MODE$([ "$DB_MODE" = mpg ] && echo " (plan: $DB_PLAN)")
   org        ${ORG:-<personal>}
   config     fly.toml (generated from deploy/fly.toml.example)
+  machine    shared-cpu-1x / 512MB  (~\$3-4/mo; measured peak use ~150MB)
+
+  database   $DB_MODE
+             $DB_NOTE
 $([ "$DRY_RUN" = "1" ] && echo "
   DRY RUN — nothing will be created.")
 EOF
