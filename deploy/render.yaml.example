@@ -3,11 +3,17 @@
 # Usage:
 #   1. Fork or clone this repo to a GitHub account Render can read.
 #   2. cp deploy/render.yaml.example render.yaml  (Render reads from the repo root)
-#   3. If you change the service `name:`, change PUBLIC_BASE_URL to match —
-#      Render serves the app at https://<name>.onrender.com.
+#   3. Change the service `name:` to something globally unique and set
+#      PUBLIC_BASE_URL to match. The <name>.onrender.com namespace is shared by
+#      ALL Render customers — plain "mantis" is taken, and if your name is taken
+#      Render silently serves you at <name>-<suffix>.onrender.com instead.
 #   4. https://dashboard.render.com/blueprints → "New Blueprint" → point at the repo.
 #   5. Render provisions the web service AND the Postgres, and wires DATABASE_URL
 #      to the database's INTERNAL (private-network) connection string.
+#   6. AFTER the first deploy, compare the URL shown at the top of the service
+#      page with PUBLIC_BASE_URL. If they differ, fix PUBLIC_BASE_URL in this
+#      file and push — this file is the source of truth for synced env vars, so
+#      dashboard edits to it are overwritten on the next blueprint sync.
 #
 # First login: mantis mints an admin API key on first boot and prints it to the
 # log ONCE. Open the service's Logs tab and look for:
@@ -22,7 +28,8 @@
 # (To choose the key yourself instead, uncomment BOOTSTRAP_API_KEY below before
 # the first deploy.)
 #
-# Cost at the plans below: ~$7/mo web service + ~$6/mo database.
+# Cost at the plans below: ~$7/mo web service + ~$6/mo database + ~$1.50/mo
+# storage (5 GB — see diskSizeGB). Check render.com/pricing for current rates.
 #
 # Free-tier caveat: free web services spin down after ~15 min idle, so the first
 # canary trigger after a quiet period pays a 30–60s cold start. A tripwire is
@@ -46,10 +53,13 @@ services:
                     # Postgres at all (ipAllowList below blocks the public path).
     healthCheckPath: /api/health   # DB-aware: fails when Postgres is unreachable
     envVars:
-      # Change this whenever you change the service name above, and again if you
-      # attach a custom domain. Wrong value = broken canary URLs and wallet passes.
+      # MUST exactly match the URL Render actually serves you at (usage steps
+      # 3 and 6), and change it again if you attach a custom domain. Canary
+      # URLs and wallet passes are minted from this value — if it names an
+      # onrender.com subdomain you don't own, every canary URL you hand out
+      # points at ANOTHER Render customer's app and your triggers go to them.
       - key: PUBLIC_BASE_URL
-        value: https://mantis.onrender.com
+        value: https://mantis.onrender.com   # <- change with the service name
 
       # Server-side pepper for HMAC-hashing API keys at rest. Render generates a
       # random 256-bit value once, on first create, and never rotates it on
@@ -114,7 +124,13 @@ databases:
     # and Render will not create new databases on them.
     plan: basic-256mb
     region: oregon              # must match the web service region above
-    postgresMajorVersion: "17"  # schema only needs gen_random_uuid() (core since 13)
+    postgresMajorVersion: "18"  # parity with docker-compose/CI (postgres:18);
+                                # the schema itself only needs gen_random_uuid()
+                                # (core since 13), so 17 works too if you prefer
+    # Without this, Basic-tier databases default to 15 GB (~3x the storage cost
+    # for nothing — 5 GB holds years of homelab canary hits). Must be 1 or a
+    # multiple of 5. You can grow a disk later, but never shrink it.
+    diskSizeGB: 5
     # Empty list = no public ingress at all. Render services in the SAME REGION
     # still connect over the private network via the internal connection string
     # above, so the database is never exposed to the internet. This is the main
