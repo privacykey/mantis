@@ -23,7 +23,8 @@ Highlights:
 - **Web canaries** — CSS-background + JS clone-detector — plus NFC NDEF tag URLs and printable QR/NFC sticker labels
 - **Smart-home triggers** via Home Assistant, Scrypted, and an optional LAN watcher
 - **Smart-home actions** — `home_assistant` destination posts to a HA webhook automation, so a hit can flip a switch (e.g. cut a VLAN via the OPNsense integration), fire a scene, or push a phone notification (`mantis install <key> --type homeassistant-receiver` prints a ready-to-paste automation skeleton)
-- **Direct notification destinations** — webhook, email, Slack, Discord, Teams — with a Postgres-backed retry queue and per-key dedup
+- **Direct notification destinations** — webhook, email, Slack, Discord, Teams — with a Postgres-backed retry queue and per-key dedup. Set them **globally once** (dashboard → settings → notifications) and every key alerts you, or add per-key destinations on top
+- **Dashboard minting** — pick what you're planting (PDF, honey folder, SSH-login alarm, …) and the trigger response, dedupe window and download format are filled in for you; **bulk mode** mints many at once and hands back a zip with one artifact per key
 - **Optional stateless variant** ([`mantis-edge/`](./mantis-edge/README.md)) — a Cloudflare Worker that decrypts URLs at the edge, no DB to host
 - **Uptime Kuma integration** — per-key status URL flips on hit, watched by Kuma for 80+ notification channel fan-out
 
@@ -65,6 +66,31 @@ Open <http://localhost:3000> and paste that same key to sign in to the web dashb
 mantis --key mantis_live_... login --url http://localhost:3000
 mantis new "first mantis" -w http://localhost:3000/inbox/demo
 ```
+
+**Set your notify destinations first.** In the dashboard, go to **settings →
+notifications** and add where alerts should go (Slack, a webhook, email, …).
+Destinations set there are *global*: every key you mint — including bulk ones —
+alerts you without further setup, and a test message fires on save so you can
+confirm it lands. Keys can still add their own destinations on top; a
+destination listed both globally and on a key only fires once.
+
+Without at least one destination, a key records hits silently and pages nobody.
+
+### Minting from the dashboard
+
+**new** asks what you're planting first — PDF, Word doc, honey folder, fake
+credentials, SSH-login alarm, NFC tag — and fills in the rest from that choice.
+The defaults are opinionated for a reason: document canaries return a 1×1 GIF
+because the fetcher is a renderer and a non-image reply can show a broken-image
+glyph to whoever opened the file, while login and sudo alarms turn dedupe
+**off**, since deduping those would swallow a second intrusion inside the
+window. Every value stays editable, and once you change one it survives further
+type switches.
+
+**bulk** mints many at once: pick a filetype, put one name per line, and you get
+back a zip with one artifact per key plus a README mapping names to URLs. Use it
+to give every host or location its own key — a shared key tells you *something*
+fired, a per-location key tells you **where**.
 
 This is fine for evaluation but **don't rely on a laptop deploy for canaries that need to fire when you're away from your machine.** For a real public-reachable deploy — Tailscale Funnel, Cloudflare Tunnel, Railway, Fly.io, or Render — see **[deployment options](https://github.com/privacykey/mantis-docs/blob/main/deployment/README.md)**.
 
