@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   notificationDestinations,
@@ -124,6 +124,91 @@ export async function listDestinations(
     .select()
     .from(notificationDestinations)
     .where(eq(notificationDestinations.keyId, keyId));
+}
+
+// ---------------------------------------------------------------------------
+// Global destinations (keyId IS NULL) — configured once in
+// /settings/notifications and added to EVERY key's fan-out, on top of that
+// key's own destinations. Lets an operator mint many keys without re-entering
+// the same Slack/webhook URL each time.
+// ---------------------------------------------------------------------------
+
+export async function listGlobalDestinations(): Promise<
+  NotificationDestination[]
+> {
+  return db
+    .select()
+    .from(notificationDestinations)
+    .where(isNull(notificationDestinations.keyId))
+    .orderBy(notificationDestinations.createdAt);
+}
+
+/**
+ * Replaces the global destination set. Mirrors replaceDestinations: existing
+ * (channel, target) pairs are carried over verbatim — same secret, same
+ * activation history — so editing one row doesn't rotate another's secret or
+ * re-ping a destination that's already known-good.
+ */
+export async function replaceGlobalDestinations(
+  inputs: DestinationInput[],
+): Promise<DestinationResult[]> {
+  const existing = await listGlobalDestinations();
+  const existingByPair = new Map<string, NotificationDestination>(
+    existing.map((d) => [`${d.channel}\0${d.target}`, d]),
+  );
+
+  await db
+    .delete(notificationDestinations)
+    .where(isNull(notificationDestinations.keyId));
+
+  const results: DestinationResult[] = [];
+  for (const input of inputs) {
+    const carry = existingByPair.get(`${input.channel}\0${input.target}`);
+    if (carry) {
+      const [row] = await db
+        .insert(notificationDestinations)
+        .values({
+          keyId: null,
+          channel: carry.channel,
+          target: carry.target,
+          signingSecret: carry.signingSecret,
+          lastActivationStatus: carry.lastActivationStatus,
+          lastActivationError: carry.lastActivationError,
+          lastActivationAt: carry.lastActivationAt,
+        })
+        .returning();
+      if (row) {
+        results.push({
+          destination: row,
+          activation: {
+            ok: carry.lastActivationStatus === "ok",
+            error: carry.lastActivationError ?? undefined,
+          },
+        });
+      }
+    } else {
+      const [row] = await db
+        .insert(notificationDestinations)
+        .values({
+          keyId: null,
+          channel: input.channel,
+          target: input.target,
+          signingSecret:
+            input.channel === "webhook" ? sealSecret(newSigningSecret()) : null,
+        })
+        .returning();
+      if (!row) throw new Error("global destination insert returned no row");
+      // No key to describe — fireActivationPing handles a null key.
+      const activation = await fireActivationPing(null, row);
+      const [refreshed] = await db
+        .select()
+        .from(notificationDestinations)
+        .where(eq(notificationDestinations.id, row.id))
+        .limit(1);
+      results.push({ destination: refreshed ?? row, activation });
+    }
+  }
+  return results;
 }
 
 export async function deleteDestination(id: string): Promise<boolean> {

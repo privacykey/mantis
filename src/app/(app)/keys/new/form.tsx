@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { CHANNEL_META, channelMeta } from "@/lib/notify/channel-meta";
+import { PRESETS, getPreset, type Preset } from "@/lib/presets";
 import { createKeyAction, type CreateState } from "./actions";
 
 const RESPONSE_KINDS = [
@@ -12,25 +15,39 @@ const RESPONSE_KINDS = [
   { value: "html", label: "custom HTML" },
 ] as const;
 
-const CHANNELS = [
-  { value: "webhook", label: "webhook (generic JSON)", placeholder: "https://example.com/hook" },
-  { value: "email", label: "email", placeholder: "alerts@example.com" },
-  { value: "slack", label: "Slack", placeholder: "https://hooks.slack.com/services/T.../B.../..." },
-  { value: "discord", label: "Discord", placeholder: "https://discord.com/api/webhooks/.../..." },
-  { value: "teams", label: "Microsoft Teams", placeholder: "https://*.webhook.office.com/webhookb2/..." },
-] as const;
-
 type Destination = { channel: string; target: string };
 
-export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
+export function NewKeyForm({
+  defaultMemo = "",
+  hasGlobalDestinations = false,
+  isAdmin = false,
+}: {
+  defaultMemo?: string;
+  hasGlobalDestinations?: boolean;
+  isAdmin?: boolean;
+}) {
   const [state, formAction] = useActionState<CreateState, FormData>(
     createKeyAction,
     {},
   );
-  const [kind, setKind] = useState<string>("gif");
-  const [destinations, setDestinations] = useState<Destination[]>([
-    { channel: "webhook", target: "" },
-  ]);
+
+  const [preset, setPreset] = useState<Preset>(getPreset(null));
+  // Response kind and dedupe follow the preset until the operator overrides
+  // them; after that we stop clobbering their choice on preset switches.
+  const [kind, setKind] = useState<string>(preset.responseKind);
+  const [dedupe, setDedupe] = useState<string>(
+    String(preset.dedupeWindowSeconds),
+  );
+  const [touched, setTouched] = useState({ kind: false, dedupe: false });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+
+  const choosePreset = (id: string) => {
+    const p = getPreset(id);
+    setPreset(p);
+    if (!touched.kind) setKind(p.responseKind);
+    if (!touched.dedupe) setDedupe(String(p.dedupeWindowSeconds));
+  };
 
   const addDestination = () =>
     setDestinations((d) => [...d, { channel: "webhook", target: "" }]);
@@ -42,94 +59,193 @@ export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
     );
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form action={formAction} className="space-y-5">
       <p className="text-sm text-neutral-400 leading-relaxed">
-        A mantis key is a tripwire. You mint a key and get back a URL (plus
-        downloadable file artifacts like docs, PDFs, and a honey-directory zip).
-        Plant it somewhere it shouldn't be touched. When something fetches the
-        URL or opens a file, mantis records the hit and notifies your
-        destinations below.
+        A mantis key is a tripwire. Pick what you&apos;re planting and mantis
+        fills in sensible defaults — you can change any of them.
       </p>
-      <Field label="memo" hint="A label for you — not visible to triggers.">
+
+      {/* 1 — what are you planting */}
+      <fieldset className="border-0 p-0 m-0">
+        <legend className="block text-xs uppercase tracking-wide text-neutral-500 mb-2">
+          1 · what are you planting?
+        </legend>
+        <input type="hidden" name="preset" value={preset.id} />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {PRESETS.map((p) => {
+            const selected = p.id === preset.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => choosePreset(p.id)}
+                aria-pressed={selected}
+                className={`text-left rounded border px-3 py-2 cursor-pointer font-[inherit] transition-colors ${
+                  selected
+                    ? "border-neutral-500 bg-neutral-900 text-neutral-100"
+                    : "border-neutral-800 bg-neutral-950 text-neutral-400 hover:border-neutral-700"
+                }`}
+              >
+                <span className="block text-sm">{p.label}</span>
+                <span className="block text-xs text-neutral-600 mt-0.5 leading-snug">
+                  {p.blurb}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      {/* 2 — name it */}
+      <Field
+        label="2 · name it"
+        hint="A label for you — never visible to whoever trips it."
+      >
         <input
           name="memo"
           required
-          autoFocus
           maxLength={500}
           defaultValue={defaultMemo}
-          placeholder="e.g. honeypot doc in /finance"
-          className={inputCls}
+          key={preset.id} // re-render placeholder when the preset changes
+          placeholder={preset.memoExample || "e.g. honeypot doc in /finance"}
+          className={`${inputBase} w-full`}
         />
       </Field>
 
-      <Field
-        label="trigger response"
-        hint="What does the mantis URL return when fetched?"
-      >
-        <select
-          name="response_kind"
-          value={kind}
-          onChange={(e) => setKind(e.target.value)}
-          className={inputCls}
+      {/* derived defaults, visible but collapsed */}
+      <div className="border border-neutral-900 rounded bg-neutral-950/40">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+          className="w-full text-left px-3 py-2 text-xs text-neutral-400 hover:text-neutral-200 bg-transparent border-0 cursor-pointer font-[inherit] flex justify-between items-center"
         >
-          {RESPONSE_KINDS.map((k) => (
-            <option key={k.value} value={k.value}>
-              {k.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+          <span>
+            3 · trigger response:{" "}
+            <span className="text-neutral-200">
+              {RESPONSE_KINDS.find((r) => r.value === kind)?.label ?? kind}
+            </span>
+            {" · dedupe "}
+            <span className="text-neutral-200">
+              {dedupe === "0" ? "off" : `${dedupe}s`}
+            </span>
+          </span>
+          <span aria-hidden="true">{showAdvanced ? "▾" : "▸"}</span>
+        </button>
 
-      {kind === "redirect" && (
-        <Field label="redirect URL">
-          <input
-            name="redirect_url"
-            type="url"
-            placeholder="https://example.com"
-            className={inputCls}
-          />
-        </Field>
-      )}
+        {showAdvanced && (
+          <div className="px-3 pb-3 space-y-4 border-t border-neutral-900 pt-3">
+            <Field
+              label="trigger response"
+              hint="What the mantis URL returns when fetched. The preset picks the least conspicuous option for that medium."
+            >
+              <select
+                name="response_kind"
+                value={kind}
+                onChange={(e) => {
+                  setKind(e.target.value);
+                  setTouched((t) => ({ ...t, kind: true }));
+                }}
+                className={`${inputBase} w-full`}
+              >
+                {RESPONSE_KINDS.map((k) => (
+                  <option key={k.value} value={k.value}>
+                    {k.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-      {kind === "html" && (
-        <Field label="HTML body">
-          <textarea
-            name="html_body"
-            rows={4}
-            className={`${inputCls} font-mono`}
-            placeholder="<!doctype html>…"
-          />
-        </Field>
-      )}
+            {kind === "redirect" && (
+              <Field label="redirect URL">
+                <input
+                  name="redirect_url"
+                  type="url"
+                  placeholder="https://example.com"
+                  className={`${inputBase} w-full`}
+                />
+              </Field>
+            )}
 
-      {kind === "json" && (
-        <Field
-          label="JSON body"
-          hint="Leave blank to return {ok: true}."
-        >
-          <textarea
-            name="json_body"
-            rows={3}
-            className={`${inputCls} font-mono`}
-            placeholder='{"status":"ok"}'
-          />
-        </Field>
-      )}
+            {kind === "html" && (
+              <Field label="HTML body">
+                <textarea
+                  name="html_body"
+                  rows={4}
+                  className={`${inputBase} w-full font-mono`}
+                  placeholder="<!doctype html>…"
+                />
+              </Field>
+            )}
 
+            {kind === "json" && (
+              <Field label="JSON body" hint="Leave blank to return {ok: true}.">
+                <textarea
+                  name="json_body"
+                  rows={3}
+                  className={`${inputBase} w-full font-mono`}
+                  placeholder='{"status":"ok"}'
+                />
+              </Field>
+            )}
+
+            <Field
+              label="dedupe window (seconds)"
+              hint="Repeat hits inside this window are recorded but don't re-notify. 0 = alert on every hit (right for login/sudo alarms)."
+            >
+              <input
+                name="dedupe_window_seconds"
+                type="number"
+                value={dedupe}
+                onChange={(e) => {
+                  setDedupe(e.target.value);
+                  setTouched((t) => ({ ...t, dedupe: true }));
+                }}
+                min={0}
+                max={86_400}
+                className={`${inputBase} w-full`}
+              />
+            </Field>
+          </div>
+        )}
+      </div>
+
+      {/* 4 — destinations, now optional thanks to globals */}
       <div>
         <div className="block text-xs uppercase tracking-wide text-neutral-500 mb-2">
-          notify destinations
+          4 · extra destinations (optional)
         </div>
-        <p className="text-xs text-neutral-600 mb-2">
-          One row per channel. When the key fires, mantis posts to each.
-          Slack/Discord/Teams get platform-formatted messages; webhook gets raw
-          JSON; email needs SMTP_URL on the server. A test ping fires
-          immediately on save so you'll see it land.
-        </p>
+        {hasGlobalDestinations ? (
+          <p className="text-xs text-neutral-500 mb-2">
+            Global destinations are configured, so this key already alerts you.
+            Add rows here only to notify somewhere <em>extra</em> for this key.{" "}
+            {isAdmin && (
+              <Link
+                href="/settings/notifications"
+                className="text-blue-400 no-underline hover:underline"
+              >
+                manage global
+              </Link>
+            )}
+          </p>
+        ) : (
+          <p className="text-xs text-amber-500/80 mb-2">
+            No global destinations are configured — without a row here this key
+            records hits but won&apos;t alert anyone.{" "}
+            {isAdmin && (
+              <Link
+                href="/settings/notifications"
+                className="text-blue-400 no-underline hover:underline"
+              >
+                set global destinations
+              </Link>
+            )}
+          </p>
+        )}
+
         <div className="space-y-2">
           {destinations.map((d, idx) => {
-            const channelMeta =
-              CHANNELS.find((c) => c.value === d.channel) ?? CHANNELS[0];
+            const meta = channelMeta(d.channel);
             return (
               <div key={idx} className="flex gap-2 items-start">
                 <select
@@ -138,9 +254,10 @@ export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
                   onChange={(e) =>
                     updateDestination(idx, { channel: e.target.value })
                   }
-                  className={`${inputCls} w-36 shrink-0`}
+                  className={`${inputBase} w-44 shrink-0`}
+                  aria-label={`destination ${idx + 1} channel`}
                 >
-                  {CHANNELS.map((c) => (
+                  {CHANNEL_META.map((c) => (
                     <option key={c.value} value={c.value}>
                       {c.label}
                     </option>
@@ -152,19 +269,18 @@ export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
                   onChange={(e) =>
                     updateDestination(idx, { target: e.target.value })
                   }
-                  placeholder={channelMeta.placeholder}
-                  className={`${inputCls} flex-1`}
+                  placeholder={meta.placeholder}
+                  className={`${inputBase} flex-1 min-w-0`}
+                  aria-label={`destination ${idx + 1} target`}
                 />
-                {destinations.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeDestination(idx)}
-                    className="text-xs text-neutral-500 hover:text-red-400 bg-transparent border-0 cursor-pointer font-[inherit] px-2 py-2"
-                    aria-label="remove destination"
-                  >
-                    ✕
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => removeDestination(idx)}
+                  className="text-xs text-neutral-500 hover:text-red-400 bg-transparent border-0 cursor-pointer font-[inherit] px-2 py-2"
+                  aria-label={`remove destination ${idx + 1}`}
+                >
+                  ✕
+                </button>
               </div>
             );
           })}
@@ -174,23 +290,9 @@ export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
           onClick={addDestination}
           className="mt-2 text-xs text-blue-400 hover:underline bg-transparent border-0 cursor-pointer font-[inherit] p-0"
         >
-          + add another destination
+          + add destination for this key
         </button>
       </div>
-
-      <Field
-        label="dedupe window (seconds)"
-        hint="Repeat hits within this window are recorded but won't fire notifications. 0 to disable."
-      >
-        <input
-          name="dedupe_window_seconds"
-          type="number"
-          defaultValue="60"
-          min={0}
-          max={86_400}
-          className={inputCls}
-        />
-      </Field>
 
       {state.error && (
         <div
@@ -201,7 +303,15 @@ export function NewKeyForm({ defaultMemo = "" }: { defaultMemo?: string }) {
         </div>
       )}
 
-      <Submit />
+      <div className="flex items-center gap-3">
+        <Submit />
+        <Link
+          href="/keys/bulk"
+          className="text-xs text-neutral-500 no-underline hover:text-neutral-300"
+        >
+          need several at once? → bulk mint
+        </Link>
+      </div>
     </form>
   );
 }
@@ -232,12 +342,14 @@ function Submit() {
     <button
       type="submit"
       disabled={pending}
-      className="bg-neutral-100 text-neutral-900 rounded px-4 py-2 text-sm font-medium hover:bg-white disabled:opacity-50"
+      className="bg-neutral-100 text-neutral-900 rounded px-4 py-2 text-sm font-medium hover:bg-white disabled:opacity-50 cursor-pointer"
     >
       {pending ? "creating…" : "create key"}
     </button>
   );
 }
 
-const inputCls =
-  "w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-neutral-600";
+// No width baked in — callers pick w-full / w-44 / flex-1. Two competing
+// width utilities would be resolved by stylesheet order, not className order.
+const inputBase =
+  "bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-neutral-600";

@@ -43,6 +43,13 @@
       "when": 1783321821220,
       "tag": "0005_slow_shiva",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786019282766,
+      "tag": "0006_cool_bullseye",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "notification_destinations" ALTER COLUMN "key_id" DROP NOT NULL;
