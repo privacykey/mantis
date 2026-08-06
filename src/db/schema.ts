@@ -135,9 +135,14 @@ export const notificationDestinations = pgTable(
   "notification_destinations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    keyId: uuid("key_id")
-      .notNull()
-      .references(() => keys.id, { onDelete: "cascade" }),
+    /**
+     * NULL = a GLOBAL destination: it receives every key's hits, on top of
+     * whatever per-key destinations that key has. Managed from
+     * /settings/notifications so operators don't re-enter the same Slack or
+     * webhook URL on every key. Per-key queries filter on `eq(keyId, …)`, so
+     * global rows never leak into a key's own destination list.
+     */
+    keyId: uuid("key_id").references(() => keys.id, { onDelete: "cascade" }),
     channel: text("channel").notNull(), // values from notificationChannelEnum at runtime
     target: text("target").notNull(),
     /** HMAC secret for outbound bodies. Set for webhook; null elsewhere (those channels auth via URL). */

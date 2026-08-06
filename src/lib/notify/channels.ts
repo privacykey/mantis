@@ -3,8 +3,27 @@ import type { NotificationChannel } from "@/db/schema";
 const SLACK_RE = /^https:\/\/hooks\.slack\.com\/services\//;
 const DISCORD_RE =
   /^https:\/\/(?:discord|discordapp)\.com\/api\/webhooks\//;
-const TEAMS_RE =
+// Legacy Office 365 connectors. Microsoft retired these in May 2026 — kept
+// only so existing destinations created before then keep validating.
+const TEAMS_LEGACY_RE =
   /^https:\/\/(?:[a-z0-9-]+\.webhook\.office\.com\/webhookb2\/|outlook\.office\.com\/webhook\/)/i;
+// The replacement: Power Automate "Workflows" (the `When a Teams webhook
+// request is received` trigger), which issues URLs on Logic Apps hosts —
+// prod-NN.<region>.logic.azure.com/workflows/… — plus the sovereign clouds
+// and the newer Power Platform endpoints. Matched on HOST, not prefix,
+// because the region/instance labels vary per tenant.
+const TEAMS_WORKFLOW_HOST_RE =
+  /(?:^|\.)(?:logic\.azure\.(?:com|us|cn|de)|powerplatform\.com)$/i;
+
+function isTeamsTarget(target: string): boolean {
+  if (TEAMS_LEGACY_RE.test(target)) return true;
+  try {
+    const u = new URL(target);
+    return u.protocol === "https:" && TEAMS_WORKFLOW_HOST_RE.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const HA_WEBHOOK_PATH_RE = /^\/api\/webhook\/[A-Za-z0-9_-]+\/?$/;
 
@@ -62,11 +81,15 @@ export function validateDestination(
       return { ok: true };
 
     case "teams":
-      if (!TEAMS_RE.test(target)) {
+      if (!isTeamsTarget(target)) {
         return {
           ok: false,
           error:
-            "Teams URL must be a *.webhook.office.com/webhookb2/ or outlook.office.com/webhook/ URL",
+            "not a Teams webhook URL. In Teams use Workflows → " +
+            '"Post to a channel when a webhook request is received", which ' +
+            "gives you a https://…logic.azure.com/workflows/… URL. (The old " +
+            "*.webhook.office.com connector URLs still validate, but Microsoft " +
+            "retired them in May 2026.)",
         };
       }
       return { ok: true };
@@ -105,7 +128,7 @@ export function detectChannelFromUrl(
 ): NotificationChannel | null {
   if (SLACK_RE.test(target)) return "slack";
   if (DISCORD_RE.test(target)) return "discord";
-  if (TEAMS_RE.test(target)) return "teams";
+  if (isTeamsTarget(target)) return "teams";
   if (EMAIL_RE.test(target)) return "email";
   try {
     const u = new URL(target);

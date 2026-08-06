@@ -31,6 +31,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 new
               </Link>
               <Link
+                href="/keys/bulk"
+                className="text-neutral-400 no-underline hover:text-neutral-200"
+                title="Mint many keys at once and download them as a zip"
+              >
+                bulk
+              </Link>
+              <Link
                 href="/inbox"
                 className="text-neutral-400 no-underline hover:text-neutral-200"
                 title="Catch-all dev inbox: captures notifications when no real destination is configured"
@@ -42,7 +49,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               </Link>
               {session.isAdmin && (
                 <Link
-                  href="/settings/wallet"
+                  href="/settings/notifications"
                   className="text-neutral-400 no-underline hover:text-neutral-200"
                 >
                   settings

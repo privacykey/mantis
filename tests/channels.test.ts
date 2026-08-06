@@ -60,6 +60,43 @@ describe("validateDestination", () => {
         false,
       );
     });
+
+    // Microsoft retired Office 365 connectors in May 2026. Every Teams webhook
+    // created since is a Power Automate "Workflows" URL on a Logic Apps host,
+    // which the connector-only regex rejected — so Teams could not be
+    // configured at all through the dashboard.
+    it.each([
+      "https://prod-27.australiaeast.logic.azure.com/workflows/abc123/triggers/manual/paths/invoke?api-version=2016-06-01&sig=xyz",
+      "https://prod-00.westus.logic.azure.com:443/workflows/def/triggers/manual/paths/invoke",
+      "https://prod-12.usgovvirginia.logic.azure.us/workflows/ghi/triggers/manual/paths/invoke",
+      "https://example.powerplatform.com/workflows/jkl/triggers/manual/paths/invoke",
+    ])("accepts Power Automate workflow URL %#", (url) => {
+      expect(validateDestination("teams", url).ok).toBe(true);
+    });
+
+    it("rejects a lookalike host that only suffixes the real one", () => {
+      expect(
+        validateDestination(
+          "teams",
+          "https://logic.azure.com.evil.example/workflows/x",
+        ).ok,
+      ).toBe(false);
+    });
+
+    it("rejects plaintext http for workflow URLs", () => {
+      expect(
+        validateDestination(
+          "teams",
+          "http://prod-27.australiaeast.logic.azure.com/workflows/x",
+        ).ok,
+      ).toBe(false);
+    });
+
+    it("explains how to get a current URL when rejecting", () => {
+      const res = validateDestination("teams", "https://example.com/teams");
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toMatch(/Workflows/i);
+    });
   });
 
   describe("email", () => {
@@ -150,6 +187,10 @@ describe("detectChannelFromUrl", () => {
     ["https://discord.com/api/webhooks/1/2", "discord"],
     ["https://discordapp.com/api/webhooks/1/2", "discord"],
     ["https://contoso.webhook.office.com/webhookb2/x", "teams"],
+    [
+      "https://prod-27.australiaeast.logic.azure.com/workflows/x/triggers/manual/paths/invoke",
+      "teams",
+    ],
     ["alerts@example.com", "email"],
     ["https://ha.example.com/api/webhook/mantis-abc", "home_assistant"],
     ["http://homeassistant.local:8123/api/webhook/x/", "home_assistant"],
