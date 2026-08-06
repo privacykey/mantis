@@ -94,7 +94,7 @@ Credentials are stored in:
 
 ### `new` options
 
-- `-N, --notify <channel:target>` — notification destination; repeat for multiple destinations. Channels: `webhook`, `email`, `slack`, `discord`, `teams`
+- `-N, --notify <channel:target>` — notification destination; repeat for multiple destinations. Channels: `webhook`, `email`, `slack`, `discord`, `teams`, `home_assistant`
 - `-w, --notify-webhook <url>` — shortcut for `--notify webhook:<url>`
 - `-e, --notify-email <email>` — shortcut for `--notify email:<email>`
 - `-r, --response-kind <kind>` — `gif` (default) / `empty` / `json` / `redirect` / `html`
@@ -147,7 +147,7 @@ Useful columns:
 | `memo` | Memo for the created key. If missing, `area` or `name` is used |
 | `area`, `name` | Friendly fallback labels for the key memo |
 | `notify` | Semicolon-separated destinations like `webhook:https://...;email:ops@example.com` |
-| `notify_webhook`, `notify_email`, `notify_slack`, `notify_discord`, `notify_teams` | Per-row destinations |
+| `notify_webhook`, `notify_email`, `notify_slack`, `notify_discord`, `notify_teams`, `notify_home_assistant` | Per-row destinations (one column per channel) |
 | `response_kind` | Per-row `gif`, `empty`, `json`, `redirect`, or `html` |
 | `response_payload` | Per-row JSON payload for `json`, `redirect`, or `html` responses |
 | `expires_at` | Per-row ISO timestamp for auto-disable |

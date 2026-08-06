@@ -54,6 +54,7 @@ import {
   setQuiet,
   type OutputMode,
 } from "./lib/out.js";
+import { ALL_CHANNELS, EDGE_CHANNELS } from "./lib/channels.js";
 
 type GlobalRaw = {
   baseUrl?: string;
@@ -545,7 +546,7 @@ edge
     new Option(
       "--channel <channel>",
       "destination channel formatter — sends a payload shaped for this service",
-    ).choices(["webhook", "slack", "discord", "teams"]),
+    ).choices([...EDGE_CHANNELS]),
   )
   .addOption(
     new Option("--response-kind <kind>", "trigger response shape")
@@ -676,7 +677,7 @@ program
   .argument("[memo]", "human-readable label for the key")
   .option(
     "-N, --notify <spec>",
-    "notification destination as <channel>:<target>. Channels: webhook, email, slack, discord, teams. Repeatable.",
+    `notification destination as <channel>:<target>. Channels: ${ALL_CHANNELS.join(", ")}. Repeatable.`,
     collect,
     [] as string[],
   )
@@ -736,7 +737,7 @@ program
   )
   .option(
     "-N, --notify <spec>",
-    "destination for every row as <channel>:<target>. Channels: webhook, email, slack, discord, teams. Repeatable.",
+    `destination for every row as <channel>:<target>. Channels: ${ALL_CHANNELS.join(", ")}. Repeatable.`,
     collect,
     [] as string[],
   )
@@ -932,13 +933,9 @@ destinations
   .argument("[channel]", "destination channel")
   .argument("[target]", "URL or email")
   .addOption(
-    new Option("--channel <channel>", "destination channel").choices([
-      "webhook",
-      "email",
-      "slack",
-      "discord",
-      "teams",
-    ]),
+    new Option("--channel <channel>", "destination channel").choices(
+      ALL_CHANNELS,
+    ),
   )
   .option("--target <target>", "URL or email")
   .action(async (

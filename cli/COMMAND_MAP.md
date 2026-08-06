@@ -360,7 +360,7 @@ flowchart TD
 | Command | Key Options |
 |---|---|
 | `destinations list <key-id>` / `dest list <key-id>` | none |
-| `destinations add <key-id> [channel] [target]` / `dest add` | `--channel webhook\|email\|slack\|discord\|teams`, `--target <target>` |
+| `destinations add <key-id> [channel] [target]` / `dest add` | `--channel webhook\|email\|slack\|discord\|teams\|home_assistant`, `--target <target>` |
 | `destinations rm <key-id> <destination-id>` / `dest rm` | none |
 | `destinations test <key-id>` / `dest test` | `--yes` |
 | `destinations rotate-secret <key-id> <destination-id>` / `dest rotate-secret` | `--yes` (rotates a webhook destination's HMAC signing secret; new secret shown once) |
@@ -373,7 +373,7 @@ flowchart TD
 | `edge deploy` | `--dir <path>` (worker dir; defaults to `./` or `./mantis-edge`), `--set-key` (store the AES key locally after deploy), and any extra args after `--` forwarded to `wrangler deploy` |
 | `edge set-key` | positional `[worker] [key]`, or `--worker <url>`; `--key-stdin` for CI (prompts for key if omitted) |
 | `edge delete-key` | `--worker <url>` |
-| `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams`, `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy`, `--test`, `--install <type>` (with `--out`, `--ssh-only`, `--hostname`). Run bare on a TTY to launch the interactive wizard. |
+| `edge mint` | `--worker <url>`, `--webhook <url>`, `--channel webhook\|slack\|discord\|teams` (narrower than the server's set — the worker has no SMTP or Home Assistant formatter), `--response-kind`, `--response-payload`, `--memo`, `--expires-at`, `--edge-key`, `--copy`, `--test`, `--install <type>` (with `--out`, `--ssh-only`, `--hostname`). Run bare on a TTY to launch the interactive wizard. |
 | `edge install <url>` | `--type <type>`, `--out <file>`, `--ssh-only` (shell types), `--hostname <host>` (js-clone-detector), `--memo <text>`. Generates the same snippet `mantis install` produces server-side, but for a stateless edge URL. |
 | `backup` | `--out <file>` (default `./mantis-backup.json`), `--only <name>`, `--passphrase-stdin`, `--passphrase-env <var>`. Exports all profiles (or one) + plugin manifest into a scrypt + AES-256-GCM encrypted JSON file. Safe to commit to a private git-crypt repo. |
 | `restore <file>` | `--overwrite`, `--skip-plugins`, `--passphrase-stdin`, `--passphrase-env <var>`. Decrypts a backup bundle and writes profiles into config + keychain; re-installs plugins via `mantis plugin add <source>@<ref>`. Profiles that already exist are skipped unless `--overwrite`. |

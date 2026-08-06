@@ -1,3 +1,5 @@
+import { ALL_CHANNELS } from "../lib/channels.js";
+
 // Shell completion scripts for bash, zsh, fish.
 //
 // Keep this file in sync with the command tree wired up in `src/index.ts`.
@@ -80,7 +82,7 @@ const INSTALL_TYPES = [
 ];
 
 const RESPONSE_KINDS = ["gif", "empty", "json", "redirect", "html"];
-const CHANNELS = ["webhook", "email", "slack", "discord", "teams"];
+const CHANNELS: readonly string[] = ALL_CHANNELS;
 const MONITOR_MODES = ["off", "latch", "window"];
 const SCOPES = ["user", "system", "all"];
 const OUTPUT_MODES = ["table", "json", "wide"];
