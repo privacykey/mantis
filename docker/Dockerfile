@@ -2,7 +2,7 @@
 FROM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd242860889ac71842eba AS base
 # Node 25's alpine image no longer bundles corepack, so install pnpm directly.
 # Pinned to match packageManager in package.json / the version CI uses.
-RUN npm install -g pnpm@11.1.1
+RUN npm install -g pnpm@11.1.3
 
 FROM base AS deps
 WORKDIR /app
