@@ -13,6 +13,7 @@ overrides:
   uuid: ^11.1.1
   form-data: ^4.0.6
   vite: ^8.0.16
+  miniflare>undici: ^7.29.0
 
 importers:
 
@@ -64,7 +65,7 @@ importers:
         specifier: ^2.0.10
         version: 2.0.10
       undici:
-        specifier: ^8.7.0
+        specifier: ^8.9.0
         version: 8.10.0
       zod:
         specifier: ^4.4.3
@@ -1987,8 +1988,8 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@7.28.0:
-    resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
+  undici@7.29.0:
+    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
   undici@8.10.0:
@@ -3246,7 +3247,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.3(@types/node@26.1.2)
-      undici: 7.28.0
+      undici: 7.29.0
       workerd: 1.20260730.1
       ws: 8.21.1
       youch: 4.1.0-beta.10
@@ -3592,7 +3593,7 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@7.28.0: {}
+  undici@7.29.0: {}
 
   undici@8.10.0: {}
 
