@@ -677,7 +677,7 @@ program
   .argument("[memo]", "human-readable label for the key")
   .option(
     "-N, --notify <spec>",
-    "notification destination as <channel>:<target>. Channels: webhook, email, slack, discord, teams. Repeatable.",
+    `notification destination as <channel>:<target>. Channels: ${ALL_CHANNELS.join(", ")}. Repeatable.`,
     collect,
     [] as string[],
   )
@@ -737,7 +737,7 @@ program
   )
   .option(
     "-N, --notify <spec>",
-    "destination for every row as <channel>:<target>. Channels: webhook, email, slack, discord, teams. Repeatable.",
+    `destination for every row as <channel>:<target>. Channels: ${ALL_CHANNELS.join(", ")}. Repeatable.`,
     collect,
     [] as string[],
   )

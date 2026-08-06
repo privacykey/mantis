@@ -64,6 +64,45 @@ describe("CLI notification channels", () => {
     }
   });
 
+  it("has no hardcoded channel list in help text", async () => {
+    // The import guard below is not enough on its own: index.ts imported
+    // ALL_CHANNELS for validation while its `--notify` help strings still spelled
+    // out "webhook, email, slack, discord, teams", so `mantis new --help` told
+    // users home_assistant was unsupported even though the parser accepted it.
+    // Any prose enumeration must match ALL_CHANNELS or the deliberately narrower
+    // EDGE_CHANNELS — interpolate the array instead of retyping it.
+    const alternation = ALL_CHANNELS.join("|");
+    const run = new RegExp(
+      `(?:${alternation})(?:,\\s*(?:${alternation})){2,}`,
+      "g",
+    );
+    const allowed = [ALL_CHANNELS, EDGE_CHANNELS].map((list) =>
+      [...list].sort().join(","),
+    );
+
+    for (const rel of [
+      "cli/src/index.ts",
+      "cli/src/commands/new.ts",
+      "cli/src/commands/bulk-create.ts",
+      "cli/src/commands/destinations.ts",
+      "cli/src/commands/completion.ts",
+      "cli/src/commands/edge.ts",
+    ]) {
+      const src = await readFile(resolve(repoRoot, rel), "utf8");
+      for (const [match] of src.matchAll(run)) {
+        const found = match
+          .split(",")
+          .map((c) => c.trim())
+          .sort()
+          .join(",");
+        expect(
+          allowed,
+          `${rel} hardcodes the channel list "${match}" — interpolate ALL_CHANNELS/EDGE_CHANNELS instead`,
+        ).toContain(found);
+      }
+    }
+  });
+
   it("is the single source used by the command surfaces", async () => {
     // Guards against a future copy-paste reintroducing a private list.
     for (const rel of [
