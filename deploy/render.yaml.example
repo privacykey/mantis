@@ -1,20 +1,40 @@
 # Render blueprint for mantis.
+#
 # Usage:
 #   1. Fork or clone this repo to a GitHub account Render can read.
 #   2. cp deploy/render.yaml.example render.yaml  (Render reads from the repo root)
-#   3. Edit "name:" fields and any region you prefer.
-#   4. Go to https://dashboard.render.com/blueprints and "New Blueprint" → point at the repo.
-#   5. Render provisions both the web service and a Postgres database; it injects DATABASE_URL.
-#   6. In the service settings, set the two required secrets that Render asks for:
-#        MANTIS_API_KEY_PEPPER  — generate with `openssl rand -base64 32`. Mantis refuses to
-#                                 boot without it. Do NOT rotate after the first key is
-#                                 minted — rotating invalidates every API key.
-#        BOOTSTRAP_API_KEY      — your initial admin API key, so you have something to log in
-#                                 with on first boot.
+#   3. Change the service `name:` to something globally unique and set
+#      PUBLIC_BASE_URL to match. The <name>.onrender.com namespace is shared by
+#      ALL Render customers — plain "mantis" is taken, and if your name is taken
+#      Render silently serves you at <name>-<suffix>.onrender.com instead.
+#   4. https://dashboard.render.com/blueprints → "New Blueprint" → point at the repo.
+#   5. Render provisions the web service AND the Postgres, and wires DATABASE_URL
+#      to the database's INTERNAL (private-network) connection string.
+#   6. AFTER the first deploy, compare the URL shown at the top of the service
+#      page with PUBLIC_BASE_URL. If they differ, fix PUBLIC_BASE_URL in this
+#      file and push — this file is the source of truth for synced env vars, so
+#      dashboard edits to it are overwritten on the next blueprint sync.
 #
-# Free-tier caveat: Render free web services spin down after 15 min of inactivity.
-# That means the FIRST mantis trigger after idle will be slow (cold start, 30–60s).
-# For real mantis use, upgrade the service to Starter ($7/mo) or self-host elsewhere.
+# First login: mantis mints an admin API key on first boot and prints it to the
+# log ONCE. Open the service's Logs tab and look for:
+#     ========================================
+#       Mantis bootstrap API key (save this!)
+#       mantis_live_...
+# Save it — it is both your dashboard login and your CLI token.
+#
+# Take the key from THAT banner, not from a bare search for "mantis_live_": a
+# structured log line just above it carries only the key's 18-character prefix,
+# so a naive grep hands you a truncated string that authenticates as 401.
+# (To choose the key yourself instead, uncomment BOOTSTRAP_API_KEY below before
+# the first deploy.)
+#
+# Cost at the plans below: ~$7/mo web service + ~$6/mo database + ~$1.50/mo
+# storage (5 GB — see diskSizeGB). Check render.com/pricing for current rates.
+#
+# Free-tier caveat: free web services spin down after ~15 min idle, so the first
+# canary trigger after a quiet period pays a 30–60s cold start. A tripwire is
+# idle by definition, which means nearly every REAL hit would pay it — and that
+# delays the alert you actually care about. Keep `starter` for real use.
 #
 # Public edge limits:
 #   Render includes DDoS protection, but app-layer URL/rate abuse is still yours.
@@ -26,28 +46,93 @@ services:
     name: mantis
     runtime: docker
     dockerfilePath: ./docker/Dockerfile
-    plan: starter   # change to "free" if you accept cold-start latency
-    region: oregon
+    plan: starter   # 512MB / 0.5 CPU. Measured peak use is ~150MB, so this fits
+                    # with headroom. `free` spins down — see the caveat above.
+    region: oregon  # MUST match the database region below, or the private
+                    # connection string won't resolve and the app can't reach
+                    # Postgres at all (ipAllowList below blocks the public path).
     healthCheckPath: /api/health   # DB-aware: fails when Postgres is unreachable
     envVars:
+      # MUST exactly match the URL Render actually serves you at (usage steps
+      # 3 and 6), and change it again if you attach a custom domain. Canary
+      # URLs and wallet passes are minted from this value — if it names an
+      # onrender.com subdomain you don't own, every canary URL you hand out
+      # points at ANOTHER Render customer's app and your triggers go to them.
       - key: PUBLIC_BASE_URL
-        value: https://mantis.onrender.com   # change to your mantis's URL after first deploy
-      # REQUIRED. The dashboard prompts for this value on first deploy. Generate with:
-      #   openssl rand -base64 32
-      # Mantis refuses to boot without it. Do NOT rotate after the first key is minted.
+        value: https://mantis.onrender.com   # <- change with the service name
+
+      # Server-side pepper for HMAC-hashing API keys at rest. Render generates a
+      # random 256-bit value once, on first create, and never rotates it on
+      # later deploys — which is exactly right, because rotating the pepper
+      # invalidates EVERY API key ever minted. You never need to see this value.
+      # If you ever recreate the service from scratch, copy the old value across
+      # first (Environment tab) or every existing key stops working.
       - key: MANTIS_API_KEY_PEPPER
-        sync: false
+        generateValue: true
+
+      # REQUIRED ON RENDER. The image sets NODE_ENV=production, and in production
+      # mantis distrusts forwarding headers unless told otherwise — so without
+      # this EVERY hit records ip = null (verified against this image), which
+      # silently guts the point of a tripwire. The per-IP login limiter also
+      # fails open with no IP to bucket on.
+      - key: TRUST_PROXY_HEADERS
+        value: "1"
+
+      # Pin IP attribution to the header Render's proxy sets. Render does not
+      # strip an inbound CF-Connecting-IP, and mantis tries that header first by
+      # default — so without this pin a client can forge its own recorded IP with
+      # one request header. If you later front this with a Cloudflare-proxied
+      # custom domain, change this to "cf-connecting-ip".
+      - key: TRUSTED_IP_HEADER
+        value: x-forwarded-for
+
       - key: AUTO_MIGRATE
         value: "1"
       - key: LOG_LEVEL
         value: info
+
+      # Internal (private-network) URL. External access is disabled entirely by
+      # ipAllowList below, so this is the only way in — which is the point.
       - key: DATABASE_URL
         fromDatabase:
           name: mantis-db
           property: connectionString
 
+      # Optional: pick your own first admin key instead of reading it from the
+      # first-boot log. Must look like mantis_live_<20+ chars>. `sync: false`
+      # makes Render prompt for it during blueprint creation.
+      # - key: BOOTSTRAP_API_KEY
+      #   sync: false
+
+      # Optional but recommended once you have real traffic: without these,
+      # hits and notifications are kept forever (the app warns on every boot),
+      # which grows the database unbounded and slows dashboard queries.
+      # - key: MANTIS_HIT_RETENTION_DAYS
+      #   value: "90"
+      # - key: MANTIS_NOTIFICATION_RETENTION_DAYS
+      #   value: "30"
+
+      # Optional: email alerts.
+      # - key: SMTP_URL
+      #   sync: false
+      # - key: SMTP_FROM
+      #   value: Mantis <mantis@yourdomain.com>
+
 databases:
   - name: mantis-db
-    plan: starter   # free tier expires after 90 days
-    postgresMajorVersion: 16
-    ipAllowList: []   # block public ingress; only Render services in the same region can connect
+    # Flexible instance type. NOTE: `starter`/`standard`/`pro` are LEGACY names
+    # and Render will not create new databases on them.
+    plan: basic-256mb
+    region: oregon              # must match the web service region above
+    postgresMajorVersion: "18"  # parity with docker-compose/CI (postgres:18);
+                                # the schema itself only needs gen_random_uuid()
+                                # (core since 13), so 17 works too if you prefer
+    # Without this, Basic-tier databases default to 15 GB (~3x the storage cost
+    # for nothing — 5 GB holds years of homelab canary hits). Must be 1 or a
+    # multiple of 5. You can grow a disk later, but never shrink it.
+    diskSizeGB: 5
+    # Empty list = no public ingress at all. Render services in the SAME REGION
+    # still connect over the private network via the internal connection string
+    # above, so the database is never exposed to the internet. This is the main
+    # security win of running the app and database on one platform.
+    ipAllowList: []
