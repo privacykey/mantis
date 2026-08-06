@@ -23,6 +23,7 @@ import {
   webhookPromptLabel,
   type SummaryRow,
 } from "../lib/wizard.js";
+import { ALL_CHANNELS } from "../lib/channels.js";
 
 export type NewOpts = GlobalOpts & {
   notify?: string[];
@@ -53,13 +54,7 @@ export type NewOpts = GlobalOpts & {
   hostname?: string;
 };
 
-const VALID_CHANNELS: NotificationChannel[] = [
-  "webhook",
-  "email",
-  "slack",
-  "discord",
-  "teams",
-];
+const VALID_CHANNELS = ALL_CHANNELS;
 
 const FILE_FORMATS = [
   "qr",

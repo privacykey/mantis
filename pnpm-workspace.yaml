@@ -32,15 +32,21 @@ allowBuilds:
 #   sharp <0.35.0    → inherited libvips heap overflows / OOB reads (GHSA-f88m-g3jw-g9cj:
 #                      CVE-2026-33327/33328/35590/35591); optional dep of next (image
 #                      optimization) which pins ^0.34.5, so forced here.
-#   miniflare>undici → the 7.x HTTP-cache/cookie/retry cluster: private-cache directive
-#     <7.29.0          crash + cross-user disclosure (GHSA-4cwx-7wf7-3272, high),
+#   undici@7 <7.29.0 → the 7.x HTTP-cache/cookie/retry cluster: private-cache directive
+#                      crash + cross-user disclosure (GHSA-4cwx-7wf7-3272, high),
 #                      Cache-Control whitespace disclosure (GHSA-jr45-8vmc-qm54), retry
 #                      interceptor response desync (GHSA-8xcm-r25x-g524), setCookie
 #                      attribute injection (GHSA-v3r7-h72x-cjcm) and blob `type` CRLF
-#                      injection (GHSA-m8rv-5g2x-5cg5). miniflare pins undici to an exact
-#                      7.28.0, so this is scoped to miniflare — the app's own direct undici
-#                      is on the 8.x line and must stay there. wrangler dev-server only.
+#                      injection (GHSA-m8rv-5g2x-5cg5). NOTE the `undici@7` key: the
+#                      app's own dependency is undici ^8, which these advisories cover
+#                      separately (fixed in 8.9.0, and the root spec floor is ^8.9.0), so
+#                      a bare `undici:` override would drag the app back onto the 7.x
+#                      line. Keying on the 7 range patches every 7.x consumer while
+#                      leaving 8.x alone — today that is miniflare's exact 7.28.0 pin
+#                      (wrangler → mantis-edge), which is dev-server only and never
+#                      ships in the server image.
 overrides:
+  undici@7: ^7.29.0
   sharp: ^0.35.3
   postcss: ^8.5.10
   esbuild: ^0.28.1
@@ -49,4 +55,3 @@ overrides:
   uuid: ^11.1.1
   form-data: ^4.0.6
   vite: ^8.0.16
-  miniflare>undici: ^7.29.0

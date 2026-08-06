@@ -33,11 +33,13 @@ import {
   inferChannelFromWebhook,
   webhookPromptLabel,
 } from "../lib/wizard.js";
+import { EDGE_CHANNELS, type EdgeChannel } from "../lib/channels.js";
 
 const RESPONSE_KINDS = ["gif", "empty", "json", "redirect", "html"] as const;
 type ResponseKind = (typeof RESPONSE_KINDS)[number];
-const CHANNELS = ["webhook", "slack", "discord", "teams"] as const;
-type Channel = (typeof CHANNELS)[number];
+// Narrower than the server's channel set on purpose — see EDGE_CHANNELS.
+const CHANNELS = EDGE_CHANNELS;
+type Channel = EdgeChannel;
 
 function normalizeWorker(url: string): string {
   return url.replace(/\/$/, "");

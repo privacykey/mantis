@@ -9,6 +9,7 @@ import type {
 } from "../lib/api.js";
 import { c, emit, ExitCode, fail, isJsonMode, isQuiet } from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
+import { ALL_CHANNELS } from "../lib/channels.js";
 
 export type BulkCreateOpts = GlobalOpts & {
   csv?: string;
@@ -26,13 +27,7 @@ export type BulkCreateOpts = GlobalOpts & {
   dryRun?: boolean;
 };
 
-const VALID_CHANNELS: NotificationChannel[] = [
-  "webhook",
-  "email",
-  "slack",
-  "discord",
-  "teams",
-];
+const VALID_CHANNELS = ALL_CHANNELS;
 
 const VALID_RESPONSE_KINDS: Key["response_kind"][] = [
   "gif",

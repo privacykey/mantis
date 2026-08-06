@@ -54,6 +54,7 @@ import {
   setQuiet,
   type OutputMode,
 } from "./lib/out.js";
+import { ALL_CHANNELS, EDGE_CHANNELS } from "./lib/channels.js";
 
 type GlobalRaw = {
   baseUrl?: string;
@@ -545,7 +546,7 @@ edge
     new Option(
       "--channel <channel>",
       "destination channel formatter — sends a payload shaped for this service",
-    ).choices(["webhook", "slack", "discord", "teams"]),
+    ).choices([...EDGE_CHANNELS]),
   )
   .addOption(
     new Option("--response-kind <kind>", "trigger response shape")
@@ -932,13 +933,9 @@ destinations
   .argument("[channel]", "destination channel")
   .argument("[target]", "URL or email")
   .addOption(
-    new Option("--channel <channel>", "destination channel").choices([
-      "webhook",
-      "email",
-      "slack",
-      "discord",
-      "teams",
-    ]),
+    new Option("--channel <channel>", "destination channel").choices(
+      ALL_CHANNELS,
+    ),
   )
   .option("--target <target>", "URL or email")
   .action(async (
