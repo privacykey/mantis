@@ -1,4 +1,14 @@
 import { generateApplePass } from "@/lib/installers/apple-wallet";
+import { generateBookmarks } from "./bookmarks";
+import { generateOvpn, generateRdp } from "./connection-profiles";
+import { generateCookies } from "./cookies";
+import {
+  generateAwsCredentials,
+  generateEnv,
+  generateKubeconfig,
+  generateNetrc,
+} from "./credential-stores";
+import { generateRtf } from "./rtf";
 import { generateDocx } from "./docx";
 import { generateEml } from "./eml";
 import { generateFolder } from "./folder";
@@ -13,15 +23,36 @@ import { generateVcf } from "./vcf";
 import { generateXlsx } from "./xlsx";
 import {
   ATTRIBUTION_FORMATS,
+  CREDENTIAL_FORMATS,
   FILE_EXT,
   FILE_MIME,
+  FIXED_BASENAME,
   isAttributionFormat,
   type DocOptions,
   type FileFormat,
 } from "./util";
 
 export type { DocOptions, FileFormat };
-export { ATTRIBUTION_FORMATS, FILE_EXT, FILE_MIME, isAttributionFormat };
+export {
+  ATTRIBUTION_FORMATS,
+  CREDENTIAL_FORMATS,
+  FILE_EXT,
+  FILE_MIME,
+  FIXED_BASENAME,
+  isAttributionFormat,
+};
+
+/**
+ * Filename to use when saving a generated artifact.
+ *
+ * Most formats take the memo as the stem — `Q4 payroll.docx` is exactly what a
+ * planted document should be called. But a cookie jar named
+ * `payroll-laptop.txt` is not a cookie jar: for those the canonical name is
+ * part of the disguise, so the memo is dropped and the real name kept.
+ */
+export function artifactFilename(format: FileFormat, stem: string): string {
+  return FIXED_BASENAME[format] ?? `${stem}.${FILE_EXT[format]}`;
+}
 
 const generators: Record<FileFormat, (opts: DocOptions) => Promise<Buffer>> = {
   docx: generateDocx,
@@ -47,6 +78,15 @@ const generators: Record<FileFormat, (opts: DocOptions) => Promise<Buffer>> = {
   eml: generateEml,
   ics: generateIcs,
   vcf: generateVcf,
+  rtf: generateRtf,
+  cookies: generateCookies,
+  bookmarks: generateBookmarks,
+  env: generateEnv,
+  "aws-credentials": generateAwsCredentials,
+  netrc: generateNetrc,
+  kubeconfig: generateKubeconfig,
+  ovpn: generateOvpn,
+  rdp: generateRdp,
 };
 
 export function generateFile(
@@ -70,4 +110,13 @@ export const ALL_FORMATS: FileFormat[] = [
   "eml",
   "ics",
   "vcf",
+  "rtf",
+  "cookies",
+  "bookmarks",
+  "env",
+  "aws-credentials",
+  "netrc",
+  "kubeconfig",
+  "ovpn",
+  "rdp",
 ];

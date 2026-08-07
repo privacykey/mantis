@@ -24,6 +24,42 @@ export function xmlEscape(s: string): string {
   );
 }
 
+/**
+ * Break the trigger URL into the parts the credential-store formats need.
+ *
+ * A cookie jar records domain and path as separate columns, a .netrc keys on
+ * the bare hostname, and an .ovpn wants host and port — none of them take a
+ * URL. Falls back rather than throwing: a malformed URL should degrade to an
+ * obviously-inert file, not 500 a download the operator is waiting on.
+ */
+export function splitUrl(url: string): {
+  host: string;
+  port: string;
+  path: string;
+  secure: boolean;
+  origin: string;
+} {
+  try {
+    const u = new URL(url);
+    const secure = u.protocol === "https:";
+    return {
+      host: u.hostname,
+      port: u.port || (secure ? "443" : "80"),
+      path: u.pathname || "/",
+      secure,
+      origin: u.origin,
+    };
+  } catch {
+    return {
+      host: "mantis.invalid",
+      port: "443",
+      path: "/",
+      secure: true,
+      origin: "https://mantis.invalid",
+    };
+  }
+}
+
 export type DocOptions = {
   title: string;
   url: string;
@@ -34,10 +70,31 @@ export type DocOptions = {
   keyId?: string;
 };
 
+/**
+ * Body used when the operator supplies none.
+ *
+ * This deliberately reads as a real internal document. The previous default
+ * said "Replace this placeholder text with the actual content you want" —
+ * accurate as an instruction, fatal as a canary: a file planted straight from
+ * the dashboard announced itself to the first person who opened it. Anyone who
+ * opens a canary is exactly the person who must not realise what it is.
+ */
 export const DEFAULT_BODY = [
-  "CONFIDENTIAL DRAFT — do not distribute.",
+  "CONFIDENTIAL — INTERNAL DISTRIBUTION ONLY",
   "",
-  "This document is an internal working draft. Replace this placeholder text with the actual content you want to appear in the file.",
+  "Prepared for the leadership working group. Circulation outside the group requires sign-off from Legal and People Ops.",
+  "",
+  "1. Summary",
+  "",
+  "Headcount and compensation data for the current review cycle has been consolidated from the regional submissions. Two regions remain provisional pending reconciliation of contractor spend.",
+  "",
+  "2. Status",
+  "",
+  "Figures in this draft are pre-decisional and should not be quoted. The reconciled set replaces this document once Finance signs off.",
+  "",
+  "3. Next steps",
+  "",
+  "Comments to the working group by end of week. Final version circulates ahead of the quarterly review.",
 ];
 
 export type FileFormat =
@@ -53,7 +110,56 @@ export type FileFormat =
   | "md"
   | "eml"
   | "ics"
-  | "vcf";
+  | "vcf"
+  | "rtf"
+  // Credential and config stores. These are where an intruder who already has
+  // a shell goes looking, and where forensic and infostealer tooling greps for
+  // URLs and secrets — so a bait URL sitting in one is found by exactly the
+  // person you want to catch. See CREDENTIAL_FORMATS for how each fires.
+  | "cookies"
+  | "bookmarks"
+  | "env"
+  | "aws-credentials"
+  | "netrc"
+  | "kubeconfig"
+  | "ovpn"
+  | "rdp";
+
+/**
+ * Formats whose bait URL fires only when a human (or a tool they point at it)
+ * actually *uses* the URL — as opposed to the document formats, which beacon
+ * the moment the file is rendered.
+ *
+ * Worth being honest about the difference: a .docx fires on open, a .netrc
+ * fires when something authenticates to the host in it. Both are useful; only
+ * one is automatic, and the dashboard says so per preset.
+ */
+export const CREDENTIAL_FORMATS = [
+  "cookies",
+  "bookmarks",
+  "env",
+  "aws-credentials",
+  "netrc",
+  "kubeconfig",
+  "ovpn",
+  "rdp",
+] as const satisfies readonly FileFormat[];
+
+/**
+ * Formats whose canonical filename is part of the disguise.
+ *
+ * A cookie jar named `payroll-laptop.txt` is not a cookie jar. For these the
+ * memo names the *containing folder* in a bulk zip and the file itself keeps
+ * the name the real thing has, so it survives being dropped in place.
+ */
+export const FIXED_BASENAME: Partial<Record<FileFormat, string>> = {
+  cookies: "cookies.txt",
+  bookmarks: "bookmarks.html",
+  env: ".env",
+  "aws-credentials": "credentials",
+  netrc: ".netrc",
+  kubeconfig: "config",
+};
 
 // Single-file document formats that embed the key's beacon and are meant to be
 // planted one at a time. The first of these a key is downloaded as is recorded
@@ -72,6 +178,15 @@ export const ATTRIBUTION_FORMATS = [
   "eml",
   "ics",
   "vcf",
+  "rtf",
+  "cookies",
+  "bookmarks",
+  "env",
+  "aws-credentials",
+  "netrc",
+  "kubeconfig",
+  "ovpn",
+  "rdp",
 ] as const satisfies readonly FileFormat[];
 
 export function isAttributionFormat(v: string): v is FileFormat {
@@ -92,6 +207,17 @@ export const FILE_MIME: Record<FileFormat, string> = {
   eml: "message/rfc822",
   ics: "text/calendar; charset=utf-8",
   vcf: "text/vcard; charset=utf-8",
+  rtf: "application/rtf",
+  // Served as plain text so a browser shows them rather than trying to run or
+  // render them — these are meant to be inspected before being planted.
+  cookies: "text/plain; charset=utf-8",
+  bookmarks: "text/html; charset=utf-8",
+  env: "text/plain; charset=utf-8",
+  "aws-credentials": "text/plain; charset=utf-8",
+  netrc: "text/plain; charset=utf-8",
+  kubeconfig: "text/yaml; charset=utf-8",
+  ovpn: "text/plain; charset=utf-8",
+  rdp: "text/plain; charset=utf-8",
 };
 
 export const FILE_EXT: Record<FileFormat, string> = {
@@ -108,4 +234,15 @@ export const FILE_EXT: Record<FileFormat, string> = {
   eml: "eml",
   ics: "ics",
   vcf: "vcf",
+  rtf: "rtf",
+  // Extensions for the formats whose real name has none (or is dotfile-only);
+  // FIXED_BASENAME overrides these wherever the canonical name matters.
+  cookies: "txt",
+  bookmarks: "html",
+  env: "env",
+  "aws-credentials": "ini",
+  netrc: "netrc",
+  kubeconfig: "yaml",
+  ovpn: "ovpn",
+  rdp: "rdp",
 };

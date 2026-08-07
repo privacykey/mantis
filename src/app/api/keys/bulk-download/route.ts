@@ -7,6 +7,7 @@ import { requireApiKeyOrSession } from "@/lib/auth";
 import {
   ALL_FORMATS,
   FILE_EXT,
+  FIXED_BASENAME,
   generateFile,
   type FileFormat,
 } from "@/lib/docs";
@@ -113,7 +114,11 @@ export async function POST(req: NextRequest) {
         publicId: key.publicId,
         keyId: key.id,
       });
-      zip.file(`${stem}.${FILE_EXT[fmt]}`, buf);
+      // Formats with a canonical filename keep it and get a folder per key —
+      // `chrome-cookies-laptop/cookies.txt` rather than a jar named after the
+      // memo, which is not a jar anyone would believe.
+      const fixed = FIXED_BASENAME[fmt];
+      zip.file(fixed ? `${stem}/${fixed}` : `${stem}.${FILE_EXT[fmt]}`, buf);
     } catch (err) {
       // One bad artifact shouldn't sink the batch — record it in the zip so
       // the operator knows which key needs attention.
