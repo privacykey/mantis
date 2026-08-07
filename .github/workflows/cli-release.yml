@@ -169,6 +169,11 @@ jobs:
       - name: Install CLI dependencies (host-native bindings)
         run: pnpm install --frozen-lockfile
 
+      # The CLI imports @mantis/core, whose exports map points at dist —
+      # compile it before bun bundles the workspace dep into the binary.
+      - name: Build @mantis/core
+        run: pnpm --filter @mantis/core run build
+
       - name: Compile binary for ${{ matrix.target }}
         working-directory: cli
         shell: bash

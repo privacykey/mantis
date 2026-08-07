@@ -1,15 +1,12 @@
-// Installer-snippet templates for stateless mantis-edge URLs.
+// Installer-snippet templates: install type → deployable snippet + human
+// install/uninstall steps.
 //
-// Ported from `src/lib/installers/index.ts` (the stateful server's installer
-// module). The two stay structurally parallel: every builder function takes
-// the same `InstallerInput` shape and produces the same `Installer` shape.
-// Keep this file in sync with the server module when adding a new type or
-// changing snippet content — divergence would surprise anyone moving between
-// stateful keys and edge URLs.
-//
-// Edge differs in only one input: there's no server-side `keyId` (UUID).
-// Callers derive a short id from the encrypted URL itself (see
-// `deriveKeyIdFromUrl` in `commands/edge.ts`).
+// Shared by the Next server (key install pages, device bundles) and the CLI
+// (stateless edge URLs), which is why this module is framework-free and
+// import-free: everything below is pure string templating. The CLI's edge
+// path has no server-side keyId (UUID) — callers there derive a short id from
+// the encrypted URL itself (see `deriveKeyIdFromUrl` in the CLI's
+// `commands/edge.ts`) and pass it through the same `InstallerInput`.
 
 export type InstallType =
   | "shell"
@@ -957,98 +954,6 @@ automation:
   };
 }
 
-function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer {
-  const short = shortId(keyId);
-  const webhookId = `mantis-${short}`;
-  const content = `# Mantis Home Assistant receiver — ${memo}
-#
-# This automation listens for Mantis hits delivered via the
-# home_assistant notification channel and runs your chosen action —
-# flip a switch, run a script, send a phone notification, etc.
-#
-# Setup:
-#   1. Pick a unique webhook_id below (treat it like a secret; it is the
-#      only credential between Mantis and HA).
-#   2. Paste this YAML into automations.yaml or the HA YAML editor and
-#      reload automations.
-#   3. Register the destination in Mantis:
-#        mantis dest add ${short} home_assistant \\
-#          https://<your-ha-host>/api/webhook/${webhookId}
-#      Mantis fires an activation ping immediately on create, so you
-#      should see this automation run once with type "mantis.activation".
-#
-# Tailscale note: if Mantis reaches HA over the tailnet (100.64.0.0/10
-# CGNAT range) the SSRF guard refuses the private address and the activation
-# ping fails with "resolves to a private address".
-# WARNING: ALLOW_PRIVATE_WEBHOOKS=1 lifts that block, but it is a GLOBAL switch
-# — it disables SSRF protection for EVERY destination and channel instance-wide,
-# not just this HA webhook. Prefer restricting egress to the HA host at the
-# network layer over enabling it for the whole instance.
-
-automation:
-  - alias: "Mantis hit — ${memo}"
-    mode: queued        # serialize rapid hits
-    triggers:
-      - trigger: webhook
-        webhook_id: "${webhookId}"
-        allowed_methods:
-          - POST
-        local_only: false  # set true to reject WAN-sourced requests
-    actions:
-      # Activation ping — quietly ignore the first-time test payload.
-      - if:
-          - condition: template
-            value_template: "{{ trigger.json.type == 'mantis.activation' }}"
-        then:
-          - stop: "Mantis activation ping"
-
-      # Example A: cut internet on a VLAN via the OPNsense integration.
-      - action: switch.turn_off
-        target:
-          entity_id: switch.opnsense_vlan_iot_internet
-
-      # Example B: phone notification with full hit context.
-      - action: notify.mobile_app_iphone
-        data:
-          title: "Mantis: {{ trigger.json.memo }}"
-          message: >-
-            Hit from {{ trigger.json.ip }} at {{ trigger.json.occurred_at }}
-            ({{ trigger.json.host_context.user | default('') }}@{{ trigger.json.host_context.host | default('') }})
-            SSH: {{ trigger.json.host_context.ssh_client_ip | default('-') }}
-
-      # Example C: logbook entry for audit.
-      - action: logbook.log
-        data:
-          name: Mantis
-          message: >-
-            Triggered {{ trigger.json.memo }} from
-            {{ trigger.json.host_context.ssh_client_ip | default(trigger.json.ip) }}
-`;
-  return {
-    type: "homeassistant-receiver",
-    name: INSTALLER_META["homeassistant-receiver"].name,
-    description: INSTALLER_META["homeassistant-receiver"].description,
-    os: "iot",
-    filename: "mantis-homeassistant-receiver.yaml",
-    mime: "text/yaml; charset=utf-8",
-    content,
-    install: [
-      "# 1. Paste this YAML into automations.yaml (or the HA UI YAML editor).",
-      "# 2. Reload automations or restart Home Assistant.",
-      `# 3. Register the Mantis destination:`,
-      `#      mantis dest add ${short} home_assistant https://<your-ha-host>/api/webhook/${webhookId}`,
-      "# 4. The activation ping should fire this automation once on create.",
-      "# 5. Trigger the mantis URL — the hit payload runs your action chain.",
-    ],
-    uninstall: [
-      "# Remove the automation entry above (and unregister the Mantis destination).",
-      "# Reload automations or restart Home Assistant.",
-    ],
-    notes:
-      "If Mantis reaches HA over Tailscale (100.64.0.0/10) or any RFC1918 network, the SSRF guard blocks the private address. ALLOW_PRIVATE_WEBHOOKS=1 lifts it, but it is GLOBAL — it disables SSRF protection for every destination and channel instance-wide, so prefer restricting egress to the HA host at the network layer. The activation ping surfaces unreachable-URL errors immediately via `mantis dest add`.",
-  };
-}
-
 function buildScrypted({ url, memo }: InstallerInput): Installer {
   const content = `/**
  * Mantis Scrypted bridge — ${memo}
@@ -1153,6 +1058,98 @@ for (const item of WATCH) {
 function appendSrc(url: string, src: string): string {
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}src=${encodeURIComponent(src)}`;
+}
+
+function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer {
+  const short = shortId(keyId);
+  const webhookId = `mantis-${short}`;
+  const content = `# Mantis Home Assistant receiver — ${memo}
+#
+# This automation listens for Mantis hits delivered via the
+# home_assistant notification channel and runs your chosen action —
+# flip a switch, run a script, send a phone notification, etc.
+#
+# Setup:
+#   1. Pick a unique webhook_id below (treat it like a secret; it is the
+#      only credential between Mantis and HA).
+#   2. Paste this YAML into automations.yaml or the HA YAML editor and
+#      reload automations.
+#   3. Register the destination in Mantis:
+#        mantis dest add ${short} home_assistant \\
+#          https://<your-ha-host>/api/webhook/${webhookId}
+#      Mantis fires an activation ping immediately on create, so you
+#      should see this automation run once with type "mantis.activation".
+#
+# Tailscale note: if Mantis reaches HA over the tailnet (100.64.0.0/10
+# CGNAT range) the SSRF guard refuses the private address and the activation
+# ping fails with "resolves to a private address".
+# WARNING: ALLOW_PRIVATE_WEBHOOKS=1 lifts that block, but it is a GLOBAL switch
+# — it disables SSRF protection for EVERY destination and channel instance-wide,
+# not just this HA webhook. Prefer restricting egress to the HA host at the
+# network layer over enabling it for the whole instance.
+
+automation:
+  - alias: "Mantis hit — ${memo}"
+    mode: queued        # serialize rapid hits
+    triggers:
+      - trigger: webhook
+        webhook_id: "${webhookId}"
+        allowed_methods:
+          - POST
+        local_only: false  # set true to reject WAN-sourced requests
+    actions:
+      # Activation ping — quietly ignore the first-time test payload.
+      - if:
+          - condition: template
+            value_template: "{{ trigger.json.type == 'mantis.activation' }}"
+        then:
+          - stop: "Mantis activation ping"
+
+      # Example A: cut internet on a VLAN via the OPNsense integration.
+      - action: switch.turn_off
+        target:
+          entity_id: switch.opnsense_vlan_iot_internet
+
+      # Example B: phone notification with full hit context.
+      - action: notify.mobile_app_iphone
+        data:
+          title: "Mantis: {{ trigger.json.memo }}"
+          message: >-
+            Hit from {{ trigger.json.ip }} at {{ trigger.json.occurred_at }}
+            ({{ trigger.json.host_context.user | default('') }}@{{ trigger.json.host_context.host | default('') }})
+            SSH: {{ trigger.json.host_context.ssh_client_ip | default('-') }}
+
+      # Example C: logbook entry for audit.
+      - action: logbook.log
+        data:
+          name: Mantis
+          message: >-
+            Triggered {{ trigger.json.memo }} from
+            {{ trigger.json.host_context.ssh_client_ip | default(trigger.json.ip) }}
+`;
+  return {
+    type: "homeassistant-receiver",
+    name: INSTALLER_META["homeassistant-receiver"].name,
+    description: INSTALLER_META["homeassistant-receiver"].description,
+    os: "iot",
+    filename: "mantis-homeassistant-receiver.yaml",
+    mime: "text/yaml; charset=utf-8",
+    content,
+    install: [
+      "# 1. Paste this YAML into automations.yaml (or the HA UI YAML editor).",
+      "# 2. Reload automations or restart Home Assistant.",
+      `# 3. Register the Mantis destination:`,
+      `#      mantis dest add ${short} home_assistant https://<your-ha-host>/api/webhook/${webhookId}`,
+      "# 4. The activation ping should fire this automation once on create.",
+      "# 5. Trigger the mantis URL — the hit payload runs your action chain.",
+    ],
+    uninstall: [
+      "# Remove the automation entry above (and unregister the Mantis destination).",
+      "# Reload automations or restart Home Assistant.",
+    ],
+    notes:
+      "If Mantis reaches HA over Tailscale (100.64.0.0/10) or any RFC1918 network, the SSRF guard blocks the private address. ALLOW_PRIVATE_WEBHOOKS=1 lifts it, but it is GLOBAL — it disables SSRF protection for every destination and channel instance-wide, so prefer restricting egress to the HA host at the network layer. The activation ping surfaces unreachable-URL errors immediately via `mantis dest add`.",
+  };
 }
 
 const BUILDERS: Record<InstallType, (input: InstallerInput) => Installer> = {

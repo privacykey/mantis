@@ -1,0 +1,43 @@
+{
+  "name": "@mantis/core",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free canary logic shared by the mantis server and CLI: installer snippets, device profiles, device bundles.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./installers": {
+      "types": "./dist/installers.d.ts",
+      "default": "./dist/installers.js"
+    },
+    "./device-profiles": {
+      "types": "./dist/device-profiles.d.ts",
+      "default": "./dist/device-profiles.js"
+    },
+    "./device-bundle": {
+      "types": "./dist/device-bundle.d.ts",
+      "default": "./dist/device-bundle.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=25.8.0"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  }
+}

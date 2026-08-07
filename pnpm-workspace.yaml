@@ -4,6 +4,7 @@ packages:
   - "mantis-edge"
   - "iot-helper"
   - "bench/edge"
+  - "packages/*"
 
 allowBuilds:
   esbuild: true

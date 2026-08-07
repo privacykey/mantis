@@ -15,13 +15,19 @@ COPY cli/package.json ./cli/
 COPY mantis-edge/package.json ./mantis-edge/
 COPY iot-helper/package.json ./iot-helper/
 COPY bench/edge/package.json ./bench/edge/
-# Only the root app's deps — skips the CLI's native keyring binding and the
-# edge / iot / bench workspaces, which aren't part of the server image.
-RUN pnpm install --frozen-lockfile --filter mantis
+COPY packages/core/package.json ./packages/core/
+# The root app's deps plus its workspace dependencies (`...` pulls in
+# @mantis/core, which `pnpm run build` compiles before `next build`) — skips
+# the CLI's native keyring binding and the edge / iot / bench workspaces,
+# which aren't part of the server image.
+RUN pnpm install --frozen-lockfile --filter mantis...
 
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+# pnpm gives each workspace package its own node_modules of symlinks — core's
+# holds its build toolchain (tsc) and jszip, so it must survive into this stage.
+COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # Build-time placeholders. These are NOT carried into the runner stage — the

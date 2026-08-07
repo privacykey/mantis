@@ -9,12 +9,13 @@
     "node": ">=25.8.0"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "pnpm run build:core && next dev",
+    "build": "pnpm run build:core && next build",
+    "build:core": "pnpm --filter @mantis/core run build",
     "start": "next start",
     "setup": "bash scripts/setup.sh",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
+    "check": "pnpm run build:core && pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
     "build:cli-bin": "bash cli/scripts/build-bin.sh",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -33,6 +34,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@mantis/core": "workspace:*",
     "@tailwindcss/postcss": "^4.3.2",
     "drizzle-orm": "^0.45.2",
     "jszip": "^3.10.1",

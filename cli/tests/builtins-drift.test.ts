@@ -2,20 +2,18 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  BUILTIN_FORMAT_IDS,
-  BUILTIN_INSTALLER_TYPES,
-} from "../src/lib/plugins/builtins.js";
+import { BUILTIN_FORMAT_IDS } from "../src/lib/plugins/builtins.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 
-// These two sets are the ONLY thing stopping a plugin from claiming a built-in
-// id and shadowing it (see lib/plugins/install.ts). They're hand-copied from
-// the server, and both had drifted: the installer set was missing
-// `homeassistant-receiver`, the format set was missing every credential-store
-// format. A stale entry here is a silent hole in the conflict check, so read
-// the server's own lists and compare.
+// BUILTIN_FORMAT_IDS is half of what stops a plugin from claiming a built-in
+// id and shadowing it (see lib/plugins/install.ts). The installer-type half is
+// derived from @mantis/core and cannot drift; the format list is still
+// hand-copied from the server's docs module (server-only — it pulls in
+// passkit-generator, pdf-lib, …) and HAD drifted, missing every
+// credential-store format. A stale entry is a silent hole in the conflict
+// check, so read the server's own list and compare.
 
 async function serverArray(
   relPath: string,
@@ -28,15 +26,6 @@ async function serverArray(
 }
 
 describe("built-in id sets track the server", () => {
-  it("covers every installer type the server ships", async () => {
-    const server = await serverArray(
-      "src/lib/installers/index.ts",
-      /export const ALL_INSTALL_TYPES: InstallType\[\] = \[([^\]]*)\]/,
-    );
-    expect(server.length).toBeGreaterThan(10);
-    expect([...BUILTIN_INSTALLER_TYPES].sort()).toEqual([...server].sort());
-  });
-
   it("covers every download format the server ships", async () => {
     const server = await serverArray(
       "src/lib/docs/index.ts",
