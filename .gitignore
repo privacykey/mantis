@@ -13,3 +13,6 @@ coverage/
 .vercel
 next-env.d.ts
 *.tsbuildinfo
+# Scratch files bun leaves in the CWD when `bun build --compile` is
+# interrupted or fails partway (cli/scripts/build-bin.sh).
+*.bun-build
