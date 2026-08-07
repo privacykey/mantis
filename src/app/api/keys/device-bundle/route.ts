@@ -8,10 +8,10 @@ import {
   buildDeviceBundleFiles,
   bundleRootName,
   type BundleVector,
-} from "@/lib/device-bundle";
-import { getVector, isDeviceOs } from "@/lib/device-profiles";
+} from "@mantis/core/device-bundle";
+import { getVector, isDeviceOs } from "@mantis/core/device-profiles";
 import { env, keyUrl } from "@/lib/env";
-import { buildInstaller } from "@/lib/installers";
+import { buildInstaller } from "@mantis/core/installers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

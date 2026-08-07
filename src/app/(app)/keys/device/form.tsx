@@ -8,7 +8,7 @@ import {
   defaultVectorSlugs,
   getDeviceProfile,
   type DeviceOs,
-} from "@/lib/device-profiles";
+} from "@mantis/core/device-profiles";
 import { deviceCreateAction, type DeviceState } from "./actions";
 
 const PLACEHOLDER: Record<DeviceOs, string> = {

@@ -4,7 +4,7 @@ import {
   INSTALLER_META,
   buildInstaller,
   isInstallType,
-} from "@/lib/installers";
+} from "@mantis/core/installers";
 
 describe("homeassistant-receiver installer", () => {
   const input = {

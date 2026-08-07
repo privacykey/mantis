@@ -1,11 +1,19 @@
-import type { ResponseKind } from "@/db/schema";
-import type { InstallType } from "@/lib/installers";
+import type { InstallType } from "./installers.js";
+
+/**
+ * Mirrors the `response_kind` Postgres enum (src/db/schema.ts in the server)
+ * so this package stays database-free. Safe to mirror by hand: the server
+ * assigns these values into columns typed by the real enum, so a value added
+ * here that the database doesn't know fails the server typecheck. Device
+ * profiles only ever use "empty" today.
+ */
+export type ResponseKind = "gif" | "empty" | "json" | "redirect" | "html";
 
 /**
  * Device profiles: "I am setting up a new machine" → the full set of host
  * alarms that machine should carry, one key per vector.
  *
- * This is the transpose of `@/lib/presets`. A preset answers "what am I
+ * This is the transpose of the server's `src/lib/presets`. A preset answers "what am I
  * planting?" and bulk mode mints N keys of ONE preset (one document per
  * location). A device profile answers "what should watch this host?" and mints
  * ONE key per vector for a single machine. Both end in a zip; the preset zip
@@ -24,7 +32,7 @@ import type { InstallType } from "@/lib/installers";
 export type DeviceOs = "macos" | "linux" | "windows";
 
 export type DeviceVector = {
-  /** The installer this vector deploys — see `@/lib/installers`. */
+  /** The installer this vector deploys — see `./installers`. */
   installType: InstallType;
   /** Stable slug: used in the memo, the bundle directory, and the externalId. */
   slug: string;

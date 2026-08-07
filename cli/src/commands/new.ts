@@ -7,7 +7,7 @@ import {
   ALL_INSTALL_TYPES,
   isInstallType,
   type InstallType,
-} from "../lib/installers.js";
+} from "@mantis/core/installers";
 import { c, emit, fail, isJsonMode } from "../lib/out.js";
 import { canPrompt, createPrompter, type Prompter } from "../lib/prompt.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";

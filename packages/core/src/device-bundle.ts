@@ -1,7 +1,7 @@
 import JSZip from "jszip";
-import type { DeviceOs, DeviceVector } from "@/lib/device-profiles";
-import { normalizeDeviceName } from "@/lib/device-profiles";
-import type { Installer } from "@/lib/installers";
+import type { DeviceOs, DeviceVector } from "./device-profiles.js";
+import { normalizeDeviceName } from "./device-profiles.js";
+import type { Installer } from "./installers.js";
 
 /**
  * Builds the zip a device mint hands back: every vector's installer file, plus

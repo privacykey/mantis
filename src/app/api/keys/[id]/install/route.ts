@@ -5,7 +5,7 @@ import {
   ALL_INSTALL_TYPES,
   buildInstaller,
   isInstallType,
-} from "@/lib/installers";
+} from "@mantis/core/installers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

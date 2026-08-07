@@ -1,18 +1,16 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { requireApiKeyOrSession } from "@/lib/auth";
-import { DEVICE_PROFILES, defaultVectorSlugs } from "@/lib/device-profiles";
+import { DEVICE_PROFILES, defaultVectorSlugs } from "@mantis/core/device-profiles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * The device-profile catalog, served so the CLI doesn't carry its own copy.
- *
- * `cli/src/lib/installers.ts` is a hand-maintained port of the server's
- * installer module and has to be kept in sync by hand; that pattern is worth
- * not repeating. Fetching the catalog means `mantis device` automatically picks
- * up a new vector the moment the server has one, and can't disagree with the
- * dashboard about what a profile contains.
+ * The device-profile catalog, served over the API even though the CLI could
+ * read @mantis/core directly: fetching means an installed `mantis device`
+ * binary automatically picks up a new vector the moment the *server* has one,
+ * and can't disagree with the dashboard about what a profile contains even
+ * when the binary predates it.
  */
 export async function GET(req: NextRequest) {
   const auth = await requireApiKeyOrSession(req);

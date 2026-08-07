@@ -25,7 +25,7 @@ import {
   isInstallType,
   type InstallType,
   type Installer,
-} from "../lib/installers.js";
+} from "@mantis/core/installers";
 import { c, emit, ExitCode, fail, isJsonMode } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 import {
