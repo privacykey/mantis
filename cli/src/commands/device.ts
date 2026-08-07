@@ -1,14 +1,16 @@
-import { spawn } from "node:child_process";
-import { hostname, tmpdir } from "node:os";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { hostname } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import type {
   DeviceProfileMeta,
   DeviceVectorMeta,
   MantisClient,
 } from "../lib/api.js";
-import { c, emit, ExitCode, fail, isJsonMode, isQuiet } from "../lib/out.js";
-import { canPrompt, createPrompter } from "../lib/prompt.js";
+import {
+  applyBundleLocally,
+  assertBundleInstallableHere,
+} from "../lib/device-install.js";
+import { c, emit, ExitCode, fail } from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type DeviceNewOpts = GlobalOpts & {
@@ -250,11 +252,9 @@ function externalId(device: string, os: string, slug: string): string {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Materialize the bundle into a temp directory and run its bootstrap.
- *
- * Deliberately NOT a reimplementation of the install recipes: the script is the
- * one the zip ships and the one the tests cover. The CLI's job is to lay the
- * files out and hand over.
+ * Fetch the bundle's file map from the server and hand it to the shared
+ * local-install path (see lib/device-install.ts, also used by
+ * `mantis edge device --install`).
  */
 async function runLocalInstall(
   client: MantisClient,
@@ -265,18 +265,7 @@ async function runLocalInstall(
     assumeYes: boolean;
   },
 ): Promise<boolean> {
-  if (input.os === "windows" && process.platform !== "win32") {
-    fail(
-      "--install can only apply a windows profile on Windows; use --bundle and copy it across",
-      ExitCode.Usage,
-    );
-  }
-  if (input.os !== "windows" && process.platform === "win32") {
-    fail(
-      `--install can only apply a ${input.os} profile on ${input.os}; use --bundle and copy it across`,
-      ExitCode.Usage,
-    );
-  }
+  assertBundleInstallableHere(input.os);
 
   const bundle = await client.deviceBundleFiles({
     device: input.device,
@@ -284,73 +273,5 @@ async function runLocalInstall(
     vectors: input.vectors,
   });
 
-  const dir = await mkdtemp(join(tmpdir(), "mantis-device-"));
-  for (const [rel, content] of Object.entries(bundle.files)) {
-    const dest = join(dir, rel);
-    // Paths come from our own server, but they still end up in join() — refuse
-    // anything that would land outside the temp directory.
-    if (!dest.startsWith(dir)) {
-      fail(`refusing to write outside the staging directory: ${rel}`);
-    }
-    await mkdir(dirname(dest), { recursive: true });
-    await writeFile(dest, content);
-  }
-  const script = join(dir, bundle.installScript);
-  await chmod(script, 0o755).catch(() => {});
-
-  if (!isQuiet() && !isJsonMode()) {
-    process.stderr.write(
-      `\n${c.bold("About to change this machine.")}\n` +
-        `Staged at ${c.cyan(dir)} — read ${c.cyan(bundle.installScript)} before continuing.\n`,
-    );
-  }
-
-  if (!input.assumeYes) {
-    if (!canPrompt()) {
-      fail(
-        "--install needs a TTY to confirm. Pass --yes to run unattended, or use --bundle.",
-        ExitCode.Usage,
-      );
-    }
-    const prompter = createPrompter();
-    try {
-      const answer = await prompter.ask(
-        `Run ${bundle.installScript} now? [y/N] `,
-      );
-      if (!/^y(es)?$/i.test(answer)) {
-        process.stderr.write(
-          `aborted. The bundle is still at ${dir} if you want to run it by hand.\n`,
-        );
-        return false;
-      }
-    } finally {
-      prompter.close();
-    }
-  }
-
-  // The script does its own per-vector confirmation; we've already taken one
-  // here, so don't ask twice.
-  const code = await run(script, dir);
-  if (code !== 0) {
-    fail(
-      `installer exited with code ${code}. Files are at ${dir} for inspection.`,
-      ExitCode.Generic,
-    );
-  }
-  return true;
-}
-
-function run(script: string, cwd: string): Promise<number> {
-  const [cmd, args] = script.endsWith(".ps1")
-    ? ["powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]]
-    : ["/bin/sh", [script]];
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(cmd as string, args as string[], {
-      cwd,
-      stdio: "inherit",
-      env: { ...process.env, MANTIS_ASSUME_YES: "1" },
-    });
-    child.on("error", rejectPromise);
-    child.on("close", (code) => resolvePromise(code ?? 1));
-  });
+  return applyBundleLocally(bundle, { assumeYes: input.assumeYes });
 }

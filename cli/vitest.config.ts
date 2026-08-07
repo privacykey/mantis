@@ -21,6 +21,10 @@ export default defineConfig({
         here,
         "../packages/core/src/device-profiles.ts",
       ),
+      "@mantis/core/device-bundle-files": resolve(
+        here,
+        "../packages/core/src/device-bundle-files.ts",
+      ),
       "@mantis/core/device-bundle": resolve(
         here,
         "../packages/core/src/device-bundle.ts",

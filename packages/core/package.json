@@ -21,6 +21,10 @@
     "./device-bundle": {
       "types": "./dist/device-bundle.d.ts",
       "default": "./dist/device-bundle.js"
+    },
+    "./device-bundle-files": {
+      "types": "./dist/device-bundle-files.d.ts",
+      "default": "./dist/device-bundle-files.js"
     }
   },
   "files": [

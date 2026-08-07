@@ -26,6 +26,7 @@ import {
   mintCmd as edgeMintCmd,
   setKeyCmd as edgeSetKeyCmd,
 } from "./commands/edge.js";
+import { edgeDeviceCmd } from "./commands/edge-device.js";
 import { hitsCmd } from "./commands/hits.js";
 import { installCmd } from "./commands/install.js";
 import { listCmd } from "./commands/list.js";
@@ -632,6 +633,75 @@ edge
     ) => {
       const globals = cmd.parent!.parent!.opts<GlobalRaw>();
       await edgeMintCmd({
+        ...opts,
+        key: opts.edgeKey,
+        profile: globals.profile,
+      });
+    },
+  );
+
+edge
+  .command("device")
+  .description(
+    "mint one stateless edge URL per host alarm for a machine and write an install bundle DIRECTORY (no server, no database)",
+  )
+  .addOption(
+    new Option(
+      "-o, --os <os>",
+      "target OS; 'auto' uses this machine's, which is only safe when you are on it",
+    ).choices(["macos", "linux", "windows", "auto"]),
+  )
+  .option(
+    "-n, --name <name>",
+    "machine these alarms are for; appears in every memo. Defaults to this host's name only with --install",
+  )
+  .option(
+    "--vectors <list>",
+    "comma-separated alarm slugs (see `mantis device profiles`); defaults to the profile's recommended set",
+  )
+  .option("--all", "every alarm in the profile, including ones needing extra setup")
+  .option(
+    "--bundle <dir>",
+    "write the install bundle to this DIRECTORY (must not already have contents)",
+  )
+  .option("--install", "apply the alarms to THIS machine now (asks first)")
+  .option("-y, --yes", "skip the --install confirmation")
+  .option("--dry-run", "show what would be minted, and mint nothing")
+  .option(
+    "--worker <url>",
+    "worker base URL (https://…); falls back to current profile's edge worker",
+  )
+  .option(
+    "--webhook <url>",
+    "webhook URL the worker POSTs on hit — every minted URL embeds it",
+  )
+  .addOption(
+    new Option(
+      "--channel <channel>",
+      "destination channel formatter — sends a payload shaped for this service",
+    ).choices([...EDGE_CHANNELS]),
+  )
+  .option("--edge-key <base64url>", "override stored AES key for this mint")
+  .action(
+    async (
+      opts: {
+        os?: string;
+        name?: string;
+        vectors?: string;
+        all?: boolean;
+        bundle?: string;
+        install?: boolean;
+        yes?: boolean;
+        dryRun?: boolean;
+        worker?: string;
+        webhook?: string;
+        channel?: string;
+        edgeKey?: string;
+      },
+      cmd: Command,
+    ) => {
+      const globals = cmd.parent!.parent!.opts<GlobalRaw>();
+      await edgeDeviceCmd({
         ...opts,
         key: opts.edgeKey,
         profile: globals.profile,
