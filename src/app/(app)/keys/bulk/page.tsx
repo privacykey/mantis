@@ -31,6 +31,18 @@ export default async function BulkKeysPage() {
         per-location key tells you <em>where</em>.
       </p>
 
+      <p className="text-sm text-neutral-500 mb-6 leading-relaxed">
+        Setting up a machine rather than planting files?{" "}
+        <Link
+          href="/keys/device"
+          className="text-blue-400 no-underline hover:underline"
+        >
+          new machine
+        </Link>{" "}
+        mints the host alarms — login, sudo, wake, boot, network — and hands
+        back a bundle that installs them.
+      </p>
+
       <BulkForm hasGlobalDestinations={globals.length > 0} />
     </div>
   );

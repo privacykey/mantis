@@ -18,6 +18,15 @@ export type DownloadOpts = GlobalOpts & {
   eml?: string;
   ics?: string;
   vcf?: string;
+  rtf?: string;
+  cookies?: string;
+  bookmarks?: string;
+  env?: string;
+  awsCredentials?: string;
+  netrc?: string;
+  kubeconfig?: string;
+  ovpn?: string;
+  rdp?: string;
 };
 
 type FileFmt =
@@ -33,7 +42,16 @@ type FileFmt =
   | "md"
   | "eml"
   | "ics"
-  | "vcf";
+  | "vcf"
+  | "rtf"
+  | "cookies"
+  | "bookmarks"
+  | "env"
+  | "aws-credentials"
+  | "netrc"
+  | "kubeconfig"
+  | "ovpn"
+  | "rdp";
 
 const FLAG_TO_FMT: Record<string, FileFmt> = {
   docx: "docx",
@@ -49,6 +67,15 @@ const FLAG_TO_FMT: Record<string, FileFmt> = {
   eml: "eml",
   ics: "ics",
   vcf: "vcf",
+  rtf: "rtf",
+  cookies: "cookies",
+  bookmarks: "bookmarks",
+  env: "env",
+  awsCredentials: "aws-credentials",
+  netrc: "netrc",
+  kubeconfig: "kubeconfig",
+  ovpn: "ovpn",
+  rdp: "rdp",
 };
 
 export async function downloadCmd(
@@ -64,7 +91,9 @@ export async function downloadCmd(
     }
     if (targets.length === 0) {
       throw new Error(
-        "specify at least one of: --docx, --xlsx, --pptx, --pdf, --folder, --nfc-label, --apple-wallet, --svg, --html, --md, --eml, --ics, --vcf",
+        `specify at least one of: ${Object.keys(FLAG_TO_FMT)
+          .map((f) => `--${f.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`)
+          .join(", ")}`,
       );
     }
     for (const t of targets) {

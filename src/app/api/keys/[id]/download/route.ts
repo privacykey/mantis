@@ -5,8 +5,8 @@ import { keys } from "@/db/schema";
 import { loadOwnedKey, requireApiKeyOrSession } from "@/lib/auth";
 import {
   ALL_FORMATS,
-  FILE_EXT,
   FILE_MIME,
+  artifactFilename,
   generateFile,
   isAttributionFormat,
   type FileFormat,
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       .where(and(eq(keys.id, key.id), isNull(keys.firstDownloadFormat)));
   }
 
-  const filename = sanitizeFilename(key.memo) + "." + FILE_EXT[format];
+  const filename = artifactFilename(format, sanitizeFilename(key.memo));
   return new NextResponse(new Uint8Array(buf), {
     status: 200,
     headers: {

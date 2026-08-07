@@ -7,8 +7,21 @@ import { useState } from "react";
 // They mirror ATTRIBUTION_FORMATS in @/lib/docs — kept inline here so this
 // client bundle doesn't pull in the (server-only) document generators. The
 // `folder` bundle and wallet/NFC vectors stay in the server component, exempt.
-const FILE_KEY_FORMATS = ["docx", "xlsx", "pptx", "pdf"] as const;
+const FILE_KEY_FORMATS = ["docx", "xlsx", "pptx", "pdf", "rtf"] as const;
 const SELF_HOSTED_FORMATS = ["svg", "html", "md", "eml", "ics", "vcf"] as const;
+// Credential and config stores. Grouped apart from the document formats
+// because they fire differently: a document beacons when it is rendered, these
+// beacon when the URL inside them is used.
+const CREDENTIAL_STORE_FORMATS = [
+  "cookies",
+  "bookmarks",
+  "env",
+  "aws-credentials",
+  "netrc",
+  "kubeconfig",
+  "ovpn",
+  "rdp",
+] as const;
 
 export function DownloadFormats({
   keyId,
@@ -59,6 +72,22 @@ export function DownloadFormats({
           />
         ))}
       </div>
+      <span className="block mt-2 mb-1">credential &amp; config stores</span>
+      <div className="flex flex-wrap gap-3">
+        {CREDENTIAL_STORE_FORMATS.map((fmt) => (
+          <DownloadLink
+            key={fmt}
+            keyId={keyId}
+            fmt={fmt}
+            lockedFormat={locked}
+            onDownload={onDownload}
+          />
+        ))}
+      </div>
+      <span className="block text-neutral-600 mt-1">
+        where an intruder with a shell looks first. These fire when the URL
+        inside is <em>used</em>, not when the file is opened.
+      </span>
       <span className="block text-neutral-600 mt-1">
         for Immich / Paperless / Joplin / calendar / contacts etc. — see{" "}
         <a

@@ -10,6 +10,7 @@ import { backupCmd, restoreCmd } from "./commands/backup.js";
 import { bulkCreateCmd } from "./commands/bulk-create.js";
 import { completionCmd } from "./commands/completion.js";
 import { detectCmd } from "./commands/detect.js";
+import { deviceNewCmd, deviceProfilesCmd } from "./commands/device.js";
 import { doctorCmd } from "./commands/doctor.js";
 import {
   addDestinationCmd,
@@ -461,6 +462,45 @@ cloudflare
     await cloudflareStatusCmd();
   });
 
+const device = program
+  .command("device")
+  .description("mint and install the full set of host alarms for one machine");
+
+device
+  .command("profiles")
+  .description("list the alarms each OS profile would mint")
+  .action(async () => {
+    await deviceProfilesCmd(withGlobals(program, {}));
+  });
+
+device
+  .command("new")
+  .description(
+    "mint one key per host alarm for a machine (login, sudo, wake, boot, network)",
+  )
+  .addOption(
+    new Option(
+      "-o, --os <os>",
+      "target OS; 'auto' uses this machine's, which is only safe when you are on it",
+    ).choices(["macos", "linux", "windows", "auto"]),
+  )
+  .option(
+    "-n, --name <name>",
+    "machine these alarms are for; appears in every memo. Defaults to this host's name only with --install",
+  )
+  .option(
+    "--vectors <list>",
+    "comma-separated alarm slugs (see `mantis device profiles`); defaults to the profile's recommended set",
+  )
+  .option("--all", "every alarm in the profile, including ones needing extra setup")
+  .option("--bundle <path>", "write the install bundle (.zip) to this path")
+  .option("--install", "apply the alarms to THIS machine now (asks first)")
+  .option("-y, --yes", "skip the --install confirmation")
+  .option("--dry-run", "show what would be minted, and mint nothing")
+  .action(async (opts) => {
+    await deviceNewCmd(withGlobals(program, opts));
+  });
+
 const edge = program
   .command("edge")
   .description("manage stateless mantis-edge (Cloudflare Worker) keys");
@@ -773,6 +813,18 @@ program
   .option("--eml <file>", "save an .eml email message to this path")
   .option("--ics <file>", "save an .ics calendar event to this path")
   .option("--vcf <file>", "save a .vcf contact card to this path")
+  .option("--rtf <file>", "save an .rtf document (beacons on open, plain text) to this path")
+  // Credential and config stores: the bait fires when the URL inside is USED,
+  // not when the file is opened. Save each under the name the real thing has —
+  // cookies.txt, .netrc, ~/.aws/credentials — or it fools nobody.
+  .option("--cookies <file>", "save a Netscape cookies.txt session jar to this path")
+  .option("--bookmarks <file>", "save a browser bookmarks.html export to this path")
+  .option("--env <file>", "save a .env credentials file to this path")
+  .option("--aws-credentials <file>", "save an ~/.aws/credentials file to this path")
+  .option("--netrc <file>", "save a .netrc (auto-read by curl/wget/git) to this path")
+  .option("--kubeconfig <file>", "save a kubeconfig with a bait API server to this path")
+  .option("--ovpn <file>", "save an OpenVPN profile to this path")
+  .option("--rdp <file>", "save a Remote Desktop profile to this path")
   .action(async (id: string, opts, cmd: Command) => {
     await downloadCmd(id, withGlobals(cmd.parent!, opts));
   });

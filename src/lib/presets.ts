@@ -22,8 +22,16 @@ export type PresetId =
   | "doc-docx"
   | "doc-xlsx"
   | "doc-pptx"
+  | "doc-rtf"
   | "folder-zip"
   | "creds-env"
+  | "creds-aws"
+  | "creds-netrc"
+  | "creds-kubeconfig"
+  | "browser-cookies"
+  | "browser-bookmarks"
+  | "vpn-ovpn"
+  | "rdp-profile"
   | "shell-login"
   | "shell-sudo"
   | "web-pixel"
@@ -91,6 +99,17 @@ export const PRESETS: Preset[] = [
     deployHint: "Opens the beacon on first slide render.",
   },
   {
+    id: "doc-rtf",
+    label: "RTF document",
+    blurb: "Fires when opened in Word, WordPad or TextEdit.",
+    responseKind: "gif",
+    dedupeWindowSeconds: 300,
+    downloadFormat: "rtf",
+    memoExample: "Board minutes (honeypot rtf)",
+    deployHint:
+      "RTF is plain text, so it survives inspection in an editor, and it skips the Protected View banner a downloaded .docx picks up.",
+  },
+  {
     id: "folder-zip",
     label: "Honey folder (zip)",
     blurb: "A zip of bait files that beacons when the folder is browsed.",
@@ -101,16 +120,99 @@ export const PRESETS: Preset[] = [
     deployHint:
       "Unzip it where a browsing intruder would land. Explorer/Finder trip the beacon on preview.",
   },
+  // Credential and config stores. These fire when the URL inside them is USED,
+  // not when the file is opened — an intruder who greps for secrets finds the
+  // endpoint and calls it. Dedupe is off throughout: unlike a document that
+  // gets re-opened by accident, every use of a bait credential is a real event.
   {
     id: "creds-env",
-    label: "Fake credentials file",
-    blurb: "A .env-style file; fires when the bait URL inside it is used.",
+    label: ".env file",
+    blurb: "Fires when something uses the endpoint or key inside it.",
     responseKind: "json",
     dedupeWindowSeconds: 0,
-    downloadFormat: "md",
+    // Was "md", which handed you a Markdown file when you asked for a .env —
+    // it read as a document, not a credentials file, to anyone who found it.
+    downloadFormat: "env",
     memoExample: "prod .env (bait creds)",
     deployHint:
-      "Anything that reads the file and calls the endpoint trips it. Dedupe is off so every use pages you.",
+      "Drop in a repo root, a deploy directory, or a home directory. Anything that reads it and calls the endpoint trips it.",
+  },
+  {
+    id: "creds-aws",
+    label: "AWS credentials",
+    blurb: "~/.aws/credentials. Fires when a tool resolves against its endpoint.",
+    responseKind: "json",
+    dedupeWindowSeconds: 0,
+    downloadFormat: "aws-credentials",
+    memoExample: "aws credentials — build box",
+    deployHint:
+      "Save as ~/.aws/credentials. The bait profile sets endpoint_url, so an SDK or CLI pointed at it resolves to the canary instead of AWS. The keys are AWS's own documented examples — live nowhere.",
+  },
+  {
+    id: "creds-netrc",
+    label: ".netrc",
+    blurb: "Auto-read by curl, wget and git — no one has to open it.",
+    responseKind: "empty",
+    dedupeWindowSeconds: 0,
+    downloadFormat: "netrc",
+    memoExample: "netrc — jump host",
+    deployHint:
+      "Save as ~/.netrc with mode 600. curl, wget, git and ftp consume it without being asked, so a request to the host authenticates straight from this file.",
+  },
+  {
+    id: "creds-kubeconfig",
+    label: "kubeconfig",
+    blurb: "Cluster config with a bait API server. Fires when someone probes it.",
+    responseKind: "json",
+    dedupeWindowSeconds: 0,
+    downloadFormat: "kubeconfig",
+    memoExample: "kubeconfig — prod (bait)",
+    deployHint:
+      "Save as ~/.kube/config. Note kubectl appends its own API paths and will 404 — what this catches is the operator who finds the file and curls the server URL to see what cluster it is.",
+  },
+  {
+    id: "browser-cookies",
+    label: "Browser cookies",
+    blurb: "cookies.txt session jar. Fires when a stolen cookie is replayed.",
+    responseKind: "gif",
+    dedupeWindowSeconds: 0,
+    downloadFormat: "cookies",
+    memoExample: "chrome cookies — laptop",
+    deployHint:
+      "Session cookies are what infostealers are actually after, because a stolen cookie skips MFA. The bait entry is scoped to this key's exact path, so a replayed jar registers as a hit.",
+  },
+  {
+    id: "browser-bookmarks",
+    label: "Browser bookmarks",
+    blurb: "bookmarks.html. Fires on click, or on render if opened in a browser.",
+    responseKind: "gif",
+    dedupeWindowSeconds: 60,
+    downloadFormat: "bookmarks",
+    memoExample: "bookmarks — reception PC",
+    deployHint:
+      "The bait sits among real-looking internal links, where an intruder browsing for the VPN portal or admin console will find it. Its icon URL fires too if the file is opened in a browser.",
+  },
+  {
+    id: "vpn-ovpn",
+    label: "OpenVPN profile",
+    blurb: "Discovery bait — fires when someone follows the URL inside it.",
+    responseKind: "empty",
+    dedupeWindowSeconds: 0,
+    downloadFormat: "ovpn",
+    memoExample: "corporate vpn profile",
+    deployHint:
+      "Does NOT beacon on its own — OpenVPN speaks its own protocol, not HTTP. The canary is the profile-update URL in the header, which is where someone who can't connect looks next.",
+  },
+  {
+    id: "rdp-profile",
+    label: "Remote Desktop profile",
+    blurb: "Discovery bait — fires when someone follows the URL inside it.",
+    responseKind: "empty",
+    dedupeWindowSeconds: 0,
+    downloadFormat: "rdp",
+    memoExample: "rdp — prod jump host",
+    deployHint:
+      "Like the VPN profile, this does not beacon by itself. The canary sits in workspacefeedurl, a real RDP setting that legitimately holds an HTTPS URL.",
   },
   {
     id: "shell-login",
