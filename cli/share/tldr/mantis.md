@@ -28,6 +28,14 @@
 
 `mantis dest add {{key_id}} webhook {{https://example.com/hook}}`
 
+- Arm a whole machine — one key per host alarm — and write an install bundle:
+
+`mantis device new --os {{macos|linux|windows}} --name {{hostname}} --bundle {{path/to/bundle.zip}}`
+
+- Arm a machine with stateless edge URLs instead, writing the bundle as a directory:
+
+`mantis edge device --os {{macos|linux|windows}} --name {{hostname}} --webhook {{https://example.com/hook}} --bundle {{path/to/dir}}`
+
 - Run an offline self-audit for mantis-style installer artifacts on this machine:
 
 `mantis detect --scope {{user|system|all}}`

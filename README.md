@@ -92,6 +92,19 @@ mantis edge set-key <worker-url>   # link the deployed Worker
 mantis edge mint                   # interactive wizard for a stateless URL
 ```
 
+To arm a whole machine at once — one URL per host alarm (login, sudo, wake,
+boot, network) plus an install bundle directory:
+
+```bash
+mantis edge device --os macos --name web01 --webhook <url> --bundle ./web01
+```
+
+Two server-backed properties don't cross over, and the command says so on every
+run: without a database there is no idempotent re-mint (re-running issues a
+fresh set of URLs), and the worker can't remember the last hit, so vectors that
+dedupe server-side — network attach — are chattier at the edge. The stateful
+equivalent is `mantis device new`, which keeps both.
+
 See **[`mantis-edge/README.md`](./mantis-edge/README.md)** for Worker deploy and full `mantis edge` usage.
 
 ## Run from source
