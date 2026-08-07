@@ -269,7 +269,7 @@ to list every available type.
 
 .SS mantis-edge (stateless Cloudflare Worker)
 .TP
-.B "mantis edge {keygen,set-key,delete-key,mint} [opts]"
+.B "mantis edge {keygen,set-key,delete-key,mint,device} [opts]"
 Manage stateless mantis-edge keys (no server round-trip; pure local crypto).
 .B keygen
 generates an AES key,
@@ -277,6 +277,15 @@ generates an AES key,
 stores it in the OS keychain, and
 .B mint
 produces a trigger URL.
+.TP
+.B "mantis edge device \-\-os OS \-\-name HOST [\-\-bundle DIR] [opts]"
+Mint one stateless edge URL per host alarm for a machine (login, sudo, wake,
+boot, network) and write an install bundle
+.I directory
+with every vector's installer plus a bootstrap script. Unlike
+.BR "mantis device new" ,
+re-running mints a fresh set of URLs (no database, so no idempotent re-mint),
+and vectors with a server-side dedupe window are chattier on edge.
 
 .SS Other
 .TP

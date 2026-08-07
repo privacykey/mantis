@@ -5,7 +5,7 @@ import {
   bundleRootName,
   windowsTaskName,
   type BundleVector,
-} from "@/lib/device-bundle";
+} from "@mantis/core/device-bundle";
 import {
   DEVICE_PROFILES,
   defaultVectorSlugs,
@@ -14,8 +14,8 @@ import {
   getDeviceProfile,
   normalizeDeviceName,
   type DeviceOs,
-} from "@/lib/device-profiles";
-import { buildInstaller, INSTALLER_META } from "@/lib/installers";
+} from "@mantis/core/device-profiles";
+import { buildInstaller, INSTALLER_META } from "@mantis/core/installers";
 
 const KEY_ID = "3f7c1a2b-4d5e-6f70-8192-a3b4c5d6e7f8";
 const URL = "https://mantis.example.com/c/abc123";

@@ -1,11 +1,13 @@
-import JSZip from "jszip";
-import type { DeviceOs, DeviceVector } from "@/lib/device-profiles";
-import { normalizeDeviceName } from "@/lib/device-profiles";
-import type { Installer } from "@/lib/installers";
+import type { DeviceOs, DeviceVector } from "./device-profiles.js";
+import { normalizeDeviceName } from "./device-profiles.js";
+import type { Installer } from "./installers.js";
 
 /**
- * Builds the zip a device mint hands back: every vector's installer file, plus
- * a bootstrap that installs all of them and an uninstaller that removes them.
+ * Builds the file map a device mint hands back: every vector's installer file,
+ * plus a bootstrap that installs all of them and an uninstaller that removes
+ * them. The zip wrapper lives in `./device-bundle` — this module is split off
+ * so the CLI (which ships the bundle as a plain directory) never pulls jszip
+ * into its standalone binaries.
  *
  * WHY THIS DOESN'T JUST REPLAY `Installer.install`
  * ------------------------------------------------
@@ -96,30 +98,6 @@ export function buildDeviceBundleFiles(input: DeviceBundleInput): BundleFiles {
   }
 
   return { root, installScript, uninstallScript, files };
-}
-
-export async function buildDeviceBundle(
-  input: DeviceBundleInput,
-): Promise<Buffer> {
-  const bundle = buildDeviceBundleFiles(input);
-  const zip = new JSZip();
-  const dir = zip.folder(bundle.root);
-  if (!dir) throw new Error("failed to create bundle root");
-
-  for (const [path, content] of Object.entries(bundle.files)) {
-    // 0o755 on the scripts so they're runnable straight out of the archive on
-    // any extractor that preserves the mode (unzip, Finder, Nautilus).
-    const executable =
-      path === bundle.installScript || path === bundle.uninstallScript;
-    dir.file(path, content, executable ? { unixPermissions: 0o755 } : {});
-  }
-
-  return zip.generateAsync({
-    type: "nodebuffer",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-    platform: input.os === "windows" ? "DOS" : "UNIX",
-  });
 }
 
 /* -------------------------------------------------------------------------- */

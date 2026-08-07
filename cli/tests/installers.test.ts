@@ -3,7 +3,7 @@ import {
   applySshOnlyGuard,
   buildInstaller,
   type InstallerInput,
-} from "../src/lib/installers.js";
+} from "@mantis/core/installers";
 
 const INPUT: InstallerInput = {
   url: "https://mantis.example.com/c/abc12345",

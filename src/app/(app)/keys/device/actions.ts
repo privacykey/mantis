@@ -10,7 +10,7 @@ import {
   getDeviceProfile,
   isDeviceOs,
   type DeviceOs,
-} from "@/lib/device-profiles";
+} from "@mantis/core/device-profiles";
 import { newPublicId } from "@/lib/keys";
 import { getSessionApiKey } from "@/lib/session";
 

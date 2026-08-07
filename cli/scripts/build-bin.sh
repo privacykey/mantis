@@ -32,6 +32,11 @@ EOF
   exit 1
 fi
 
+# @mantis/core is resolved from its built dist (package.json exports), so it
+# must be compiled before bun bundles it into the binaries.
+echo "==> building @mantis/core"
+pnpm --filter @mantis/core run build
+
 # Stamp src/version.ts from package.json before compiling — the binaries
 # embed everything, so the version must be correct at build time.
 node scripts/gen-version.mjs

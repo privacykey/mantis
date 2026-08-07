@@ -42,6 +42,10 @@ const DASHBOARD_HEADERS = isProd
 
 const config: NextConfig = {
   output: "standalone",
+  // Workspace package resolved from its built dist (see packages/core); Next
+  // must transpile it into the server/client bundles rather than treating it
+  // as a node_modules external.
+  transpilePackages: ["@mantis/core"],
   // Pin the workspace root: in a git worktree (or any layout where a parent
   // directory also holds a lockfile) the root inference picks the parent
   // checkout, which nests the standalone output under the worktree's relative

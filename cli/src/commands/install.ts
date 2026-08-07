@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { c, emit, isJsonMode } from "../lib/out.js";
 import type { InstallerMeta, MantisClient } from "../lib/api.js";
-import { applySshOnlyGuard } from "../lib/installers.js";
+import { applySshOnlyGuard } from "@mantis/core/installers";
 import { BUILTIN_INSTALLER_TYPES } from "../lib/plugins/builtins.js";
 import { loadRegistry } from "../lib/plugins/registry.js";
 import { resolveKeyRef } from "../lib/resolve.js";
