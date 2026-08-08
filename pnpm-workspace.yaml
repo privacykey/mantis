@@ -12,6 +12,15 @@ allowBuilds:
   workerd: true
 
 # Force vulnerable transitive deps to patched versions:
+#   nanoid@3 <3.3.17 → custom alphabets with a zero/negative size loop forever
+#                      instead of returning (GHSA-2v37-7h3g-55p8). Reaches prod
+#                      only via postcss (both @tailwindcss/postcss and next pin
+#                      nanoid ^3.3.x), where sizes are internal constants, so it
+#                      is not reachable from our own code — pinned to clear the
+#                      audit and because a build-time infinite loop is nasty.
+#                      NOTE the `nanoid@3` key, same reasoning as undici@7
+#                      below: the app's own dependency is nanoid ^6, so a bare
+#                      `nanoid:` override would drag it back onto the 3.x line.
 #   postcss <8.5.10  → XSS via unescaped </style> in CSS Stringify (GHSA-qx2v-qp2m-jg93)
 #   esbuild <0.28.1  → Deno binary-integrity RCE (GHSA-gv7w-rqvm-qjhr); also clears the
 #                      Windows dev-server path traversal (GHSA-g7r4-m6w7-qqqr) and the older
@@ -47,6 +56,7 @@ allowBuilds:
 #                      (wrangler → mantis-edge), which is dev-server only and never
 #                      ships in the server image.
 overrides:
+  nanoid@3: ^3.3.17
   undici@7: ^7.29.0
   sharp: ^0.35.3
   postcss: ^8.5.10
