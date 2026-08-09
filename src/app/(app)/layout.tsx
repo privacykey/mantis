@@ -63,7 +63,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 </Link>
               )}
               <a
-                href="https://github.com/privacykey/mantis-docs"
+                href="https://github.com/privacykey/docs-mantis"
                 className="text-neutral-400 no-underline hover:text-neutral-200"
                 title="Documentation (opens in new tab)"
                 target="_blank"

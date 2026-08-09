@@ -91,7 +91,7 @@ export function DownloadFormats({
       <span className="block text-neutral-600 mt-1">
         for Immich / Paperless / Joplin / calendar / contacts etc. — see{" "}
         <a
-          href="https://github.com/privacykey/mantis-docs/blob/main/self-hosted-apps.md"
+          href="https://github.com/privacykey/docs-mantis/blob/main/self-hosted-apps.md"
           target="_blank"
           rel="noopener noreferrer"
           className="text-blue-400 no-underline hover:underline"

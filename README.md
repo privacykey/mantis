@@ -66,7 +66,7 @@ mantis --key mantis_live_... login --url http://localhost:3000
 mantis new "first mantis" -w http://localhost:3000/inbox/demo
 ```
 
-This is fine for evaluation but **don't rely on a laptop deploy for canaries that need to fire when you're away from your machine.** For a real public-reachable deploy — Tailscale Funnel, Cloudflare Tunnel, Railway, Fly.io, or Render — see **[deployment options](https://github.com/privacykey/mantis-docs/blob/main/deployment/README.md)**.
+This is fine for evaluation but **don't rely on a laptop deploy for canaries that need to fire when you're away from your machine.** For a real public-reachable deploy — Tailscale Funnel, Cloudflare Tunnel, Railway, Fly.io, or Render — see **[deployment options](https://github.com/privacykey/docs-mantis/blob/main/deployment/README.md)**.
 
 For Fly.io specifically, one command provisions the app, a Managed Postgres
 cluster, the secrets and the first admin key:
@@ -148,15 +148,15 @@ the Kandji API.
 
 ## Docs
 
-Full documentation: **[github.com/privacykey/mantis-docs](https://github.com/privacykey/mantis-docs)**.
+Full documentation: **[github.com/privacykey/docs-mantis](https://github.com/privacykey/docs-mantis)**.
 
 Common starting points:
 
-- [Getting started](https://github.com/privacykey/mantis-docs/blob/main/getting-started.md) — five steps from `brew install` to first key
-- [Use cases](https://github.com/privacykey/mantis-docs/blob/main/use-cases.md) — defensive / detective / operational / adversarial patterns
-- [HTTP API](https://github.com/privacykey/mantis-docs/blob/main/api.md) — endpoints, response kinds, webhook payload shape
-- [File keys](https://github.com/privacykey/mantis-docs/blob/main/file-keys.md) and [host-event keys](https://github.com/privacykey/mantis-docs/blob/main/host-events.md)
-- [Updating](https://github.com/privacykey/mantis-docs/blob/main/updating.md) — update commands per component
+- [Getting started](https://github.com/privacykey/docs-mantis/blob/main/getting-started.md) — five steps from `brew install` to first key
+- [Use cases](https://github.com/privacykey/docs-mantis/blob/main/use-cases.md) — defensive / detective / operational / adversarial patterns
+- [HTTP API](https://github.com/privacykey/docs-mantis/blob/main/api.md) — endpoints, response kinds, webhook payload shape
+- [File keys](https://github.com/privacykey/docs-mantis/blob/main/file-keys.md) and [host-event keys](https://github.com/privacykey/docs-mantis/blob/main/host-events.md)
+- [Updating](https://github.com/privacykey/docs-mantis/blob/main/updating.md) — update commands per component
 
 ## License
 

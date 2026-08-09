@@ -301,6 +301,6 @@ cat <<EOF
   Redeploy:   $FLY deploy --app $APP
 
   Before exposing canary URLs publicly, read the edge-limit rules:
-  https://github.com/privacykey/mantis-docs/blob/main/deployment/edge-limits.md#flyio
+  https://github.com/privacykey/docs-mantis/blob/main/deployment/edge-limits.md#flyio
 ──────────────────────────────────────────────────────────────
 EOF
