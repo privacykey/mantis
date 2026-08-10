@@ -49,7 +49,7 @@ This is fine for evaluation but **don't rely on a laptop deploy for canaries
 that need to fire when you're away from your machine.** For a real
 public-reachable deploy — Tailscale Funnel, Cloudflare Tunnel, Railway, Fly.io,
 or Render — see
-[deployment options](https://github.com/privacykey/docs-mantis/blob/main/deployment/README.md).
+[deployment options](https://docs.mantis.privacykey.org/deployment).
 
 > [!CAUTION]
 > **Serve it over HTTPS, never plain HTTP.** Mantis authenticates with an API

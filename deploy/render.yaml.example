@@ -39,7 +39,7 @@
 # Public edge limits:
 #   Render includes DDoS protection, but app-layer URL/rate abuse is still yours.
 #   For public Mantis URLs, use a Cloudflare-proxied custom domain and the
-#   rules in https://github.com/privacykey/docs-mantis/blob/main/deployment/edge-limits.md#render
+#   rules in https://docs.mantis.privacykey.org/deployment/edge-limits#render
 
 services:
   - type: web

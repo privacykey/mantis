@@ -68,7 +68,7 @@ export async function initCmd(): Promise<void> {
   w(`${c.dim("2. Set the edge key as a secret on the now-deployed worker:")}\n`);
   w(`   npx wrangler secret put MANTIS_EDGE_KEY\n`);
   w(`   ${c.dim("# paste this value:")} ${key}\n\n`);
-  w(`${c.dim("Deploy docs:")} mantis-edge/README.md ${c.dim("·")} https://github.com/privacykey/docs-mantis\n\n`);
+  w(`${c.dim("Deploy docs:")} mantis-edge/README.md ${c.dim("·")} https://docs.mantis.privacykey.org\n\n`);
 
   let worker = "";
   while (!URL_RE.test(worker)) {
