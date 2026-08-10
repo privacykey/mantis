@@ -96,7 +96,7 @@ export function DownloadFormats({
           rel="noopener noreferrer"
           className="text-blue-400 no-underline hover:underline"
         >
-          mantis-docs: self-hosted-apps.md
+          docs-mantis: self-hosted-apps.md
         </a>
         .
       </span>
