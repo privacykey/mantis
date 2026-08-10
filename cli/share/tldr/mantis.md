@@ -1,14 +1,14 @@
 # mantis
 
-> Self-hostable tripwires CLI — create trigger URLs that fire notifications when accessed.
-> Stores API keys in the OS keychain and supports multiple profiles per server.
+> Client for a self-hostable canary and tripwire service.
+> Mint trigger URLs that fire a notification when someone accesses them.
 > More information: <https://github.com/privacykey/mantis>.
 
-- Log in to a Mantis server (prompts for URL and API key):
+- Run the guided first-time setup and create a first key:
 
-`mantis login`
+`mantis init`
 
-- Create a new tripwire key with a memo and copy the URL to the clipboard:
+- Create a new key with a memo and copy its trigger URL to the clipboard:
 
 `mantis new "{{memo}}" --copy`
 
@@ -16,22 +16,22 @@
 
 `mantis list`
 
-- Tail hits live for the most-recently-created key:
+- Tail hits live for the most recently created key:
 
 `mantis hits last --follow`
 
-- Generate a honey-PDF that fires when opened:
+- Create a key with a decoy PDF that fires when the file is opened:
 
 `mantis new "{{memo}}" --pdf {{path/to/decoy.pdf}}`
 
-- Add a webhook destination to an existing key (fires an activation ping):
+- Print a shell snippet that fires when someone opens an SSH session on a host:
 
-`mantis dest add {{key_id}} webhook {{https://example.com/hook}}`
+`mantis install {{key_id}} --type shell --ssh-only`
 
-- Run an offline self-audit for mantis-style installer artifacts on this machine:
+- Add a webhook notification destination to an existing key:
 
-`mantis detect --scope {{user|system|all}}`
+`mantis destinations add {{key_id}} webhook {{https://example.com/hook}}`
 
-- Print a shell completion script (already wired up by the Homebrew formula):
+- Mint a stateless URL served by an edge worker, without a server:
 
-`mantis completion {{bash|zsh|fish}}`
+`mantis edge mint`
