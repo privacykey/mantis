@@ -68,12 +68,12 @@ Every component — CLI, edge worker, LAN helper, benchmarks, deploy assets — 
 
 ## Docs
 
-The prose documentation lives in [`privacykey/docs-mantis`](https://github.com/privacykey/docs-mantis). It is a Mintlify source and the rendered site is not live yet, so these link to the Markdown on GitHub.
+The prose documentation lives at [docs.mantis.privacykey.org](https://docs.mantis.privacykey.org), built with Mintlify from [`privacykey/docs-mantis`](https://github.com/privacykey/docs-mantis).
 
-- [Getting started](https://github.com/privacykey/docs-mantis/blob/main/getting-started.md) — five steps from `brew install` to first key
-- [Use cases](https://github.com/privacykey/docs-mantis/blob/main/use-cases.md) — defensive, detective, operational and adversarial patterns
-- [HTTP API](https://github.com/privacykey/docs-mantis/blob/main/api.md) — endpoints, response kinds, webhook payload shape
-- [File keys](https://github.com/privacykey/docs-mantis/blob/main/file-keys.md), [host-event keys](https://github.com/privacykey/docs-mantis/blob/main/host-events.md), [deployment](https://github.com/privacykey/docs-mantis/blob/main/deployment/README.md), [updating](https://github.com/privacykey/docs-mantis/blob/main/updating.md)
+- [Getting started](https://docs.mantis.privacykey.org/getting-started) — five steps from `brew install` to first key
+- [Use cases](https://docs.mantis.privacykey.org/use-cases) — defensive, detective, operational and adversarial patterns
+- [HTTP API](https://docs.mantis.privacykey.org/api) — endpoints, response kinds, webhook payload shape
+- [File keys](https://docs.mantis.privacykey.org/file-keys), [host-event keys](https://docs.mantis.privacykey.org/host-events), [deployment](https://docs.mantis.privacykey.org/deployment), [updating](https://docs.mantis.privacykey.org/updating)
 
 ## Contributing
 
