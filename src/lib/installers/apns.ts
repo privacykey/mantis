@@ -24,7 +24,7 @@ async function loadApnsConfig(): Promise<ApnsConfig | null> {
   const cfg = await loadActiveWalletConfig();
   if (!cfg) return null;
   // APNs config is currently only env-driven. (DB-stored .p8 is a follow-up;
-  // operators using the dashboard cert path can still set the .p8 via env.)
+  // operators still on a legacy DB-stored cert can still set the .p8 via env.)
   const keyPath = process.env.APPLE_PASS_APNS_KEY_PATH;
   const keyId = process.env.APPLE_PASS_APNS_KEY_ID;
   if (!keyPath || !keyId) return null;
