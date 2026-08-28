@@ -12,7 +12,7 @@ allowBuilds:
   workerd: true
 
 # Force vulnerable transitive deps to patched versions:
-#   nanoid@3 <3.3.17 → custom alphabets with a zero/negative size loop forever
+#   nanoid@3 <3.3.18 → custom alphabets with a zero/negative size loop forever
 #                      instead of returning (GHSA-2v37-7h3g-55p8). Reaches prod
 #                      only via postcss (both @tailwindcss/postcss and next pin
 #                      nanoid ^3.3.x), where sizes are internal constants, so it
@@ -56,7 +56,7 @@ allowBuilds:
 #                      (wrangler → mantis-edge), which is dev-server only and never
 #                      ships in the server image.
 overrides:
-  nanoid@3: ^3.3.17
+  nanoid@3: ^3.3.18
   undici@7: ^7.29.0
   sharp: ^0.35.3
   postcss: ^8.5.10
