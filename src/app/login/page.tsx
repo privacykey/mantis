@@ -22,7 +22,7 @@ export default async function LoginPage() {
           &quot;bootstrap API key&quot; -A1</code> — or set via{" "}
           <code>BOOTSTRAP_API_KEY</code>. See the{" "}
           <a
-            href="https://github.com/privacykey/mantis-docs"
+            href="https://docs.mantis.privacykey.org"
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-400 no-underline hover:underline"

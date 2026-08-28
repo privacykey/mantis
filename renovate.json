@@ -1,0 +1,15 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>privacykey/renovate-config"],
+  "packageRules": [
+    {
+      "description": [
+        "Hold TypeScript on 6.x. Next.js 16 loads the TypeScript compiler API directly and rejects the 7.x native port at build time: 'TypeScript 7.0.2 does not provide the compiler API required by Next.js. Enable experimental.useTypeScriptCli in your Next.js config to use the TypeScript CLI, or install TypeScript 6 instead.'",
+        "This breaks `next build` and the test job — not just typecheck — so it cannot be merged and re-fixed later.",
+        "Lift this once Next.js supports the TS 7 compiler API, or once we opt into experimental.useTypeScriptCli and verify a full build."
+      ],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    }
+  ]
+}

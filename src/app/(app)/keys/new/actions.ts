@@ -10,6 +10,7 @@ import {
   replaceDestinations,
   type DestinationInput,
 } from "@/lib/notify/destinations";
+import { isPresetId } from "@/lib/presets";
 
 export type CreateState = {
   error?: string;
@@ -17,12 +18,15 @@ export type CreateState = {
 };
 
 const VALID_KINDS: ResponseKind[] = ["gif", "empty", "json", "redirect", "html"];
+// home_assistant was missing here, so the dashboard rejected a channel the
+// API, schema and senders all support.
 const VALID_CHANNELS: NotificationChannel[] = [
   "webhook",
   "email",
   "slack",
   "discord",
   "teams",
+  "home_assistant",
 ];
 
 export async function createKeyAction(
@@ -121,5 +125,9 @@ export async function createKeyAction(
     await replaceDestinations(row, destinations);
   }
 
-  redirect(`/keys/${row.id}`);
+  // Carry the preset through so the key page can surface the matching
+  // download format and deployment hint instead of a generic format list.
+  const presetRaw = String(formData.get("preset") ?? "");
+  const presetQuery = isPresetId(presetRaw) ? `?preset=${presetRaw}` : "";
+  redirect(`/keys/${row.id}${presetQuery}`);
 }

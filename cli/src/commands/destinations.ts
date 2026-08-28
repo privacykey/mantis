@@ -2,15 +2,9 @@ import type { Destination, NotificationChannel } from "../lib/api.js";
 import { c, emit, fail, table, truncate } from "../lib/out.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
+import { ALL_CHANNELS } from "../lib/channels.js";
 
-const VALID_CHANNELS: NotificationChannel[] = [
-  "webhook",
-  "email",
-  "slack",
-  "discord",
-  "teams",
-  "home_assistant",
-];
+const VALID_CHANNELS = ALL_CHANNELS;
 
 export async function listDestinationsCmd(
   keyId: string,

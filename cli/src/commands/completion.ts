@@ -1,3 +1,6 @@
+import { ALL_INSTALL_TYPES } from "@mantis/core/installers";
+import { ALL_CHANNELS } from "../lib/channels.js";
+
 // Shell completion scripts for bash, zsh, fish.
 //
 // Keep this file in sync with the command tree wired up in `src/index.ts`.
@@ -16,6 +19,7 @@ const COMMANDS = [
   "profile",
   "cloudflare",
   "edge",
+  "device",
   "new",
   "bulk-create",
   "import-csv",
@@ -54,33 +58,28 @@ const PROFILE_SUBS = [
   "set-edge",
 ];
 const CLOUDFLARE_SUBS = ["login", "logout", "set-service-auth", "status"];
-const EDGE_SUBS = ["keygen", "set-key", "delete-key", "mint", "install"];
+const EDGE_SUBS = [
+  "keygen",
+  "set-key",
+  "delete-key",
+  "mint",
+  "install",
+  "device",
+];
+const DEVICE_SUBS = ["profiles", "new"];
 const DEST_SUBS = ["list", "ls", "add", "rm", "remove", "test", "rotate-secret"];
 const AUDIT_SUBS = ["log"];
 const PLUGIN_SUBS = ["add", "list", "ls", "remove", "rm", "upgrade"];
 
 const SHELLS = ["bash", "zsh", "fish"];
 
-const INSTALL_TYPES = [
-  "shell",
-  "shell-sudo",
-  "macos-login",
-  "macos-boot",
-  "macos-wake",
-  "macos-network",
-  "linux-boot",
-  "linux-wake",
-  "linux-network",
-  "windows-logon",
-  "windows-wake",
-  "windows-network",
-  "css-background",
-  "js-clone-detector",
-  "nfc-ndef",
-];
+// Derived from the canonical list rather than copied: the hand-maintained
+// version had drifted, missing homeassistant, homeassistant-receiver and
+// scrypted, so those types never tab-completed.
+const INSTALL_TYPES: readonly string[] = ALL_INSTALL_TYPES;
 
 const RESPONSE_KINDS = ["gif", "empty", "json", "redirect", "html"];
-const CHANNELS = ["webhook", "email", "slack", "discord", "teams"];
+const CHANNELS: readonly string[] = ALL_CHANNELS;
 const MONITOR_MODES = ["off", "latch", "window"];
 const SCOPES = ["user", "system", "all"];
 const OUTPUT_MODES = ["table", "json", "wide"];
@@ -131,6 +130,7 @@ _mantis_completion() {
       profile)            COMPREPLY=( $(compgen -W "${PROFILE_SUBS.join(" ")}" -- "$cur") ); return ;;
       cloudflare)         COMPREPLY=( $(compgen -W "${CLOUDFLARE_SUBS.join(" ")}" -- "$cur") ); return ;;
       edge)               COMPREPLY=( $(compgen -W "${EDGE_SUBS.join(" ")}" -- "$cur") ); return ;;
+      device)             COMPREPLY=( $(compgen -W "${DEVICE_SUBS.join(" ")}" -- "$cur") ); return ;;
       destinations|dest)  COMPREPLY=( $(compgen -W "${DEST_SUBS.join(" ")}" -- "$cur") ); return ;;
       audit)              COMPREPLY=( $(compgen -W "${AUDIT_SUBS.join(" ")}" -- "$cur") ); return ;;
       plugin)             COMPREPLY=( $(compgen -W "${PLUGIN_SUBS.join(" ")}" -- "$cur") ); return ;;
@@ -145,12 +145,13 @@ complete -F _mantis_completion mantis
 function zshCompletion(): string {
   return `#compdef mantis
 _mantis() {
-  local -a commands profile_subs cloudflare_subs edge_subs dest_subs audit_subs plugin_subs
+  local -a commands profile_subs cloudflare_subs edge_subs device_subs dest_subs audit_subs plugin_subs
   local -a response_kinds channels install_types monitor_modes scopes output_modes shells
   commands=(${COMMANDS.join(" ")})
   profile_subs=(${PROFILE_SUBS.join(" ")})
   cloudflare_subs=(${CLOUDFLARE_SUBS.join(" ")})
   edge_subs=(${EDGE_SUBS.join(" ")})
+  device_subs=(${DEVICE_SUBS.join(" ")})
   dest_subs=(${DEST_SUBS.join(" ")})
   audit_subs=(${AUDIT_SUBS.join(" ")})
   plugin_subs=(${PLUGIN_SUBS.join(" ")})
@@ -184,6 +185,7 @@ _mantis() {
       profile)            _describe 'profile subcommand' profile_subs; return ;;
       cloudflare)         _describe 'cloudflare subcommand' cloudflare_subs; return ;;
       edge)               _describe 'edge subcommand' edge_subs; return ;;
+      device)             _describe 'device subcommand' device_subs; return ;;
       destinations|dest)  _describe 'destinations subcommand' dest_subs; return ;;
       audit)              _describe 'audit subcommand' audit_subs; return ;;
       plugin)             _describe 'plugin subcommand' plugin_subs; return ;;
@@ -217,6 +219,7 @@ function fishCompletion(): string {
     ...subcommandLines("profile", PROFILE_SUBS),
     ...subcommandLines("cloudflare", CLOUDFLARE_SUBS),
     ...subcommandLines("edge", EDGE_SUBS),
+    ...subcommandLines("device", DEVICE_SUBS),
     ...subcommandLines("destinations", DEST_SUBS),
     ...subcommandLines("dest", DEST_SUBS),
     ...subcommandLines("audit", AUDIT_SUBS),

@@ -7,9 +7,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   test: {
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
-    // Full-stack DB integration tests live under tests/integration and run via
-    // vitest.integration.config.ts against a real Postgres — keep them out of
-    // the fast, mock-only unit run.
+    // Full-stack DB integration tests live under tests/integration (real
+    // Postgres, vitest.integration.config.ts) and tier-2 e2e tests under
+    // tests/tier2 (running standalone server, vitest.tier2.config.ts) — keep
+    // both out of the fast, mock-only unit run.
     exclude: [
       "node_modules",
       ".next",
@@ -17,6 +18,7 @@ export default defineConfig({
       "cli",
       "mantis-edge",
       "tests/integration/**",
+      "tests/tier2/**",
     ],
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
@@ -27,6 +29,22 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(here, "src"),
+      // Map @mantis/core to its source so tests don't require a built dist.
+      // Subpath entries must precede the bare entry — aliases match in order.
+      "@mantis/core/installers": resolve(here, "packages/core/src/installers.ts"),
+      "@mantis/core/device-profiles": resolve(
+        here,
+        "packages/core/src/device-profiles.ts",
+      ),
+      "@mantis/core/device-bundle-files": resolve(
+        here,
+        "packages/core/src/device-bundle-files.ts",
+      ),
+      "@mantis/core/device-bundle": resolve(
+        here,
+        "packages/core/src/device-bundle.ts",
+      ),
+      "@mantis/core": resolve(here, "packages/core/src/index.ts"),
     },
   },
 });

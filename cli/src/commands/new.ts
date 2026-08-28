@@ -7,7 +7,7 @@ import {
   ALL_INSTALL_TYPES,
   isInstallType,
   type InstallType,
-} from "../lib/installers.js";
+} from "@mantis/core/installers";
 import { c, emit, fail, isJsonMode } from "../lib/out.js";
 import { canPrompt, createPrompter, type Prompter } from "../lib/prompt.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
@@ -23,6 +23,7 @@ import {
   webhookPromptLabel,
   type SummaryRow,
 } from "../lib/wizard.js";
+import { ALL_CHANNELS } from "../lib/channels.js";
 
 export type NewOpts = GlobalOpts & {
   notify?: string[];
@@ -53,13 +54,7 @@ export type NewOpts = GlobalOpts & {
   hostname?: string;
 };
 
-const VALID_CHANNELS: NotificationChannel[] = [
-  "webhook",
-  "email",
-  "slack",
-  "discord",
-  "teams",
-];
+const VALID_CHANNELS = ALL_CHANNELS;
 
 const FILE_FORMATS = [
   "qr",

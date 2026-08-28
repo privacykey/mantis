@@ -25,7 +25,7 @@ import {
   isInstallType,
   type InstallType,
   type Installer,
-} from "../lib/installers.js";
+} from "@mantis/core/installers";
 import { c, emit, ExitCode, fail, isJsonMode } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 import {
@@ -33,17 +33,19 @@ import {
   inferChannelFromWebhook,
   webhookPromptLabel,
 } from "../lib/wizard.js";
+import { EDGE_CHANNELS, type EdgeChannel } from "../lib/channels.js";
 
 const RESPONSE_KINDS = ["gif", "empty", "json", "redirect", "html"] as const;
 type ResponseKind = (typeof RESPONSE_KINDS)[number];
-const CHANNELS = ["webhook", "slack", "discord", "teams"] as const;
-type Channel = (typeof CHANNELS)[number];
+// Narrower than the server's channel set on purpose — see EDGE_CHANNELS.
+const CHANNELS = EDGE_CHANNELS;
+type Channel = EdgeChannel;
 
-function normalizeWorker(url: string): string {
+export function normalizeWorker(url: string): string {
   return url.replace(/\/$/, "");
 }
 
-function decodeKey(keyStr: string): Uint8Array {
+export function decodeKey(keyStr: string): Uint8Array {
   let raw: Uint8Array;
   try {
     raw = b64urlDecode(keyStr);
@@ -396,7 +398,7 @@ function printInstallerMenu(): InstallType[] {
 }
 
 /** Stable short identifier for installer labels/filenames, derived from the URL. */
-function deriveKeyIdFromUrl(url: string): string {
+export function deriveKeyIdFromUrl(url: string): string {
   // Use the last 8 chars of the encrypted blob. base64url charset, so it's
   // alphanumeric + `_-` — safe in filenames, plist labels, and systemd unit
   // names. The blob's collision domain is effectively the AES nonce, so the

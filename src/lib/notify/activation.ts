@@ -38,12 +38,17 @@ export type ActivationResult = {
  * the URL and re-trigger via PATCH.
  */
 export async function fireActivationPing(
-  key: Key,
+  key: Key | null,
   destination: NotificationDestination,
 ): Promise<ActivationResult> {
   try {
     await dispatchActivation(destination.channel as NotificationChannel, {
-      key,
+      // A global destination (keyId NULL) has no key to describe, so the ping
+      // announces the destination itself instead.
+      label: key ? key.memo : "global destination",
+      url: key ? keyUrl(key.publicId) : env.publicBaseUrl,
+      keyId: key?.id ?? null,
+      publicId: key?.publicId ?? null,
       target: destination.target,
     });
     await persistActivationStatus(destination.id, "ok", null);
@@ -79,7 +84,22 @@ async function persistActivationStatus(
 // just "X is now connected; you'll see real alerts in this channel."
 // ---------------------------------------------------------------------------
 
-type ActivationCtx = { key: Key; target: string };
+type ActivationCtx = {
+  /** Human label for what was connected — a key's memo, or "global destination". */
+  label: string;
+  /** Key trigger URL, or the dashboard base URL for a global destination. */
+  url: string;
+  keyId: string | null;
+  publicId: string | null;
+  target: string;
+};
+
+/** Global destinations have no key, so say so rather than naming one. */
+function scopeNote(ctx: ActivationCtx): string {
+  return ctx.keyId === null
+    ? "This is a GLOBAL destination — it will receive alerts from every mantis key."
+    : "You'll get an alert here when this key fires.";
+}
 
 async function dispatchActivation(
   channel: NotificationChannel,
@@ -106,14 +126,18 @@ async function dispatchActivation(
 async function activateWebhook(ctx: ActivationCtx): Promise<void> {
   await postJson(ctx.target, {
     type: "mantis.activation",
-    key: {
-      id: ctx.key.id,
-      public_id: ctx.key.publicId,
-      memo: ctx.key.memo,
-      url: keyUrl(ctx.key.publicId),
-    },
+    scope: ctx.keyId === null ? "global" : "key",
+    key:
+      ctx.keyId === null
+        ? null
+        : {
+            id: ctx.keyId,
+            public_id: ctx.publicId,
+            memo: ctx.label,
+            url: ctx.url,
+          },
     connected_at: new Date().toISOString(),
-    message: "Mantis destination connected. Real hit alerts will arrive at this URL.",
+    message: `Mantis destination connected. ${scopeNote(ctx)}`,
   });
 }
 
@@ -123,26 +147,26 @@ async function activateEmail(ctx: ActivationCtx): Promise<void> {
   await m.sendMail({
     from: env.smtpFrom,
     to: ctx.target,
-    subject: `[mantis] connected: ${sanitizeHeaderValue(ctx.key.memo)}`,
+    subject: `[mantis] connected: ${sanitizeHeaderValue(ctx.label)}`,
     text:
-      `Mantis key "${ctx.key.memo}" is now configured to alert this email address.\n\n` +
-      `Key URL: ${keyUrl(ctx.key.publicId)}\n\n` +
+      `Mantis "${ctx.label}" is now configured to alert this email address.\n\n` +
+      `${scopeNote(ctx)}\n\n` +
+      `URL: ${ctx.url}\n\n` +
       `This is a one-time confirmation. Real alerts will look similar but with hit details.`,
   });
 }
 
 async function activateSlack(ctx: ActivationCtx): Promise<void> {
-  const url = keyUrl(ctx.key.publicId);
   await postJson(ctx.target, {
-    text: `Mantis connected: ${ctx.key.memo}`,
+    text: `Mantis connected: ${ctx.label}`,
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
           text:
-            `✅ *Mantis connected*: <${url}|${escapeMrkdwn(ctx.key.memo)}>\n` +
-            `You'll get an alert here when this key fires.`,
+            `✅ *Mantis connected*: <${ctx.url}|${escapeMrkdwn(ctx.label)}>\n` +
+            scopeNote(ctx),
         },
       },
     ],
@@ -154,11 +178,10 @@ async function activateDiscord(ctx: ActivationCtx): Promise<void> {
     username: "mantis",
     embeds: [
       {
-        title: `✅ Mantis connected: ${ctx.key.memo}`,
-        url: keyUrl(ctx.key.publicId),
+        title: `✅ Mantis connected: ${ctx.label}`,
+        url: ctx.url,
         color: 0x10b981, // emerald-500
-        description:
-          "This webhook is now configured. You'll get an alert here when the key fires.",
+        description: scopeNote(ctx),
         timestamp: new Date().toISOString(),
       },
     ],
@@ -180,19 +203,19 @@ async function activateTeams(ctx: ActivationCtx): Promise<void> {
               type: "TextBlock",
               size: "Medium",
               weight: "Bolder",
-              text: `✅ Mantis connected: ${ctx.key.memo}`,
+              text: `✅ Mantis connected: ${ctx.label}`,
               wrap: true,
             },
             {
               type: "TextBlock",
-              text: `[Open key in dashboard](${keyUrl(ctx.key.publicId)})`,
+              text: `[Open in dashboard](${ctx.url})`,
               wrap: true,
               isSubtle: true,
               spacing: "Small",
             },
             {
               type: "TextBlock",
-              text: "This webhook is now configured. You'll get an alert here when the key fires.",
+              text: `This webhook is now configured. ${scopeNote(ctx)}`,
               wrap: true,
               spacing: "Small",
             },
@@ -206,13 +229,13 @@ async function activateTeams(ctx: ActivationCtx): Promise<void> {
 async function activateHomeAssistant(ctx: ActivationCtx): Promise<void> {
   await postJson(ctx.target, {
     type: "mantis.activation",
-    memo: ctx.key.memo,
-    key_url: keyUrl(ctx.key.publicId),
-    key_public_id: ctx.key.publicId,
+    scope: ctx.keyId === null ? "global" : "key",
+    memo: ctx.label,
+    key_url: ctx.url,
+    key_public_id: ctx.publicId,
     activation: true,
     connected_at: new Date().toISOString(),
-    message:
-      "Mantis Home Assistant destination connected. Hit alerts will arrive at this webhook.",
+    message: `Mantis Home Assistant destination connected. ${scopeNote(ctx)}`,
   });
 }
 

@@ -10,6 +10,7 @@ import { backupCmd, restoreCmd } from "./commands/backup.js";
 import { bulkCreateCmd } from "./commands/bulk-create.js";
 import { completionCmd } from "./commands/completion.js";
 import { detectCmd } from "./commands/detect.js";
+import { deviceNewCmd, deviceProfilesCmd } from "./commands/device.js";
 import { doctorCmd } from "./commands/doctor.js";
 import {
   addDestinationCmd,
@@ -25,6 +26,7 @@ import {
   mintCmd as edgeMintCmd,
   setKeyCmd as edgeSetKeyCmd,
 } from "./commands/edge.js";
+import { edgeDeviceCmd } from "./commands/edge-device.js";
 import { hitsCmd } from "./commands/hits.js";
 import { installCmd } from "./commands/install.js";
 import { listCmd } from "./commands/list.js";
@@ -54,6 +56,7 @@ import {
   setQuiet,
   type OutputMode,
 } from "./lib/out.js";
+import { ALL_CHANNELS, EDGE_CHANNELS } from "./lib/channels.js";
 
 type GlobalRaw = {
   baseUrl?: string;
@@ -460,6 +463,45 @@ cloudflare
     await cloudflareStatusCmd();
   });
 
+const device = program
+  .command("device")
+  .description("mint and install the full set of host alarms for one machine");
+
+device
+  .command("profiles")
+  .description("list the alarms each OS profile would mint")
+  .action(async () => {
+    await deviceProfilesCmd(withGlobals(program, {}));
+  });
+
+device
+  .command("new")
+  .description(
+    "mint one key per host alarm for a machine (login, sudo, wake, boot, network)",
+  )
+  .addOption(
+    new Option(
+      "-o, --os <os>",
+      "target OS; 'auto' uses this machine's, which is only safe when you are on it",
+    ).choices(["macos", "linux", "windows", "auto"]),
+  )
+  .option(
+    "-n, --name <name>",
+    "machine these alarms are for; appears in every memo. Defaults to this host's name only with --install",
+  )
+  .option(
+    "--vectors <list>",
+    "comma-separated alarm slugs (see `mantis device profiles`); defaults to the profile's recommended set",
+  )
+  .option("--all", "every alarm in the profile, including ones needing extra setup")
+  .option("--bundle <path>", "write the install bundle (.zip) to this path")
+  .option("--install", "apply the alarms to THIS machine now (asks first)")
+  .option("-y, --yes", "skip the --install confirmation")
+  .option("--dry-run", "show what would be minted, and mint nothing")
+  .action(async (opts) => {
+    await deviceNewCmd(withGlobals(program, opts));
+  });
+
 const edge = program
   .command("edge")
   .description("manage stateless mantis-edge (Cloudflare Worker) keys");
@@ -545,7 +587,7 @@ edge
     new Option(
       "--channel <channel>",
       "destination channel formatter — sends a payload shaped for this service",
-    ).choices(["webhook", "slack", "discord", "teams"]),
+    ).choices([...EDGE_CHANNELS]),
   )
   .addOption(
     new Option("--response-kind <kind>", "trigger response shape")
@@ -591,6 +633,75 @@ edge
     ) => {
       const globals = cmd.parent!.parent!.opts<GlobalRaw>();
       await edgeMintCmd({
+        ...opts,
+        key: opts.edgeKey,
+        profile: globals.profile,
+      });
+    },
+  );
+
+edge
+  .command("device")
+  .description(
+    "mint one stateless edge URL per host alarm for a machine and write an install bundle DIRECTORY (no server, no database)",
+  )
+  .addOption(
+    new Option(
+      "-o, --os <os>",
+      "target OS; 'auto' uses this machine's, which is only safe when you are on it",
+    ).choices(["macos", "linux", "windows", "auto"]),
+  )
+  .option(
+    "-n, --name <name>",
+    "machine these alarms are for; appears in every memo. Defaults to this host's name only with --install",
+  )
+  .option(
+    "--vectors <list>",
+    "comma-separated alarm slugs (see `mantis device profiles`); defaults to the profile's recommended set",
+  )
+  .option("--all", "every alarm in the profile, including ones needing extra setup")
+  .option(
+    "--bundle <dir>",
+    "write the install bundle to this DIRECTORY (must not already have contents)",
+  )
+  .option("--install", "apply the alarms to THIS machine now (asks first)")
+  .option("-y, --yes", "skip the --install confirmation")
+  .option("--dry-run", "show what would be minted, and mint nothing")
+  .option(
+    "--worker <url>",
+    "worker base URL (https://…); falls back to current profile's edge worker",
+  )
+  .option(
+    "--webhook <url>",
+    "webhook URL the worker POSTs on hit — every minted URL embeds it",
+  )
+  .addOption(
+    new Option(
+      "--channel <channel>",
+      "destination channel formatter — sends a payload shaped for this service",
+    ).choices([...EDGE_CHANNELS]),
+  )
+  .option("--edge-key <base64url>", "override stored AES key for this mint")
+  .action(
+    async (
+      opts: {
+        os?: string;
+        name?: string;
+        vectors?: string;
+        all?: boolean;
+        bundle?: string;
+        install?: boolean;
+        yes?: boolean;
+        dryRun?: boolean;
+        worker?: string;
+        webhook?: string;
+        channel?: string;
+        edgeKey?: string;
+      },
+      cmd: Command,
+    ) => {
+      const globals = cmd.parent!.parent!.opts<GlobalRaw>();
+      await edgeDeviceCmd({
         ...opts,
         key: opts.edgeKey,
         profile: globals.profile,
@@ -676,7 +787,7 @@ program
   .argument("[memo]", "human-readable label for the key")
   .option(
     "-N, --notify <spec>",
-    "notification destination as <channel>:<target>. Channels: webhook, email, slack, discord, teams. Repeatable.",
+    `notification destination as <channel>:<target>. Channels: ${ALL_CHANNELS.join(", ")}. Repeatable.`,
     collect,
     [] as string[],
   )
@@ -736,7 +847,7 @@ program
   )
   .option(
     "-N, --notify <spec>",
-    "destination for every row as <channel>:<target>. Channels: webhook, email, slack, discord, teams. Repeatable.",
+    `destination for every row as <channel>:<target>. Channels: ${ALL_CHANNELS.join(", ")}. Repeatable.`,
     collect,
     [] as string[],
   )
@@ -772,6 +883,18 @@ program
   .option("--eml <file>", "save an .eml email message to this path")
   .option("--ics <file>", "save an .ics calendar event to this path")
   .option("--vcf <file>", "save a .vcf contact card to this path")
+  .option("--rtf <file>", "save an .rtf document (beacons on open, plain text) to this path")
+  // Credential and config stores: the bait fires when the URL inside is USED,
+  // not when the file is opened. Save each under the name the real thing has —
+  // cookies.txt, .netrc, ~/.aws/credentials — or it fools nobody.
+  .option("--cookies <file>", "save a Netscape cookies.txt session jar to this path")
+  .option("--bookmarks <file>", "save a browser bookmarks.html export to this path")
+  .option("--env <file>", "save a .env credentials file to this path")
+  .option("--aws-credentials <file>", "save an ~/.aws/credentials file to this path")
+  .option("--netrc <file>", "save a .netrc (auto-read by curl/wget/git) to this path")
+  .option("--kubeconfig <file>", "save a kubeconfig with a bait API server to this path")
+  .option("--ovpn <file>", "save an OpenVPN profile to this path")
+  .option("--rdp <file>", "save a Remote Desktop profile to this path")
   .action(async (id: string, opts, cmd: Command) => {
     await downloadCmd(id, withGlobals(cmd.parent!, opts));
   });
@@ -932,13 +1055,9 @@ destinations
   .argument("[channel]", "destination channel")
   .argument("[target]", "URL or email")
   .addOption(
-    new Option("--channel <channel>", "destination channel").choices([
-      "webhook",
-      "email",
-      "slack",
-      "discord",
-      "teams",
-    ]),
+    new Option("--channel <channel>", "destination channel").choices(
+      ALL_CHANNELS,
+    ),
   )
   .option("--target <target>", "URL or email")
   .action(async (

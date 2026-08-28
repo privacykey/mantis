@@ -3,23 +3,25 @@
   "version": "0.1.1",
   "license": "MIT",
   "private": true,
-  "packageManager": "pnpm@11.1.1",
+  "packageManager": "pnpm@11.1.3",
   "type": "module",
   "engines": {
     "node": ">=25.8.0"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "pnpm run build:core && next dev",
+    "build": "pnpm run build:core && next build",
+    "build:core": "pnpm --filter @mantis/core run build",
     "start": "next start",
     "setup": "bash scripts/setup.sh",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
+    "check": "pnpm run build:core && pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
     "build:cli-bin": "bash cli/scripts/build-bin.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:db": "bash scripts/test-integration.sh",
+    "test:tier2": "bash scripts/test-tier2.sh",
     "setup:hooks": "bash scripts/install-hooks.sh",
     "bench": "pnpm run bench:cli",
     "bench:all": "pnpm run bench:cli && pnpm run bench:edge && pnpm run bench:server",
@@ -32,11 +34,12 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@mantis/core": "workspace:*",
     "@tailwindcss/postcss": "^4.3.2",
     "drizzle-orm": "^0.45.2",
     "jszip": "^3.10.1",
-    "nanoid": "^5.1.16",
-    "next": "^16.2.10",
+    "nanoid": "^6.0.0",
+    "next": "^16.2.12",
     "nodemailer": "^9.0.3",
     "passkit-generator": "^3.5.7",
     "pdf-lib": "^1.17.1",
@@ -47,7 +50,7 @@
     "react-dom": "^19.2.7",
     "tailwindcss": "^4.3.2",
     "ua-parser-js": "^2.0.10",
-    "undici": "^8.7.0",
+    "undici": "^8.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

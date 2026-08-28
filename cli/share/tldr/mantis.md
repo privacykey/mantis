@@ -20,9 +20,13 @@
 
 `mantis new "{{memo}}" --pdf {{path/to/decoy.pdf}}`
 
-- Mint one key per host alarm (login, sudo, wake, boot, network) for a machine:
+- Arm a whole machine — one key per host alarm — and write an install bundle:
 
-`mantis device new --os {{macos|linux|windows}} --name {{hostname}}`
+`mantis device new --os {{macos|linux|windows}} --name {{hostname}} --bundle {{path/to/bundle.zip}}`
+
+- Arm a machine with stateless edge URLs instead, writing the bundle as a directory:
+
+`mantis edge device --os {{macos|linux|windows}} --name {{hostname}} --webhook {{https://example.com/hook}} --bundle {{path/to/directory}}`
 
 - Bulk-create keys from a CSV and write an output CSV with the generated URLs:
 
@@ -31,7 +35,3 @@
 - Add a webhook notification destination to an existing key:
 
 `mantis destinations add {{key_id}} webhook {{https://example.com/hook}}`
-
-- Mint a stateless URL served by an edge worker, without a server:
-
-`mantis edge mint`

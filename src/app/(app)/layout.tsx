@@ -31,6 +31,20 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
                 new
               </Link>
               <Link
+                href="/keys/bulk"
+                className="text-neutral-400 no-underline hover:text-neutral-200"
+                title="Mint many keys at once and download them as a zip"
+              >
+                bulk
+              </Link>
+              <Link
+                href="/keys/device"
+                className="text-neutral-400 no-underline hover:text-neutral-200"
+                title="Mint every host alarm for one machine and download an install bundle"
+              >
+                machine
+              </Link>
+              <Link
                 href="/inbox"
                 className="text-neutral-400 no-underline hover:text-neutral-200"
                 title="Catch-all dev inbox: captures notifications when no real destination is configured"
@@ -42,14 +56,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               </Link>
               {session.isAdmin && (
                 <Link
-                  href="/settings/wallet"
+                  href="/settings/notifications"
                   className="text-neutral-400 no-underline hover:text-neutral-200"
                 >
                   settings
                 </Link>
               )}
               <a
-                href="https://github.com/privacykey/mantis-docs"
+                href="https://docs.mantis.privacykey.org"
                 className="text-neutral-400 no-underline hover:text-neutral-200"
                 title="Documentation (opens in new tab)"
                 target="_blank"

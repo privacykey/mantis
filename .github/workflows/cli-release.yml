@@ -46,7 +46,9 @@ jobs:
       tag: ${{ steps.compute.outputs.tag }}
       should_release: ${{ steps.compute.outputs.should_release }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Compute version + tag
         id: compute
         shell: bash
@@ -142,14 +144,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No explicit version: reads "packageManager" from package.json.
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
-          version: 11.1.1
           run_install: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "25.8.0"
+          node-version-file: .nvmrc
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
 
@@ -164,6 +168,11 @@ jobs:
 
       - name: Install CLI dependencies (host-native bindings)
         run: pnpm install --frozen-lockfile
+
+      # The CLI imports @mantis/core, whose exports map points at dist —
+      # compile it before bun bundles the workspace dep into the binary.
+      - name: Build @mantis/core
+        run: pnpm --filter @mantis/core run build
 
       - name: Compile binary for ${{ matrix.target }}
         working-directory: cli
@@ -286,7 +295,7 @@ jobs:
           fi
 
       - name: Checkout privacykey/homebrew-tap
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: privacykey/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

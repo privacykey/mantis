@@ -25,6 +25,16 @@ export default async function WalletSettingsPage() {
         </Link>
       </div>
 
+      <nav aria-label="settings" className="flex gap-4 text-xs mb-6">
+        <Link
+          href="/settings/notifications"
+          className="text-neutral-500 no-underline hover:text-neutral-300"
+        >
+          notifications
+        </Link>
+        <span className="text-neutral-200">apple wallet</span>
+      </nav>
+
       <h1 className="text-xl font-semibold mb-1">Apple Wallet</h1>
       <p className="text-sm text-neutral-500 mb-6">
         Configure Pass Type ID signing so keys can mint .pkpass files that

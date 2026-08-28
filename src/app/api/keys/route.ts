@@ -249,7 +249,13 @@ export async function GET(req: NextRequest) {
       .select()
       .from(notificationDestinations)
       .where(inArray(notificationDestinations.keyId, keyIds));
-    destByKey = groupBy(allDests, (d) => d.keyId);
+    // keyId is nullable (NULL = a global destination), but the inArray filter
+    // above already excludes those — this narrows the type and keeps the
+    // per-key listing showing only destinations the key itself owns.
+    destByKey = groupBy(
+      allDests.filter((d): d is typeof d & { keyId: string } => d.keyId !== null),
+      (d) => d.keyId,
+    );
   }
 
   const data = slice.map((k) => serializeKey(k, destByKey.get(k.id) ?? []));

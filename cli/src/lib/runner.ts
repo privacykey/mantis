@@ -57,6 +57,14 @@ export async function withClient<T>(
       if (err.message.startsWith("no profile configured")) {
         const hint = await edgeSuggestion();
         if (hint) return fail(`${err.message}\n        ${hint}`, ExitCode.Auth);
+        // Nothing configured at all — not a server, not an edge worker. The
+        // base message assumes a server already exists to log into, which is
+        // exactly wrong for someone who just installed the CLI. Point them at
+        // the guided setup instead of leaving them to infer it.
+        return fail(
+          `${err.message}\n        New here? Run \`mantis init\` — it asks whether you want a server or a stateless Cloudflare Worker, and sets it up.`,
+          ExitCode.Auth,
+        );
       }
       return fail(err.message, ExitCode.Auth);
     }

@@ -156,6 +156,49 @@ export type InstallerMeta = {
   notes?: string;
 };
 
+/**
+ * Device-profile catalog, fetched rather than duplicated.
+ *
+ * `installers.ts` in this package is a hand-maintained port of the server's
+ * module and must be kept in sync by hand. Not repeating that here: the CLI
+ * asks the server what a profile contains, so a new vector needs no CLI change
+ * and the two can't disagree.
+ */
+export type DeviceExtraSetup = {
+  what: string;
+  why: string;
+  detect: string;
+  install: string[];
+  requires: { detect: string; label: string };
+};
+
+export type DeviceVectorMeta = {
+  slug: string;
+  label: string;
+  blurb: string;
+  install_type: string;
+  response_kind: Key["response_kind"];
+  dedupe_window_seconds: number;
+  needs_root: boolean;
+  needs_extra_setup: DeviceExtraSetup | null;
+};
+
+export type DeviceProfileMeta = {
+  os: string;
+  label: string;
+  blurb: string;
+  /** Slugs selected unless the operator says otherwise. */
+  defaults: string[];
+  vectors: DeviceVectorMeta[];
+};
+
+export type DeviceBundleFiles = {
+  root: string;
+  installScript: string;
+  uninstallScript: string;
+  files: Record<string, string>;
+};
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body: unknown;
@@ -261,8 +304,15 @@ export class MantisClient {
 
   createKey(input: {
     memo: string;
+    /**
+     * Stable machine identity. The server absorbs a duplicate via the unique
+     * index on external_id and returns the EXISTING key, which is what makes
+     * `mantis device new` safe to re-run against a rebuilt host.
+     */
+    external_id?: string;
     response_kind?: Key["response_kind"];
     response_payload?: unknown;
+    dedupe_window_seconds?: number;
     destinations?: Array<{ channel: NotificationChannel; target: string }>;
     expires_at?: string;
   }): Promise<KeyWithDestinationResults> {
@@ -373,6 +423,60 @@ export class MantisClient {
     return (await res.json()) as InstallerMeta;
   }
 
+  deviceProfiles(): Promise<{ profiles: DeviceProfileMeta[] }> {
+    return this.req<{ profiles: DeviceProfileMeta[] }>("/api/device-profiles");
+  }
+
+  /**
+   * The bundle as a file map instead of a zip, for `--install`: the CLI writes
+   * these out and runs the same bootstrap the zip ships, rather than carrying a
+   * second implementation of the install recipes.
+   */
+  deviceBundleFiles(input: {
+    device: string;
+    os: string;
+    vectors: Array<{ id: string; slug: string }>;
+  }): Promise<DeviceBundleFiles> {
+    return this.req<DeviceBundleFiles>("/api/keys/device-bundle", {
+      method: "POST",
+      body: JSON.stringify(input),
+      query: { format: "json" },
+    });
+  }
+
+  /**
+   * Fetch the install bundle for an already-minted device suite. Built server
+   * side so the bootstrap-script logic lives in exactly one place — the CLI
+   * ships as a single binary and has no zip library of its own.
+   */
+  async downloadDeviceBundle(input: {
+    device: string;
+    os: string;
+    vectors: Array<{ id: string; slug: string }>;
+  }): Promise<{ data: Buffer; filename: string }> {
+    const url = new URL("/api/keys/device-bundle", this.auth.baseUrl);
+    const body = JSON.stringify(input);
+    const res = await this.fetchWithPolicy(url, {
+      method: "POST",
+      body,
+      headers: this.authHeaders(body),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new ApiError(
+        res.status,
+        text || null,
+        `bundle failed (HTTP ${res.status})`,
+      );
+    }
+    const disposition = res.headers.get("content-disposition") ?? "";
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    return {
+      data: Buffer.from(await res.arrayBuffer()),
+      filename: match?.[1] ?? `${input.device}-${input.os}.zip`,
+    };
+  }
+
   async downloadFile(
     id: string,
     format:
@@ -388,7 +492,16 @@ export class MantisClient {
       | "md"
       | "eml"
       | "ics"
-      | "vcf",
+      | "vcf"
+      | "rtf"
+      | "cookies"
+      | "bookmarks"
+      | "env"
+      | "aws-credentials"
+      | "netrc"
+      | "kubeconfig"
+      | "ovpn"
+      | "rdp",
   ): Promise<{ data: Buffer; filename: string }> {
     const url = new URL(
       `/api/keys/${encodeURIComponent(id)}/download`,
