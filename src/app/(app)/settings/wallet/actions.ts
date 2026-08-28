@@ -26,6 +26,11 @@ async function fileToBase64(file: File | null): Promise<string | null> {
   return buf.toString("base64");
 }
 
+/**
+ * Dormant: the dashboard upload form that submitted here was removed — wallet
+ * config is APPLE_PASS_* env-var driven now. Kept (with saveWalletConfig) so
+ * the DB path can be re-enabled without rework.
+ */
 export async function saveWalletConfigAction(
   _prev: WalletConfigState,
   formData: FormData,

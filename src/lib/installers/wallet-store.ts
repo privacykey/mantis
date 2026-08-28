@@ -132,8 +132,9 @@ export async function describeConfigSource(): Promise<{
 }
 
 /**
- * Saves (upserts) the wallet config row. Called from the dashboard settings
- * page after a successful .p12 upload + form submit.
+ * Saves (upserts) the wallet config row. No longer reachable from the
+ * dashboard — the settings upload form was removed in favour of APPLE_PASS_*
+ * env config. Kept so the DB path can be re-enabled without rework.
  */
 export async function saveWalletConfig(
   input: Omit<NewWalletConfig, "id" | "createdAt" | "updatedAt">,
