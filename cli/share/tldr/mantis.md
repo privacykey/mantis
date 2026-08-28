@@ -12,10 +12,6 @@
 
 `mantis new "{{memo}}" --copy`
 
-- List all keys, most recent first:
-
-`mantis list`
-
 - Tail hits live for the most recently created key:
 
 `mantis hits last --follow`
@@ -24,9 +20,13 @@
 
 `mantis new "{{memo}}" --pdf {{path/to/decoy.pdf}}`
 
-- Print a shell snippet that fires when someone opens an SSH session on a host:
+- Mint one key per host alarm (login, sudo, wake, boot, network) for a machine:
 
-`mantis install {{key_id}} --type shell --ssh-only`
+`mantis device new --os {{macos|linux|windows}} --name {{hostname}}`
+
+- Bulk-create keys from a CSV and write an output CSV with the generated URLs:
+
+`mantis bulk-create --csv {{path/to/input.csv}} --out {{path/to/output.csv}}`
 
 - Add a webhook notification destination to an existing key:
 
