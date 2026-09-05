@@ -8,10 +8,10 @@ setup:
     pnpm install
     pnpm run setup
 
-# Run the unit test suite
+# Run server, CLI, and edge unit tests
 [group("dev")]
 test:
-    pnpm run test
+    pnpm run test:all
 
 # Typecheck every workspace package
 [group("dev")]

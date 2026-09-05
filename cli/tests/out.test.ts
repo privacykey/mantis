@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { c, formatTime, setColorMode, truncate } from "../src/lib/out.js";
 
 describe("formatTime", () => {
@@ -21,6 +21,13 @@ describe("formatTime", () => {
 });
 
 describe("truncate", () => {
+  beforeEach(() => {
+    vi.stubEnv("TERM", "xterm-256color");
+    vi.stubEnv("LC_ALL", "en_US.UTF-8");
+    vi.stubEnv("MANTIS_ASCII", "");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
   it("returns short strings unchanged", () => {
     expect(truncate("hello", 10)).toBe("hello");
   });
@@ -37,12 +44,8 @@ describe("truncate", () => {
   });
 
   it("uses an ASCII ellipsis when unicode is disabled", () => {
-    process.env.MANTIS_ASCII = "1";
-    try {
-      expect(truncate("hello world", 6)).toBe("hel...");
-    } finally {
-      delete process.env.MANTIS_ASCII;
-    }
+    vi.stubEnv("MANTIS_ASCII", "1");
+    expect(truncate("hello world", 6)).toBe("hel...");
   });
 });
 

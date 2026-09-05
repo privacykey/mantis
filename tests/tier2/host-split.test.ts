@@ -41,6 +41,28 @@ describe("proxy host-split (runtime-applied)", () => {
     expect(res.headers["content-type"]).toContain("image/gif");
   });
 
+  it("serves generated URLs with the configured public prefix", async () => {
+    const key = await seedCanaryKey(null);
+    const prefix = (process.env.MANTIS_PUBLIC_PATH ?? "/c").replace(/\/+$/, "");
+    const path = prefix.startsWith("/") ? prefix : `/${prefix}`;
+    const res = await rawRequest(`${path}/${key.publicId}?source=launch-test`, { host: PUBLIC_HOST });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("image/gif");
+    expect(res.headers["cache-control"]).toContain("no-store");
+  });
+
+  it("preserves the HTML sandbox on custom trigger URLs", async () => {
+    const key = await seedCanaryKey(null, {
+      responseKind: "html", responsePayload: { html: "<p>canary</p>" },
+    });
+    const prefix = (process.env.MANTIS_PUBLIC_PATH ?? "/c").replace(/\/+$/, "");
+    const path = prefix.startsWith("/") ? prefix : `/${prefix}`;
+    const res = await rawRequest(`${path}/${key.publicId}`, { host: PUBLIC_HOST });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-security-policy"]).toContain("sandbox");
+    expect(res.body).toBe("<p>canary</p>");
+  });
+
   it("fails closed on an unknown Host: dashboard blocked, public paths served", async () => {
     // No host override → Host is 127.0.0.1:<port>, in neither configured list.
     const blocked = await rawRequest("/keys");

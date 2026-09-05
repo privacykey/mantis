@@ -35,6 +35,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: typecheck all packages
         run: pnpm run check
+      - name: package edge worker (no deployment)
+        run: pnpm --filter @mantis/edge exec wrangler deploy --dry-run --outdir dist
+        env:
+          WRANGLER_SEND_METRICS: "false"
 
   test:
     name: unit + integration tests
@@ -75,8 +79,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: migrate
         run: pnpm run db:migrate
-      - name: test
-        run: pnpm test
+      - name: unit tests (server, CLI, edge)
+        run: pnpm run test:all
       # Full-stack integration tests run the real route handlers against the
       # Postgres service container above (migrations already applied). The
       # suite's globalSetup re-applies migrations idempotently.

@@ -1,5 +1,6 @@
 import { inArray } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/db/client";
 import { keys } from "@/db/schema";
 import { requireApiKeyOrSession } from "@/lib/auth";
@@ -24,6 +25,7 @@ export const runtime = "nodejs";
 
 /** A machine has a bounded number of alarms; well above any real profile. */
 const MAX_VECTORS = 20;
+const uuidSchema = z.uuid();
 
 type VectorRef = { id: string; slug: string };
 
@@ -85,10 +87,13 @@ export async function POST(req: NextRequest) {
     if (typeof id !== "string" || typeof slug !== "string") {
       return bad("each vector needs a string id and slug");
     }
+    if (!uuidSchema.safeParse(id).success) {
+      return bad("each vector id must be a valid UUID");
+    }
     if (!getVector(os, slug)) {
       return bad(`unknown vector "${slug}" for ${os}`);
     }
-    refs.push({ id, slug });
+    refs.push({ id: id.toLowerCase(), slug });
   }
 
   // A slug maps to one installer destination on the host, so two keys claiming

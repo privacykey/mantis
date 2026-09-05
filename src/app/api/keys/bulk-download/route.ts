@@ -1,6 +1,7 @@
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import JSZip from "jszip";
 import { type NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/db/client";
 import { keys } from "@/db/schema";
 import { requireApiKeyOrSession } from "@/lib/auth";
@@ -9,6 +10,7 @@ import {
   FILE_EXT,
   FIXED_BASENAME,
   generateFile,
+  isAttributionFormat,
   type FileFormat,
 } from "@/lib/docs";
 import { keyUrl } from "@/lib/env";
@@ -25,6 +27,7 @@ export const runtime = "nodejs";
 
 /** Matches the per-submission cap in the bulk create action. */
 const MAX_KEYS = 50;
+const uuidSchema = z.uuid();
 
 function isAllowed(v: string): v is FileFormat {
   return (ALL_FORMATS as string[]).includes(v);
@@ -84,9 +87,9 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (!ids.every((i): i is string => typeof i === "string")) {
+  if (!ids.every((i): i is string => uuidSchema.safeParse(i).success)) {
     return NextResponse.json(
-      { error: "bad_request", message: "ids must be strings" },
+      { error: "bad_request", message: "ids must be valid UUIDs" },
       { status: 400 },
     );
   }
@@ -129,6 +132,14 @@ export async function POST(req: NextRequest) {
         publicId: key.publicId,
         keyId: key.id,
       });
+      // Match single-file downloads: only a successful generation claims the
+      // format, and a concurrent or later download cannot overwrite it.
+      if (isAttributionFormat(fmt) && key.firstDownloadFormat == null) {
+        await db
+          .update(keys)
+          .set({ firstDownloadFormat: fmt })
+          .where(and(eq(keys.id, key.id), isNull(keys.firstDownloadFormat)));
+      }
       // Formats with a canonical filename keep it and get a folder per key —
       // `chrome-cookies-laptop/cookies.txt` rather than a jar named after the
       // memo, which is not a jar anyone would believe.

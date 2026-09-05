@@ -18,6 +18,7 @@
     "check": "pnpm run build:core && pnpm run typecheck && pnpm --filter @mantis/cli run typecheck && pnpm --filter @mantis/edge run typecheck && pnpm --filter @mantis/iot-helper run check",
     "build:cli-bin": "bash cli/scripts/build-bin.sh",
     "test": "vitest run",
+    "test:all": "pnpm test && pnpm --filter @mantis/cli test && pnpm --filter @mantis/edge test",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:db": "bash scripts/test-integration.sh",
