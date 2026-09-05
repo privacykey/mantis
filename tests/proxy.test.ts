@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { config, proxy } from "@/proxy";
+import { publicPathRewrite } from "@/lib/public-path";
 
 // Regression guard: the host-based public/dashboard split is only enforced if
 // proxy.ts is wired as the Next.js proxy entrypoint from this magic filename.
@@ -57,10 +58,45 @@ describe("proxy wiring", () => {
   });
 });
 
+// MANTIS_PUBLIC_PATH used to change only the minted URL; nothing routed the
+// custom prefix, so every canary URL 404'd. The proxy now rewrites it.
+describe("MANTIS_PUBLIC_PATH rewrite", () => {
+  const orig = process.env.MANTIS_PUBLIC_PATH;
+  afterEach(() => {
+    if (orig === undefined) delete process.env.MANTIS_PUBLIC_PATH;
+    else process.env.MANTIS_PUBLIC_PATH = orig;
+  });
+
+  it("maps <prefix>/<id> onto /c/<id> and nothing else", () => {
+    expect(publicPathRewrite("/r/Qe6VcVkVkK", "/r")).toBe("/c/Qe6VcVkVkK");
+    expect(publicPathRewrite("/track/abc123", "track/")).toBe("/c/abc123");
+    expect(publicPathRewrite("/r/not valid", "/r")).toBeNull();
+    expect(publicPathRewrite("/r/a/b", "/r")).toBeNull();
+    expect(publicPathRewrite("/rx/abc123", "/r")).toBeNull();
+    expect(publicPathRewrite("/c/abc123", "/r")).toBeNull();
+    expect(publicPathRewrite("/c/abc123", undefined)).toBeNull();
+    expect(publicPathRewrite("/c/abc123", "/c")).toBeNull();
+  });
+
+  it("proxy rewrites a custom-prefix trigger URL to the handler", () => {
+    process.env.MANTIS_PUBLIC_PATH = "/r";
+    const res = proxy(new NextRequest("https://mantis.example/r/Qe6VcVkVkK"));
+    expect(res.headers.get("x-middleware-rewrite")).toBe(
+      "https://mantis.example/c/Qe6VcVkVkK",
+    );
+  });
+
+  it("proxy leaves other paths alone under a custom prefix", () => {
+    process.env.MANTIS_PUBLIC_PATH = "/r";
+    const res = proxy(new NextRequest("https://mantis.example/api/keys"));
+    expect(res.headers.get("x-middleware-rewrite")).toBeNull();
+  });
+});
+
 describe("custom public trigger prefix", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it.each(["/track", "track", "/track/"])("routes %j to the trigger handler", (prefix) => {
+  it.each(["/track", "track", "/track/", " /track/ "])("routes %j to the trigger handler", (prefix) => {
     vi.stubEnv("MANTIS_PUBLIC_PATH", prefix);
     vi.stubEnv("PUBLIC_ONLY_HOSTS", "public.example");
     vi.stubEnv("DASHBOARD_HOSTS", "private.example");

@@ -42,6 +42,11 @@ primary_region = "iad"
   LOG_LEVEL = "info"
   PORT = "3000"
 
+  # Row retention. Without these, hits and notifications are kept forever
+  # (the app warns on every boot) and the database grows without bound.
+  MANTIS_HIT_RETENTION_DAYS = "90"
+  MANTIS_NOTIFICATION_RETENTION_DAYS = "30"
+
   # REQUIRED ON FLY. The image sets NODE_ENV=production, and in production
   # mantis distrusts forwarding headers unless told otherwise — so without
   # this EVERY hit records ip = null (verified against this exact image),

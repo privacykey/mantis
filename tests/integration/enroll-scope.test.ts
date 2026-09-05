@@ -273,7 +273,7 @@ describe("idempotent enrollment via external_id", () => {
     expect(claimsAudit[0]!.subjectId).toBe(created.id);
   });
 
-  it("claims by non-owners return the reduced shape; admins get the full shape", async () => {
+  it("cross-key enroll claims get the URL only; unrelated full keys 409; admins get the full shape", async () => {
     sink = await startSink();
     const owner = await seedApiKey({ name: "provisioner" });
     const stranger = await seedApiKey({ name: "other-full-key" });
@@ -298,19 +298,22 @@ describe("idempotent enrollment via external_id", () => {
     expect(enrollBody.id).toBe(created.id);
     expect(enrollBody.reused).toBe(true);
     expect(enrollBody.url).toBe(created.url);
-    // …but nothing about alert routing leaks to it.
+    // …but nothing about alert routing leaks to it, and neither does the
+    // creator's memo (it did not write it).
     expect(enrollBody).not.toHaveProperty("destinations");
     expect(enrollBody).not.toHaveProperty("monitor_mode");
+    expect(enrollBody.memo).toBeNull();
 
-    // An unrelated full key is treated the same as the enroll key.
+    // An unrelated full key has no fleet role: bare 409, nothing disclosed.
     const strangerClaim = await post(stranger.plaintext, {
       memo: "ignored",
       external_id: "SERIAL7",
     });
-    expect(strangerClaim.status).toBe(200);
-    const strangerBody = (await strangerClaim.json()) as KeyResponse;
-    expect(strangerBody.id).toBe(created.id);
-    expect(strangerBody).not.toHaveProperty("destinations");
+    expect(strangerClaim.status).toBe(409);
+    const strangerText = await strangerClaim.text();
+    expect(strangerText).not.toContain(created.id);
+    expect(strangerText).not.toContain(created.url);
+    expect(strangerText).not.toContain("mac-7");
 
     // Admin claim sees the whole thing (it could GET the key anyway).
     const adminClaim = await post(admin.plaintext, {

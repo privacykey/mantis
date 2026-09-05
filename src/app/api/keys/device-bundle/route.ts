@@ -51,8 +51,8 @@ export async function POST(req: NextRequest) {
         { status: 413 },
       );
     }
-    if (!(err instanceof BodyParseError)) throw err;
-    return bad("body must be JSON");
+    if (err instanceof BodyParseError) return bad("body must be JSON");
+    throw err;
   }
 
   const {

@@ -1,32 +1,24 @@
 # mantis
 
-> Self-hostable tripwires CLI — create trigger URLs that fire notifications when accessed.
-> Stores API keys in the OS keychain and supports multiple profiles per server.
+> Client for a self-hostable canary and tripwire service.
+> Mint trigger URLs that fire a notification when someone accesses them.
 > More information: <https://github.com/privacykey/mantis>.
 
-- Log in to a Mantis server (prompts for URL and API key):
+- Run the guided first-time setup and create a first key:
 
-`mantis login`
+`mantis init`
 
-- Create a new tripwire key with a memo and copy the URL to the clipboard:
+- Create a new key with a memo and copy its trigger URL to the clipboard:
 
 `mantis new "{{memo}}" --copy`
 
-- List all keys, most recent first:
-
-`mantis list`
-
-- Tail hits live for the most-recently-created key:
+- Tail hits live for the most recently created key:
 
 `mantis hits last --follow`
 
-- Generate a honey-PDF that fires when opened:
+- Create a key with a decoy PDF that fires when the file is opened:
 
 `mantis new "{{memo}}" --pdf {{path/to/decoy.pdf}}`
-
-- Add a webhook destination to an existing key (fires an activation ping):
-
-`mantis dest add {{key_id}} webhook {{https://example.com/hook}}`
 
 - Arm a whole machine — one key per host alarm — and write an install bundle:
 
@@ -34,12 +26,12 @@
 
 - Arm a machine with stateless edge URLs instead, writing the bundle as a directory:
 
-`mantis edge device --os {{macos|linux|windows}} --name {{hostname}} --webhook {{https://example.com/hook}} --bundle {{path/to/dir}}`
+`mantis edge device --os {{macos|linux|windows}} --name {{hostname}} --webhook {{https://example.com/hook}} --bundle {{path/to/directory}}`
 
-- Run an offline self-audit for mantis-style installer artifacts on this machine:
+- Bulk-create keys from a CSV and write an output CSV with the generated URLs:
 
-`mantis detect --scope {{user|system|all}}`
+`mantis bulk-create --csv {{path/to/input.csv}} --out {{path/to/output.csv}}`
 
-- Print a shell completion script (already wired up by the Homebrew formula):
+- Add a webhook notification destination to an existing key:
 
-`mantis completion {{bash|zsh|fish}}`
+`mantis destinations add {{key_id}} webhook {{https://example.com/hook}}`

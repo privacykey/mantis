@@ -283,7 +283,7 @@ export type WalletConfig = typeof walletConfig.$inferSelect;
 export type NewWalletConfig = typeof walletConfig.$inferInsert;
 
 // Append-only audit log of state changes. Append-only enforced by trigger
-// (migration 0009) — see lib/retention.ts for the purge path that bypasses
+// (migration 0000_initial) — see lib/retention.ts for the purge path that bypasses
 // the trigger via a transaction-local GUC.
 export const auditEvents = pgTable(
   "audit_events",

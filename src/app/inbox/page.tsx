@@ -85,7 +85,7 @@ export default function InboxPage() {
       >
         <h1 style={{ fontSize: "1.25rem", margin: 0 }}>inbox</h1>
         <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-          <span style={{ color: "#737373", fontSize: "0.875rem" }}>
+          <span style={{ color: "#8f8f8f", fontSize: "0.875rem" }}>
             {captures.length} {captures.length === 1 ? "capture" : "captures"}
           </span>
           <button
@@ -101,7 +101,7 @@ export default function InboxPage() {
         </div>
       </div>
 
-      <p style={{ color: "#737373", marginTop: 0, fontSize: "0.875rem" }}>
+      <p style={{ color: "#8f8f8f", marginTop: 0, fontSize: "0.875rem" }}>
         Point any mantis webhook at{" "}
         <code style={codeStyle}>{`{base-url}/inbox/<any-slug>`}</code> and
         captures will appear here live.
@@ -123,7 +123,7 @@ export default function InboxPage() {
       )}
 
       {captures.length === 0 && !error && (
-        <div style={{ color: "#525252", textAlign: "center", padding: "3rem 0" }}>
+        <div style={{ color: "#808080", textAlign: "center", padding: "3rem 0" }}>
           waiting for captures…
         </div>
       )}
@@ -162,7 +162,7 @@ function CaptureCard({ capture }: { capture: Capture }) {
           {capture.method}
         </span>
         <span style={{ color: "#e5e5e5", flex: 1 }}>{capture.url}</span>
-        <span style={{ color: "#737373", fontSize: "0.75rem" }}>
+        <span style={{ color: "#8f8f8f", fontSize: "0.75rem" }}>
           {relative(capture.captured_at)}
         </span>
       </summary>
@@ -214,7 +214,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div style={{ marginTop: "0.75rem" }}>
       <div
         style={{
-          color: "#737373",
+          color: "#8f8f8f",
           fontSize: "0.75rem",
           textTransform: "uppercase",
           letterSpacing: "0.05em",

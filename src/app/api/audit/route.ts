@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_LIMIT = 500;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_LIMIT = 100;
 
 /**
@@ -71,6 +73,12 @@ export async function GET(req: NextRequest) {
 
   const actor = url.searchParams.get("actor");
   if (actor) {
+    if (!UUID_RE.test(actor)) {
+      return NextResponse.json(
+        { error: "validation_error", message: "actor must be a full UUID" },
+        { status: 422 },
+      );
+    }
     conditions.push(eq(auditEvents.actorApiKeyId, actor));
   }
 

@@ -125,27 +125,54 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
+    // Who may re-claim an existing external_id:
+    //   - its creator or an admin: yes (full shape for full keys, reduced
+    //     shape for enroll keys — no alert routing either way);
+    //   - an enrollment-scoped key that did not create it: the reduced shape
+    //     WITHOUT the memo. This is the documented fleet flow (a re-imaged
+    //     Mac recovers its trigger URL by serial; enroll keys get rotated —
+    //     see deploy/kandji/README.md) and is audited as a cross-key claim;
+    //   - any other full key: bare 409. External ids are guessable (hostnames,
+    //     serials), and a full key that owns nothing here has no business
+    //     learning another tenant's memo and trigger URL, which is enough to
+    //     fire false alarms on their tripwire.
+    const owner = canAccessKey(auth.key, existing);
+    const crossKeyEnroll = !owner && isEnroll;
     await audit({
       type: "key.claimed",
       actorApiKeyId: auth.key.id,
       actorLabel: auth.key.name,
       subjectKind: "key",
       subjectId: existing.id,
-      metadata: { external_id: input.external_id, memo: existing.memo },
+      metadata: {
+        external_id: input.external_id,
+        ...(owner ? { memo: existing.memo } : {}),
+        ...(crossKeyEnroll ? { cross_key: true } : {}),
+        ...(!owner && !isEnroll ? { denied: true } : {}),
+      },
       ip: extractIp(req),
     });
-    // Full shape only for callers who could read the key anyway; a shared
-    // enroll credential (or an unrelated full key) gets the reduced shape so
-    // it can't read another creator's alert routing.
-    if (!isEnroll && canAccessKey(auth.key, existing)) {
-      const existingDests = await listDestinations(existing.id);
+    if (!owner && !isEnroll) {
       return NextResponse.json(
-        { ...serializeKey(existing, existingDests), reused: true },
+        {
+          error: "conflict",
+          message: "external_id is already in use by a key you cannot access",
+        },
+        { status: 409 },
+      );
+    }
+    if (isEnroll) {
+      return NextResponse.json(
+        {
+          ...serializeKeyForEnroll(existing, { includeMemo: owner }),
+          reused: true,
+        },
         { status: 200 },
       );
     }
+    const existingDests = await listDestinations(existing.id);
     return NextResponse.json(
-      { ...serializeKeyForEnroll(existing), reused: true },
+      { ...serializeKey(existing, existingDests), reused: true },
       { status: 200 },
     );
   }

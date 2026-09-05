@@ -42,17 +42,23 @@ export function serializeKey(
 /**
  * Reduced shape for enrollment responses: enough for a device to install its
  * tripwire (the trigger URL + its own identity), nothing about how alerts are
- * routed or monitored. Also returned when a caller claims an external_id owned
- * by a different API key, so a shared enroll credential can't be used to read
- * another creator's destination config.
+ * routed or monitored.
+ *
+ * `includeMemo: false` is the cross-key claim: an enrollment-scoped key that
+ * did NOT create the key may still recover a machine's trigger URL by serial
+ * (fleet re-image / enroll-key rotation — see deploy/kandji), but the memo is
+ * another creator's text and is withheld. Unrelated full keys get 409 instead.
  */
-export function serializeKeyForEnroll(k: Key) {
+export function serializeKeyForEnroll(
+  k: Key,
+  opts: { includeMemo?: boolean } = {},
+) {
   return {
     id: k.id,
     public_id: k.publicId,
     url: keyUrl(k.publicId),
     kind: k.kind,
-    memo: k.memo,
+    memo: opts.includeMemo === false ? null : k.memo,
     external_id: k.externalId,
     created_at: k.createdAt,
     disabled: k.disabledAt !== null,

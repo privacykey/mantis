@@ -8,7 +8,7 @@ production launch check.
 ## Repository checks
 
 - [x] Review open PRs and issues. No open issues; PR #84 fixes polling intervals
-  and PR #81 updates the CLI quick reference. Both have green CI.
+  and PR #81 updates the CLI quick reference. Both are merged with green CI.
 - [x] Check production dependencies: fresh `pnpm audit --prod` reports zero
   advisories; GitHub reports no open Dependabot alerts.
 - [x] Run all component unit tests: **284 server + 117 CLI + 64 edge = 465**
@@ -35,16 +35,17 @@ production launch check.
   the existing release has all four platform tarballs and `SHA256SUMS`. Add
   native smoke tests to the release workflow for each target before packaging.
 
-Local validation covers **567 passing tests** across unit, integration, and
-production HTTP suites. The polling regression tests in PR #84 are separate;
-that PR still needs to be merged. The checks here use test databases and local
-notification sinks, not production credentials or real alert destinations.
+The initial review covered **567 passing tests** across unit, integration, and
+production HTTP suites. The branch now also includes the security audit and
+polling regression tests from main; CI reruns all suites on the combined changes.
+The checks here use test databases and local notification sinks, not production
+credentials or real alert destinations.
 
 ## Release and deployment sign-off
 
 - [ ] Merge reviewed fixes, including PR #84, and verify CI on the release commit.
-- [ ] Select component versions and release only the reviewed commit. The current
-  CLI release is `cli-v0.2.0`; changes after that tag require a new release.
+- [ ] Publish patches from the reviewed commit: server `0.2.1`, CLI `0.2.2`,
+  and edge `0.1.5`. Previous releases are server `v0.2.0` and CLI `cli-v0.2.1`.
 - [ ] Verify the actual public URL, HTTPS termination, dashboard/public host
   separation, trusted proxy headers, and secure cookies in the target deployment.
 - [ ] Confirm production secrets, database backups, and a tested restore procedure.

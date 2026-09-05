@@ -1,5 +1,27 @@
 import { ExitCode, fail } from "./out.js";
 
+// Node resets delays above this limit to 1 ms instead of waiting longer.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/** Parse seconds for polling, preserving the existing one-second minimum. */
+export function parseIntervalMs(raw: string | undefined, fallback: number): number {
+  const seconds = Number(raw ?? fallback);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    fail(
+      `--interval must be a positive finite number of seconds (got ${raw})`,
+      ExitCode.Usage,
+    );
+  }
+  const ms = seconds * 1000;
+  if (ms > MAX_TIMER_DELAY_MS) {
+    fail(
+      `--interval must be at most ${MAX_TIMER_DELAY_MS / 1000} seconds (got ${raw})`,
+      ExitCode.Usage,
+    );
+  }
+  return Math.max(1000, ms);
+}
+
 /**
  * Validate a numeric `--limit` flag. Shared by `list`, `hits`, and `status` so
  * a bad value (`--limit abc`, `--limit -5`, `--limit 0`) fails the same way

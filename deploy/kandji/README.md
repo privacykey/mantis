@@ -45,7 +45,12 @@ the key, every later call (Kandji re-runs, reimaged machines) returns the
 same key — status `200` with `"reused": true` instead of `201`. A claim
 never changes the memo or destinations IT configured, and enroll-scoped
 callers get a reduced response (trigger URL and identity only, no alert
-routing, no signing secrets).
+routing, no signing secrets; `memo` is `null` when the enroll key is not the
+one that created the key). Such cross-key claims are audited as `key.claimed`
+with `cross_key: true` — the one thing an extracted enroll key can do is walk
+serials to recover other machines' trigger URLs, and that trail is how you
+spot it. A full-scope key that did not create the key gets `409` instead, so
+re-run [preprovision.sh](preprovision.sh) with the same key (or an admin key).
 
 ## Option A — self-enrolling (simplest)
 

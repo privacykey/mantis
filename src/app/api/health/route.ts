@@ -29,14 +29,16 @@ export async function GET() {
         },
       },
     );
-  } catch (err) {
+  } catch {
     return NextResponse.json(
       {
         status: "degraded",
         db: "fail",
         started_at: startedAt,
         version: MANTIS_VERSION,
-        error: err instanceof Error ? err.message : String(err),
+        // Fixed string on purpose: this endpoint is unauthenticated and the
+        // driver's message names the internal DB host/port.
+        error: "database unreachable",
       },
       {
         status: 503,

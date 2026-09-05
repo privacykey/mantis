@@ -1,4 +1,4 @@
-import { normalizePathPrefix } from "./public-only-hosts";
+import { normalizePublicPath } from "./public-path";
 
 function required(name: string): string {
   const v = process.env[name];
@@ -16,7 +16,7 @@ export const env = {
     /\/$/,
     "",
   ),
-  publicPath: normalizePathPrefix(optional("MANTIS_PUBLIC_PATH", "/c")),
+  publicPath: normalizePublicPath(process.env.MANTIS_PUBLIC_PATH),
   smtpUrl: process.env.SMTP_URL,
   smtpFrom: process.env.SMTP_FROM ?? "Mantis <mantis@localhost>",
   bootstrapApiKey: process.env.BOOTSTRAP_API_KEY,

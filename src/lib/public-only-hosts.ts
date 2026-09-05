@@ -1,3 +1,5 @@
+import { normalizePublicPath } from "./public-path";
+
 export type PublicOnlyDecision = {
   publicOnly: boolean;
   allowed: boolean;
@@ -17,11 +19,6 @@ const DEFAULT_PUBLIC_PREFIXES = [
   "/status",
   "/api/wallet",
 ] as const;
-
-export function normalizePathPrefix(prefix: string): string {
-  const withSlash = prefix.startsWith("/") ? prefix : `/${prefix}`;
-  return withSlash.length > 1 ? withSlash.replace(/\/+$/, "") : withSlash;
-}
 
 export function normalizeHost(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -72,7 +69,7 @@ export function isAllowedPublicPath(
   } = {},
 ): boolean {
   const prefixes = new Set<string>(DEFAULT_PUBLIC_PREFIXES);
-  prefixes.add(normalizePathPrefix(opts.publicPath ?? "/c"));
+  prefixes.add(normalizePublicPath(opts.publicPath));
 
   if (opts.allowHealth) prefixes.add("/api/health");
   if (opts.allowInbox) {

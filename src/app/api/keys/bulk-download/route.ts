@@ -65,11 +65,13 @@ export async function POST(req: NextRequest) {
         { status: 413 },
       );
     }
-    if (!(err instanceof BodyParseError)) throw err;
-    return NextResponse.json(
-      { error: "bad_request", message: "body must be JSON" },
-      { status: 400 },
-    );
+    if (err instanceof BodyParseError) {
+      return NextResponse.json(
+        { error: "bad_request", message: "body must be JSON" },
+        { status: 400 },
+      );
+    }
+    throw err;
   }
 
   const { ids, format } = (body ?? {}) as { ids?: unknown; format?: unknown };
