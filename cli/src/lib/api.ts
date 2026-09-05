@@ -60,7 +60,9 @@ export type KeyWithMonitorState = Key & {
 export type NotificationSummary = {
   id: string;
   channel: NotificationChannel;
-  target: string;
+  /** null when redacted: a global (admin-configured) destination, or one since removed. */
+  target: string | null;
+  destination_scope?: "key" | "global" | "unknown";
   status: "pending" | "in_flight" | "succeeded" | "failed" | "aborted";
   attempts: number;
   max_attempts: number;

@@ -54,6 +54,7 @@ test:integration` runs right after the unit suite.
 | `serving-safety` | `/c` redirect scheme re-check + HTML sandbox CSP; poisoned `javascript:` row → silent GIF |
 | `doc-generation` | Hostile memo → escaped OOXML (no XML-illegal control chars) + ICS/VCF lone-CR normalized (d69aad96) |
 | `api-key-mgmt` | Admin-only mint/revoke, owner-scoped list, 403-vs-404 hygiene, idempotent revoke |
+| `prelaunch-audit` | 2026-09-05 audit guards: global-destination targets redacted for non-admins, foreign `external_id` claims → 409, `/api/audit?actor=` validated, API-key minting admin-only, limiter on session-or-key bearer failures |
 
 Outbound tests use a real loopback HTTP sink (`_sink.ts`) with `ALLOW_PRIVATE_WEBHOOKS=1`;
 the SSRF-block cases leave it off. The marquee security guards were mutation-checked

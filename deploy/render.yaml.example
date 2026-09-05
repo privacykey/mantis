@@ -104,13 +104,13 @@ services:
       # - key: BOOTSTRAP_API_KEY
       #   sync: false
 
-      # Optional but recommended once you have real traffic: without these,
-      # hits and notifications are kept forever (the app warns on every boot),
-      # which grows the database unbounded and slows dashboard queries.
-      # - key: MANTIS_HIT_RETENTION_DAYS
-      #   value: "90"
-      # - key: MANTIS_NOTIFICATION_RETENTION_DAYS
-      #   value: "30"
+      # Row retention. Without these, hits and notifications are kept forever
+      # (the app warns on every boot), which grows the database unbounded and
+      # slows dashboard queries. Raise or remove if you need a longer trail.
+      - key: MANTIS_HIT_RETENTION_DAYS
+        value: "90"
+      - key: MANTIS_NOTIFICATION_RETENTION_DAYS
+        value: "30"
 
       # Optional: email alerts.
       # - key: SMTP_URL

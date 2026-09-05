@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { hits, keys, notifications, type Notification } from "@/db/schema";
 import { requireApiKeyOrSession } from "@/lib/auth";
 import { parseHostContext } from "@/lib/installers/headers";
+import { hitNotificationSerializer } from "@/lib/notify/redact";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,13 +60,17 @@ export async function GET(req: NextRequest) {
   const hitIds = data.map((row) => row.hit.id);
 
   let notifyByHit = new Map<string, Notification[]>();
+  let allNotifs: Notification[] = [];
   if (hitIds.length > 0) {
-    const allNotifs = await db
+    allNotifs = await db
       .select()
       .from(notifications)
       .where(inArray(notifications.hitId, hitIds));
     notifyByHit = groupByHit(allNotifs);
   }
+  // Global-destination targets are admin credentials; non-admins get them
+  // redacted (see lib/notify/redact.ts).
+  const serializeNotification = await hitNotificationSerializer(allNotifs, auth.key);
 
   const nextCursor = hasMore
     ? (rows[parsed.limit - 1]?.hit.occurredAt.toISOString() ?? null)
@@ -91,17 +96,7 @@ export async function GET(req: NextRequest) {
       bot_label: hit.botLabel,
       is_duplicate: hit.isDuplicate,
       host_context: parseHostContext(hit.headers as Record<string, string> | null),
-      notifications: (notifyByHit.get(hit.id) ?? []).map((n) => ({
-        id: n.id,
-        channel: n.channel,
-        target: n.target,
-        status: n.status,
-        attempts: n.attempts,
-        max_attempts: n.maxAttempts,
-        next_attempt_at: n.nextAttemptAt,
-        succeeded_at: n.succeededAt,
-        last_error: n.lastError,
-      })),
+      notifications: (notifyByHit.get(hit.id) ?? []).map(serializeNotification),
     })),
     next_cursor: nextCursor,
   });

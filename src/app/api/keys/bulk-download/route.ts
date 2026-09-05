@@ -13,6 +13,12 @@ import {
 } from "@/lib/docs";
 import { keyUrl } from "@/lib/env";
 import { log } from "@/lib/log";
+import {
+  BodyParseError,
+  BodyTooLargeError,
+  MAX_API_JSON_BYTES,
+  readBodyJson,
+} from "@/lib/safe-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,12 +54,21 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "bad_request", message: "body must be JSON" },
-      { status: 400 },
-    );
+    body = await readBodyJson(req, MAX_API_JSON_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: err.message },
+        { status: 413 },
+      );
+    }
+    if (err instanceof BodyParseError) {
+      return NextResponse.json(
+        { error: "bad_request", message: "body must be JSON" },
+        { status: 400 },
+      );
+    }
+    throw err;
   }
 
   const { ids, format } = (body ?? {}) as { ids?: unknown; format?: unknown };

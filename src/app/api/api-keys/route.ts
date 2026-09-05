@@ -72,13 +72,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Only an admin may mint another admin.
+  // Minting is admin-only. A non-admin that could mint siblings would keep a
+  // foothold after its own key is revoked (rows carry no lineage, so
+  // revocation can't cascade), and "enroll" keys are fleet credentials an
+  // operator should hand out deliberately. Self-revoke stays open to everyone.
   const wantsAdmin = parsed.data.is_admin === true;
-  if (wantsAdmin && !auth.key.isAdmin) {
+  if (!auth.key.isAdmin) {
     return NextResponse.json(
       {
         error: "forbidden",
-        message: "only an admin API key can mint another admin key",
+        message: "only an admin API key can mint API keys",
       },
       { status: 403 },
     );

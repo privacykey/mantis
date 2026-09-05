@@ -12,6 +12,12 @@ import {
 import { getVector, isDeviceOs } from "@mantis/core/device-profiles";
 import { env, keyUrl } from "@/lib/env";
 import { buildInstaller } from "@mantis/core/installers";
+import {
+  BodyParseError,
+  BodyTooLargeError,
+  MAX_API_JSON_BYTES,
+  readBodyJson,
+} from "@/lib/safe-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,9 +41,16 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
-    return bad("body must be JSON");
+    body = await readBodyJson(req, MAX_API_JSON_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: err.message },
+        { status: 413 },
+      );
+    }
+    if (err instanceof BodyParseError) return bad("body must be JSON");
+    throw err;
   }
 
   const {
