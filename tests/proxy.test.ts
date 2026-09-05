@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { config, proxy } from "@/proxy";
 
@@ -54,5 +54,27 @@ describe("proxy wiring", () => {
     process.env.DASHBOARD_HOSTS = "private.example";
     const res = proxy(new NextRequest("https://private.example/api/keys"));
     expect(res.status).toBe(200);
+  });
+});
+
+describe("custom public trigger prefix", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["/track", "track", "/track/"])("routes %j to the trigger handler", (prefix) => {
+    vi.stubEnv("MANTIS_PUBLIC_PATH", prefix);
+    vi.stubEnv("PUBLIC_ONLY_HOSTS", "public.example");
+    vi.stubEnv("DASHBOARD_HOSTS", "private.example");
+    const res = proxy(new NextRequest("https://public.example/track/abc123?source=test"));
+    expect(res.headers.get("x-middleware-rewrite")).toBe("https://public.example/c/abc123?source=test");
+    expect(proxy(new NextRequest("https://public.example/api/keys")).status).toBe(404);
+  });
+
+  it("does not rewrite nested paths or similar prefixes", () => {
+    vi.stubEnv("MANTIS_PUBLIC_PATH", "/track");
+    vi.stubEnv("PUBLIC_ONLY_HOSTS", "");
+    vi.stubEnv("DASHBOARD_HOSTS", "");
+    for (const path of ["/tracking/abc123", "/track/abc123/extra", "/api/keys"]) {
+      expect(proxy(new NextRequest(`https://example.com${path}`)).headers.get("x-middleware-rewrite")).toBeNull();
+    }
   });
 });

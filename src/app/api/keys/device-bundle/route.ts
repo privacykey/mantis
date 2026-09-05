@@ -1,5 +1,6 @@
 import { inArray } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/db/client";
 import { keys } from "@/db/schema";
 import { requireApiKeyOrSession } from "@/lib/auth";
@@ -12,12 +13,19 @@ import {
 import { getVector, isDeviceOs } from "@mantis/core/device-profiles";
 import { env, keyUrl } from "@/lib/env";
 import { buildInstaller } from "@mantis/core/installers";
+import {
+  BodyParseError,
+  BodyTooLargeError,
+  MAX_API_JSON_BYTES,
+  readBodyJson,
+} from "@/lib/safe-body";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** A machine has a bounded number of alarms; well above any real profile. */
 const MAX_VECTORS = 20;
+const uuidSchema = z.uuid();
 
 type VectorRef = { id: string; slug: string };
 
@@ -35,8 +43,15 @@ export async function POST(req: NextRequest) {
 
   let body: unknown;
   try {
-    body = await req.json();
-  } catch {
+    body = await readBodyJson(req, MAX_API_JSON_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      return NextResponse.json(
+        { error: "payload_too_large", message: err.message },
+        { status: 413 },
+      );
+    }
+    if (!(err instanceof BodyParseError)) throw err;
     return bad("body must be JSON");
   }
 
@@ -72,10 +87,13 @@ export async function POST(req: NextRequest) {
     if (typeof id !== "string" || typeof slug !== "string") {
       return bad("each vector needs a string id and slug");
     }
+    if (!uuidSchema.safeParse(id).success) {
+      return bad("each vector id must be a valid UUID");
+    }
     if (!getVector(os, slug)) {
       return bad(`unknown vector "${slug}" for ${os}`);
     }
-    refs.push({ id, slug });
+    refs.push({ id: id.toLowerCase(), slug });
   }
 
   // A slug maps to one installer destination on the host, so two keys claiming

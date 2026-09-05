@@ -18,7 +18,7 @@ const DEFAULT_PUBLIC_PREFIXES = [
   "/api/wallet",
 ] as const;
 
-function normalizePathPrefix(prefix: string): string {
+export function normalizePathPrefix(prefix: string): string {
   const withSlash = prefix.startsWith("/") ? prefix : `/${prefix}`;
   return withSlash.length > 1 ? withSlash.replace(/\/+$/, "") : withSlash;
 }

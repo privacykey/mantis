@@ -90,8 +90,7 @@ function isWebhookAllowed(webhook: string, allowlist: string | undefined): boole
     return false;
   }
 
-  const rules = parseAllowlist(allowlist);
-  if (rules.length === 0) {
+  if (!allowlist?.trim()) {
     // No allowlist configured: default-open for public hosts, but never
     // forward to a literal private / loopback / metadata IP. The edge can't
     // resolve hostnames, so set MANTIS_EDGE_WEBHOOK_ALLOWLIST to lock down
@@ -99,6 +98,8 @@ function isWebhookAllowed(webhook: string, allowlist: string | undefined): boole
     return !isPrivateLiteralHost(hostname);
   }
 
+  // A configured but malformed allowlist must not silently become default-open.
+  const rules = parseAllowlist(allowlist);
   return rules.some((rule) =>
     rule.kind === "exact"
       ? hostname === rule.hostname

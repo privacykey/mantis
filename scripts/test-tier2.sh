@@ -28,6 +28,8 @@ else
 fi
 export MANTIS_API_KEY_PEPPER="${MANTIS_API_KEY_PEPPER:-integration-pepper-not-secret}"
 export PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:${PORT}}"
+# Exercise the configurable trigger prefix as well as the canonical /c route.
+export MANTIS_PUBLIC_PATH="${MANTIS_PUBLIC_PATH:-/track}"
 # The host-split gate under test. The vitest process reads the same variables
 # (tests/tier2/_client.ts) so client expectations always match server config.
 export PUBLIC_ONLY_HOSTS="${PUBLIC_ONLY_HOSTS:-public.mantis.test}"

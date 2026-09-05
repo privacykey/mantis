@@ -187,6 +187,14 @@ jobs:
             --outfile dist/bin/mantis \
             src/index.ts
 
+      - name: Smoke test native binary
+        working-directory: cli
+        env:
+          RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          test "$(dist/bin/mantis --version)" = "$RELEASE_VERSION"
+          dist/bin/mantis --help > /dev/null
+
       - name: Package tarball
         working-directory: cli
         shell: bash

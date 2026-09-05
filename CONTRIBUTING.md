@@ -34,14 +34,18 @@ to `main`, on pull requests, and on manual dispatch. Each job starts with
 
 | Job | Command |
 | --- | --- |
-| typecheck (server + cli + edge) | `pnpm run check` |
-| unit + integration tests | `pnpm run db:migrate`, `pnpm test`, `pnpm run test:integration`, `pnpm run test:tier2` |
+| typecheck + edge packaging | `pnpm run check`, `pnpm --filter @mantis/edge exec wrangler deploy --dry-run --outdir dist` |
+| unit + integration tests | `pnpm run db:migrate`, `pnpm run test:all`, `pnpm run test:integration`, `pnpm run test:tier2` |
 | next build | `pnpm run build` |
 | CLI build artifact | `pnpm --filter @mantis/cli run build`, then `node cli/dist/index.js --version` |
 | dependency audit | `pnpm audit --prod --audit-level=high` |
 
 Notes on the test tiers:
 
+- `pnpm run test:all` (or `just test`) — server, CLI, and edge unit suites.
+  CLI tests regenerate `cli/src/version.ts` from its package version first;
+  they do not require a preceding build or a database. The release workflow
+  also smoke-tests each native CLI binary before packaging it.
 - `pnpm test` — Vitest unit suite ([`vitest.config.ts`](./vitest.config.ts)).
 - `pnpm run test:integration` — full-stack tests that exercise the real route
   handlers against a live Postgres

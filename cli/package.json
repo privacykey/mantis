@@ -16,7 +16,7 @@
     "build:bin": "bash scripts/build-bin.sh",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "node scripts/gen-version.mjs && vitest run"
   },
   "dependencies": {
     "@mantis/core": "workspace:*",
