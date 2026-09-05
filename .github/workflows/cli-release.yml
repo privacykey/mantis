@@ -346,11 +346,9 @@ jobs:
               man1.install "share/man/man1/mantis.1"
 
               # Shell completions — \`mantis completion <shell>\` writes a ready-to-source
-              # script. Homebrew adds these directories to fpath / bash-completion / fish
-              # completion path automatically.
-              (bash_completion/"mantis").write Utils.safe_popen_read(bin/"mantis", "completion", "bash")
-              (zsh_completion/"_mantis").write Utils.safe_popen_read(bin/"mantis", "completion", "zsh")
-              (fish_completion/"mantis.fish").write Utils.safe_popen_read(bin/"mantis", "completion", "fish")
+              # script; the DSL runs it once per shell and installs the output under
+              # bash-completion / fpath / fish's completion path.
+              generate_completions_from_executable(bin/"mantis", "completion", shells: [:bash, :zsh, :fish])
             end
 
             test do
