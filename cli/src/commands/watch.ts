@@ -1,5 +1,6 @@
 import type { MantisClient, RecentHit } from "../lib/api.js";
 import { c, formatTime, isJsonMode } from "../lib/out.js";
+import { parseIntervalMs } from "../lib/parse.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -9,7 +10,7 @@ export type WatchOpts = GlobalOpts & {
 };
 
 export async function watchCmd(opts: WatchOpts): Promise<void> {
-  const intervalMs = Math.max(1000, Number(opts.interval ?? "5") * 1000);
+  const intervalMs = parseIntervalMs(opts.interval, 5);
 
   await withClient(opts, async (client) => {
     const keyId = opts.id ? await resolveKeyRef(client, opts.id) : undefined;

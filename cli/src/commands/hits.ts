@@ -8,7 +8,7 @@ import {
   table,
   truncate,
 } from "../lib/out.js";
-import { parseLimit } from "../lib/parse.js";
+import { parseIntervalMs, parseLimit } from "../lib/parse.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -23,13 +23,14 @@ export type HitsOpts = GlobalOpts & {
 };
 
 export async function hitsCmd(id: string, opts: HitsOpts): Promise<void> {
+  const intervalMs = opts.follow ? parseIntervalMs(opts.interval, 3) : undefined;
   await withClient(opts, async (client) => {
     const fullId = await resolveKeyRef(client, id);
     const limit = parseLimit(opts.limit);
     const filter = buildFilter(opts);
 
-    if (opts.follow) {
-      await followHits(client, fullId, filter, opts);
+    if (intervalMs !== undefined) {
+      await followHits(client, fullId, filter, intervalMs);
       return;
     }
 
@@ -80,9 +81,8 @@ async function followHits(
   client: MantisClient,
   id: string,
   filter: HitFilter,
-  opts: HitsOpts,
+  intervalMs: number,
 ): Promise<void> {
-  const intervalMs = Math.max(1000, Number(opts.interval ?? "3") * 1000);
   const seen = new Set<string>();
 
   // Prime the seen set so we only print *new* hits going forward.
