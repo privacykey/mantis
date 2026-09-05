@@ -1,9 +1,9 @@
 # Pre-launch checklist
 
-Scope: server/dashboard, CLI, and edge worker. Review started 2026-09-05 from
-`42175e3e2ec8584ee5092a138dee406f15dd3b7f` on main. Checks below distinguish local
-verification from deployment-specific sign-off; a green build alone is not a
-production launch check.
+Scope: server/dashboard, CLI, and edge worker. Review started 2026-09-05; combined fixes verified after merging PRs #81, #84,
+and #85. Patch targets: server 0.2.1, CLI 0.2.2, edge 0.1.5. Checks below
+distinguish repository verification from deployment-specific sign-off; a green
+build alone is not a production launch check.
 
 ## Repository checks
 
@@ -11,7 +11,7 @@ production launch check.
   and PR #81 updates the CLI quick reference. Both are merged with green CI.
 - [x] Check production dependencies: fresh `pnpm audit --prod` reports zero
   advisories; GitHub reports no open Dependabot alerts.
-- [x] Run all component unit tests: **284 server + 117 CLI + 64 edge = 465**
+- [x] Run all component unit tests: **297 server + 146 CLI + 64 edge = 507**
   passing after the fixes, via `pnpm run test:all`.
 - [x] Make CLI tests reliable from a fresh checkout: regenerate the version
   before testing and isolate terminal/locale settings in output tests.
@@ -21,7 +21,7 @@ production launch check.
 - [x] Preserve first-format attribution on bulk downloads.
 - [x] Verify edge request handling, expiration, and webhook allowlists. A
   configured allowlist with no valid rules now blocks forwarding.
-- [x] Run **91 integration tests** against an isolated Postgres database.
+- [x] Run **101 integration tests** against an isolated Postgres database.
 - [x] Run **11 production HTTP tests** for host separation, secure session
   cookies, custom trigger URLs, and the HTML response sandbox.
 - [x] Route the documented `MANTIS_PUBLIC_PATH` URLs to the trigger handler;
@@ -35,9 +35,10 @@ production launch check.
   the existing release has all four platform tarballs and `SHA256SUMS`. Add
   native smoke tests to the release workflow for each target before packaging.
 
-The initial review covered **567 passing tests** across unit, integration, and
-production HTTP suites. The branch now also includes the security audit and
-polling regression tests from main; CI reruns all suites on the combined changes.
+The combined review covers **619 passing tests** across unit, integration, and
+production HTTP suites, including the security audit and polling regressions.
+[Combined CI run](https://github.com/privacykey/mantis/actions/runs/33974108047)
+passed all checks before merging the final fixes.
 The checks here use test databases and local notification sinks, not production
 credentials or real alert destinations.
 
