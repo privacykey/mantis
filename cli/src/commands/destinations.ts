@@ -210,7 +210,15 @@ export async function testDestinationCmd(
             status === "failed" ? c.red :
             c.yellow;
           w(
-            `  ${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(truncate(n.target, 60))}` +
+            `  ${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(
+              truncate(
+                n.target ??
+                  (n.destination_scope === "global"
+                    ? "(global destination)"
+                    : "(destination removed)"),
+                60,
+              ),
+            )}` +
               (n.last_error ? `\n      ${c.red(n.last_error.slice(0, 80))}` : "") +
               "\n",
           );

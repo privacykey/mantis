@@ -3,6 +3,12 @@
 @theme {
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --color-mantis: #facc15;
+  /* Tailwind's neutral-500 (#737373) and neutral-600 (#525252) measure 4.2:1
+     and 2.5:1 against the neutral-950 page background — below the 4.5:1
+     WCAG AA floor for body text. Lift them just enough to pass on both the
+     950 page and the 900 card/pre backgrounds (6.1:1 / 5.0:1 on 950). */
+  --color-neutral-500: #8f8f8f;
+  --color-neutral-600: #808080;
 }
 
 html,

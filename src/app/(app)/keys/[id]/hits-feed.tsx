@@ -19,7 +19,9 @@ const HIGHLIGHT_MS = 2500;
 type HitNotif = {
   id: string;
   channel: string;
-  target: string;
+  /** null when redacted: a global (admin-configured) destination, or one since removed. */
+  target: string | null;
+  destination_scope: "key" | "global" | "unknown";
   status: string;
   attempts: number;
   max_attempts: number;
@@ -389,7 +391,10 @@ function NotifLine({ n }: { n: HitNotif }) {
       <span className={`${colorClass} w-20 shrink-0`}>{n.status}</span>
       <span className="text-neutral-400 w-16 shrink-0">{n.channel}</span>
       <span className="text-neutral-300 break-all flex-1 min-w-0">
-        {n.target}
+        {n.target ??
+          (n.destination_scope === "global"
+            ? "global destination"
+            : "destination removed")}
         {n.attempts > 0 && (
           <span className="text-neutral-500 ml-1">
             ({n.attempts}/{n.max_attempts} attempts

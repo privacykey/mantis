@@ -264,5 +264,8 @@ function formatNotif(n: NotificationSummary): string {
   else if (n.status === "pending" || n.status === "in_flight") color = c.yellow;
   const attempts = n.attempts > 0 ? c.dim(` (${n.attempts}/${n.max_attempts})`) : "";
   const err = n.last_error ? `\n      ${c.red(n.last_error.slice(0, 80))}` : "";
-  return `${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(n.target)}${attempts}${err}`;
+  const target =
+    n.target ??
+    (n.destination_scope === "global" ? "(global destination)" : "(destination removed)");
+  return `${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(target)}${attempts}${err}`;
 }

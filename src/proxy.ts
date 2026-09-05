@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { publicOnlyDecision } from "@/lib/public-only-hosts";
+import { publicPathRewrite } from "@/lib/public-path";
 
 // Next.js auto-runs this `proxy` entrypoint (formerly `middleware.ts`, renamed
 // in Next 16 — having both files is a build error) on matching requests. It
@@ -18,14 +19,27 @@ export function proxy(req: NextRequest) {
     allowInbox: process.env.PUBLIC_ONLY_ALLOW_INBOX === "1",
   });
 
-  if (decision.allowed) return NextResponse.next();
+  if (!decision.allowed) {
+    return new NextResponse(null, {
+      status: 404,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
-  return new NextResponse(null, {
-    status: 404,
-    headers: {
-      "Cache-Control": "no-store",
-    },
-  });
+  // Custom trigger prefix (MANTIS_PUBLIC_PATH) → the real /c/[publicId] route.
+  const rewrite = publicPathRewrite(
+    req.nextUrl.pathname,
+    process.env.MANTIS_PUBLIC_PATH,
+  );
+  if (rewrite) {
+    const url = req.nextUrl.clone();
+    url.pathname = rewrite;
+    return NextResponse.rewrite(url);
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {

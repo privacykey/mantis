@@ -122,24 +122,31 @@ export type RequireApiKeyOpts = {
   allowEnroll?: boolean;
 };
 
+/**
+ * Every bearer failure consumes a per-IP token; once the window is exhausted
+ * we return 429 instead of 401 to blunt brute force. Valid keys skip this
+ * entirely, so the DB is only touched on failed attempts. Shared by both
+ * auth entrypoints so a route can't become a limiter-free guessing oracle.
+ */
+async function failBearer(
+  req: NextRequest,
+  message: string,
+): Promise<AuthResult> {
+  const ip = extractIp(req) ?? "unknown";
+  const rl = await consumeRateLimit(`auth-fail:${ip}`, {
+    limit: AUTH_FAIL_LIMIT,
+    windowMs: AUTH_FAIL_WINDOW_MS,
+  });
+  if (!rl.ok) return { ok: false, res: tooManyRequests(rl) };
+  return { ok: false, res: unauthorized(message) };
+}
+
 export async function requireApiKey(
   req: NextRequest,
   opts: RequireApiKeyOpts = {},
 ): Promise<AuthResult> {
   const presented = extractBearer(req);
-
-  // Every failure path consumes a per-IP token; once the window is exhausted
-  // we return 429 instead of 401 to blunt brute force. Valid keys skip this
-  // entirely, so the DB is only touched on failed attempts.
-  const fail = async (message: string): Promise<AuthResult> => {
-    const ip = extractIp(req) ?? "unknown";
-    const rl = await consumeRateLimit(`auth-fail:${ip}`, {
-      limit: AUTH_FAIL_LIMIT,
-      windowMs: AUTH_FAIL_WINDOW_MS,
-    });
-    if (!rl.ok) return { ok: false, res: tooManyRequests(rl) };
-    return { ok: false, res: unauthorized(message) };
-  };
+  const fail = (message: string) => failBearer(req, message);
 
   if (!presented) return fail("missing Authorization: Bearer token");
   if (!isWellFormedApiKey(presented)) return fail("malformed API key");
@@ -164,7 +171,7 @@ export async function requireApiKeyOrSession(
     const key = await resolveByPlaintext(bearer);
     if (key?.scope === "enroll") return { ok: false, res: forbiddenScope() };
     if (key) return { ok: true, key };
-    return { ok: false, res: unauthorized("invalid or revoked API key") };
+    return failBearer(req, "invalid or revoked API key");
   }
   const { getSessionApiKey } = await import("@/lib/session");
   const session = await getSessionApiKey();

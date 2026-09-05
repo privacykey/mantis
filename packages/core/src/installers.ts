@@ -1089,7 +1089,7 @@ function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer 
 # network layer over enabling it for the whole instance.
 
 automation:
-  - alias: "Mantis hit — ${memo}"
+  - alias: ${JSON.stringify(`Mantis hit — ${memo}`)}
     mode: queued        # serialize rapid hits
     triggers:
       - trigger: webhook
@@ -1173,11 +1173,34 @@ const BUILDERS: Record<InstallType, (input: InstallerInput) => Installer> = {
   scrypted: buildScrypted,
 };
 
+/**
+ * Memo and hostname are operator text that gets interpolated into generated
+ * code comments and YAML. Neutralise anything that could end the enclosing
+ * comment or line — a memo containing a star-slash sequence would otherwise
+ * become live JavaScript/CSS wherever the snippet is pasted, and a newline
+ * breaks out of a `#` comment. Values that sit inside quoted strings are
+ * additionally quoted at the use site (JSON.stringify).
+ */
+export function templateSafeText(s: string): string {
+  return s
+    .replace(/[\r\n\t\x00-\x1f\x7f]+/g, " ")
+    .replace(/\*\//g, "* /")
+    .replace(/<\//g, "< /")
+    .trim();
+}
+
 export function buildInstaller(
   type: InstallType,
   input: InstallerInput,
 ): Installer {
-  return BUILDERS[type](input);
+  const safe: InstallerInput = {
+    ...input,
+    memo: templateSafeText(input.memo),
+    ...(input.hostname !== undefined
+      ? { hostname: templateSafeText(input.hostname) }
+      : {}),
+  };
+  return BUILDERS[type](safe);
 }
 
 export function isInstallType(s: string): s is InstallType {

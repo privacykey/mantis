@@ -76,7 +76,13 @@ export type BundleFiles = {
  * the same script the zip ships, so the local-install path and the download
  * path exercise one implementation rather than two that can drift.
  */
-export function buildDeviceBundleFiles(input: DeviceBundleInput): BundleFiles {
+export function buildDeviceBundleFiles(rawInput: DeviceBundleInput): BundleFiles {
+  // The device name lands in `#` comment lines of the generated scripts; a
+  // newline would end the comment, so collapse control characters first.
+  const input: DeviceBundleInput = {
+    ...rawInput,
+    deviceName: rawInput.deviceName.replace(/[\r\n\t\x00-\x1f\x7f]+/g, " ").trim(),
+  };
   const root = bundleRootName(input.deviceName, input.os);
   const windows = input.os === "windows";
   const installScript = windows ? "install.ps1" : "install.sh";

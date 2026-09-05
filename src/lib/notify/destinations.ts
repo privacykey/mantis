@@ -9,7 +9,6 @@ import {
 } from "@/db/schema";
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { fireActivationPing } from "./activation";
-import { validateDestination } from "./channels";
 
 export function newSigningSecret(): string {
   return randomBytes(32).toString("base64");
@@ -209,27 +208,6 @@ export async function replaceGlobalDestinations(
     }
   }
   return results;
-}
-
-export async function deleteDestination(id: string): Promise<boolean> {
-  const rows = await db
-    .delete(notificationDestinations)
-    .where(eq(notificationDestinations.id, id))
-    .returning({ id: notificationDestinations.id });
-  return rows.length > 0;
-}
-
-/** Validates a batch, returning per-index errors. */
-export function validateInputs(
-  inputs: DestinationInput[],
-): Array<{ index: number; error: string }> {
-  const errs: Array<{ index: number; error: string }> = [];
-  for (let i = 0; i < inputs.length; i++) {
-    const { channel, target } = inputs[i]!;
-    const v = validateDestination(channel, target);
-    if (!v.ok) errs.push({ index: i, error: v.error });
-  }
-  return errs;
 }
 
 export type SerializeOpts = {

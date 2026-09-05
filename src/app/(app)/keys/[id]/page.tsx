@@ -11,6 +11,7 @@ import {
   listDestinations,
 } from "@/lib/notify/destinations";
 import { computeMonitorState } from "@/lib/monitor";
+import { openSecret } from "@/lib/secret-box";
 import { getSessionApiKey } from "@/lib/session";
 import { toggleKeyAction } from "../actions";
 import { CopyUrl } from "./copy-url";
@@ -172,7 +173,7 @@ export default async function KeyDetailPage({ params }: Props) {
                         <SecretReveal
                           keyId={key.id}
                           destinationId={d.id}
-                          fingerprint={fingerprintSecret(d.signingSecret)}
+                          fingerprint={fingerprintSecret(openSecret(d.signingSecret))}
                         />
                       )}
                     </span>
