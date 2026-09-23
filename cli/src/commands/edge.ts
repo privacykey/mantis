@@ -609,7 +609,9 @@ export async function mintCmd(opts: MintOpts): Promise<void> {
   const blob = b64urlEncode(sealed);
   const url = `${workerUrl}/c/${blob}`;
   const copied = opts.copy ? await copyToClipboard(url) : null;
-  const testResult = opts.test ? await testFire(url) : null;
+  const testResult = opts.test
+    ? await testFire(url, opts.responseKind ?? "gif")
+    : null;
 
   // Chained installer (--install <type>) runs after URL is produced. We
   // render it inline here so the user gets URL → test → installer in one
@@ -670,6 +672,7 @@ export async function mintCmd(opts: MintOpts): Promise<void> {
         : {}),
     },
   );
+  if (testResult && !testResult.ok) process.exitCode = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,15 +1114,20 @@ type TestResult =
   | { ok: false; status: number; body?: string }
   | { ok: false; status: 0; error: string };
 
-async function testFire(url: string): Promise<TestResult> {
+export function isExpectedTriggerStatus(responseKind: string, status: number): boolean {
+  const expected = responseKind === "empty" ? 204 : responseKind === "redirect" ? 302 : 200;
+  return status === expected;
+}
+
+async function testFire(url: string, responseKind: string): Promise<TestResult> {
   try {
     const res = await fetch(url, {
       method: "GET",
       redirect: "manual",
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.status === 200) {
-      return { ok: true, status: 200 };
+    if (isExpectedTriggerStatus(responseKind, res.status)) {
+      return { ok: true, status: res.status };
     }
     const body = await res.text().catch(() => "");
     return { ok: false, status: res.status, body: body || undefined };

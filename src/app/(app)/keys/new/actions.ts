@@ -1,13 +1,12 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { db } from "@/db/client";
 import { keys, type NotificationChannel, type ResponseKind } from "@/db/schema";
 import { getSessionApiKey } from "@/lib/session";
 import { newPublicId } from "@/lib/keys";
 import { validateDestination } from "@/lib/notify/channels";
 import {
-  replaceDestinations,
+  createKeyWithDestinations,
   type DestinationInput,
 } from "@/lib/notify/destinations";
 import { isPresetId } from "@/lib/presets";
@@ -104,26 +103,17 @@ export async function createKeyAction(
     return { error: "dedupe window must be 0–86400 seconds" };
   }
 
-  const [row] = await db
-    .insert(keys)
-    .values({
+  const { key: row } = await createKeyWithDestinations(
+    {
       publicId: newPublicId(),
       memo,
       responseKind,
       responsePayload: responsePayload as object | null,
       dedupeWindowSeconds,
       createdByApiKeyId: session.id,
-    })
-    .returning();
-
-  if (!row) return { error: "failed to create key" };
-
-  // Fire activation pings in the background — they update the destinations
-  // table directly, so failures show up on the detail page rather than
-  // blocking the redirect.
-  if (destinations.length > 0) {
-    await replaceDestinations(row, destinations);
-  }
+    },
+    destinations,
+  );
 
   // Carry the preset through so the key page can surface the matching
   // download format and deployment hint instead of a generic format list.

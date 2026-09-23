@@ -16,6 +16,8 @@ import { audit } from "@/lib/audit";
 import { canAccessKey } from "@/lib/auth";
 import { clientIpFromHeaders } from "@/lib/request-info";
 import { getSessionApiKey } from "@/lib/session";
+import { validateDestination } from "@/lib/notify/channels";
+import { replaceDestinations, type DestinationInput } from "@/lib/notify/destinations";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -88,6 +90,42 @@ export async function deleteKeyAction(formData: FormData): Promise<void> {
 }
 
 export type MonitorActionState = { error?: string };
+
+export type DestinationsActionState = { error?: string; saved?: boolean };
+
+export async function setDestinationsAction(
+  _prev: DestinationsActionState,
+  formData: FormData,
+): Promise<DestinationsActionState> {
+  const session = await requireSession();
+  const id = String(formData.get("id") ?? "");
+  const key = await loadOwned(session, id);
+  if (!key) return { error: "key not found" };
+
+  const count = Number(formData.get("destination_count"));
+  if (!Number.isInteger(count) || count < 0 || count > 50) {
+    return { error: "use at most 50 destinations" };
+  }
+  const channels = new Set(["webhook", "email", "slack", "discord", "teams", "home_assistant"]);
+  const inputs: DestinationInput[] = [];
+  for (let i = 0; i < count; i++) {
+    const channel = String(formData.get(`channel_${i}`) ?? "");
+    const target = String(formData.get(`target_${i}`) ?? "").trim();
+    if (!target) return { error: `destination ${i + 1}: target is required` };
+    if (!channels.has(channel)) return { error: `destination ${i + 1}: invalid channel` };
+    const checked = validateDestination(channel as DestinationInput["channel"], target);
+    if (!checked.ok) return { error: `destination ${i + 1}: ${checked.error}` };
+    inputs.push({ channel: channel as DestinationInput["channel"], target });
+  }
+
+  try {
+    await replaceDestinations(key, inputs);
+  } catch {
+    return { error: "could not save destinations; your changes are still in the form" };
+  }
+  revalidatePath(`/keys/${id}`);
+  return { saved: true };
+}
 
 function isMonitorMode(v: string): v is MonitorMode {
   return (monitorModes as readonly string[]).includes(v);

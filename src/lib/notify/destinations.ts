@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
+  keys,
   notificationDestinations,
   type Key,
   type NotificationChannel,
@@ -29,6 +30,69 @@ export type DestinationResult = {
   destination: NotificationDestination;
   activation: { ok: boolean; error?: string };
 };
+
+/** Commit a new key and its destinations together, then test delivery. */
+export function createKeyWithDestinations(
+  values: typeof keys.$inferInsert,
+  inputs: DestinationInput[],
+): Promise<{ key: Key; results: DestinationResult[] }>;
+export function createKeyWithDestinations(
+  values: typeof keys.$inferInsert,
+  inputs: DestinationInput[],
+  options: { onExternalIdConflict: true },
+): Promise<{ key: Key | null; results: DestinationResult[] }>;
+export async function createKeyWithDestinations(
+  values: typeof keys.$inferInsert,
+  inputs: DestinationInput[],
+  options?: { onExternalIdConflict: true },
+): Promise<{ key: Key | null; results: DestinationResult[] }> {
+  const created = await db.transaction(async (tx) => {
+    const insert = tx.insert(keys).values(values);
+    const [key] = options?.onExternalIdConflict
+      ? await insert.onConflictDoNothing({ target: keys.externalId }).returning()
+      : await insert.returning();
+    if (!key && options?.onExternalIdConflict) return null;
+    if (!key) throw new Error("key insert returned no row");
+    const destinations: NotificationDestination[] = [];
+    for (const input of inputs) {
+      const [destination] = await tx
+        .insert(notificationDestinations)
+        .values({
+          keyId: key.id,
+          channel: input.channel,
+          target: input.target,
+          signingSecret:
+            input.channel === "webhook" ? sealSecret(newSigningSecret()) : null,
+        })
+        .returning();
+      if (!destination) throw new Error("destination insert returned no row");
+      destinations.push(destination);
+    }
+    return { key, destinations };
+  });
+  if (!created) return { key: null, results: [] };
+
+  const results: DestinationResult[] = [];
+  for (const destination of created.destinations) {
+    let activation: DestinationResult["activation"];
+    try {
+      activation = await fireActivationPing(created.key, destination);
+    } catch (err) {
+      activation = {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+    const [refreshed] = await db
+      .select()
+      .from(notificationDestinations)
+      .where(eq(notificationDestinations.id, destination.id))
+      .limit(1)
+      .catch(() => [destination]);
+    results.push({ destination: refreshed ?? destination, activation });
+  }
+  return { key: created.key, results };
+}
 
 /** Inserts a destination + fires an activation ping; persists both. */
 export async function createDestination(
@@ -69,49 +133,65 @@ export async function replaceDestinations(
   key: Key,
   inputs: DestinationInput[],
 ): Promise<DestinationResult[]> {
-  const existing = await db
-    .select()
-    .from(notificationDestinations)
-    .where(eq(notificationDestinations.keyId, key.id));
-  const existingByPair = new Map<string, NotificationDestination>(
-    existing.map((d) => [`${d.channel}\0${d.target}`, d]),
-  );
-
-  await db
-    .delete(notificationDestinations)
-    .where(eq(notificationDestinations.keyId, key.id));
-
-  if (inputs.length === 0) return [];
-
-  const results: DestinationResult[] = [];
-  for (const input of inputs) {
-    const carry = existingByPair.get(`${input.channel}\0${input.target}`);
-    if (carry) {
-      // Carry-over: same secret + activation history, no fresh ping.
-      const [row] = await db
+  const persisted = await db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(notificationDestinations)
+      .where(eq(notificationDestinations.keyId, key.id));
+    const byPair = new Map<string, NotificationDestination[]>();
+    for (const row of existing) {
+      const pair = `${row.channel}\0${row.target}`;
+      byPair.set(pair, [...(byPair.get(pair) ?? []), row]);
+    }
+    const rows: Array<{ destination: NotificationDestination; carried: boolean }> = [];
+    const retained = new Set<string>();
+    for (const input of inputs) {
+      const pair = `${input.channel}\0${input.target}`;
+      const carry = byPair.get(pair)?.shift();
+      if (carry) {
+        retained.add(carry.id);
+        rows.push({ destination: carry, carried: true });
+        continue;
+      }
+      const [destination] = await tx
         .insert(notificationDestinations)
         .values({
           keyId: key.id,
-          channel: carry.channel,
-          target: carry.target,
-          signingSecret: carry.signingSecret,
-          lastActivationStatus: carry.lastActivationStatus,
-          lastActivationError: carry.lastActivationError,
-          lastActivationAt: carry.lastActivationAt,
+          channel: input.channel,
+          target: input.target,
+          signingSecret: input.channel === "webhook" ? sealSecret(newSigningSecret()) : null,
         })
         .returning();
-      if (row) {
-        results.push({
-          destination: row,
-          activation: {
-            ok: carry.lastActivationStatus === "ok",
-            error: carry.lastActivationError ?? undefined,
-          },
-        });
-      }
-    } else {
-      results.push(await createDestination(key, input));
+      if (!destination) throw new Error("destination insert returned no row");
+      rows.push({ destination, carried: false });
     }
+    const removed = existing.filter((row) => !retained.has(row.id)).map((row) => row.id);
+    if (removed.length > 0) {
+      await tx.delete(notificationDestinations).where(inArray(notificationDestinations.id, removed));
+    }
+    return rows;
+  });
+
+  const results: DestinationResult[] = [];
+  for (const { destination, carried } of persisted) {
+    let activation: DestinationResult["activation"] = {
+      ok: destination.lastActivationStatus === "ok",
+      error: destination.lastActivationError ?? undefined,
+    };
+    if (!carried) {
+      try {
+        activation = await fireActivationPing(key, destination);
+      } catch (err) {
+        activation = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+    const [refreshed] = await db
+      .select()
+      .from(notificationDestinations)
+      .where(eq(notificationDestinations.id, destination.id))
+      .limit(1)
+      .catch(() => [destination]);
+    results.push({ destination: refreshed ?? destination, activation });
   }
   return results;
 }

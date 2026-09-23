@@ -56,7 +56,7 @@ export async function runInstaller(
   client: MantisClient,
   keyId: string,
   opts: RunInstallerOpts,
-): Promise<{ filename: string; writtenTo: string | null }> {
+): Promise<{ filename: string; writtenTo: string | null; content: string }> {
   const { type } = opts;
 
   const registry = await loadRegistry();
@@ -139,7 +139,7 @@ export async function runInstaller(
         process.stderr.write(`  ${c.dim(step)}\n`);
       }
     }
-    return { filename: meta.filename, writtenTo };
+    return { filename: meta.filename, writtenTo, content: meta.content };
   }
 
   emit(
@@ -170,5 +170,5 @@ export async function runInstaller(
     meta,
   );
 
-  return { filename: meta.filename, writtenTo };
+  return { filename: meta.filename, writtenTo, content: meta.content };
 }

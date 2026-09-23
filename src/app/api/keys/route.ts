@@ -18,8 +18,8 @@ import {
   readBodyJson,
 } from "@/lib/safe-body";
 import {
+  createKeyWithDestinations,
   listDestinations,
-  replaceDestinations,
   serializeResult,
 } from "@/lib/notify/destinations";
 import { createKeySchema, listQuerySchema } from "@/lib/validators";
@@ -97,17 +97,15 @@ export async function POST(req: NextRequest) {
     createdByApiKeyId: auth.key.id,
   };
 
-  // external_id makes creation idempotent: the unique constraint absorbs the
-  // duplicate insert and we return the existing row instead. Everything else
-  // in the body (memo, destinations, …) applies only when the row is actually
-  // created — a claim never mutates what IT configured on the existing key.
-  const [row] = input.external_id
-    ? await db
-        .insert(keys)
-        .values(insertValues)
-        .onConflictDoNothing({ target: keys.externalId })
-        .returning()
-    : await db.insert(keys).values(insertValues).returning();
+  // external_id makes creation idempotent. On a conflict, return the existing
+  // key without changing its destinations. On a new key, both the key and its
+  // destinations commit in one transaction.
+  const created = input.external_id
+    ? await createKeyWithDestinations(insertValues, input.destinations ?? [], {
+        onExternalIdConflict: true,
+      })
+    : await createKeyWithDestinations(insertValues, input.destinations ?? []);
+  const row = created.key;
 
   if (!row && input.external_id) {
     const [existing] = await db
@@ -184,11 +182,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Insert destinations + run activation pings synchronously so the caller
-  // gets per-destination status in the response.
-  const results = input.destinations
-    ? await replaceDestinations(row, input.destinations)
-    : [];
+  const results = created.results;
 
   const dests = results.map((r) => r.destination);
 
