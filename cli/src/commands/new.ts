@@ -181,6 +181,9 @@ export async function newCmd(
       `unknown installer type "${effectiveOpts.install}". Available: ${ALL_INSTALL_TYPES.join(", ")}`,
     );
   }
+  if (effectiveOpts.install && !effectiveOpts.out && (effectiveOpts.idOnly || effectiveOpts.urlOnly)) {
+    fail("--install needs --out when used with --id-only or --url-only; otherwise the snippet has nowhere to go");
+  }
 
   await withClient(effectiveOpts, async (client) => {
     const key = await client.createKey({
@@ -326,7 +329,10 @@ export async function newCmd(
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(`key ${key.id} was created, but setup did not finish: ${reason}. Resume with \`mantis show ${key.id}\`.`);
+      const recovery = effectiveOpts.install
+        ? `Finish the installer with \`mantis install ${key.id} --type ${effectiveOpts.install}\`.`
+        : `Inspect the key with \`mantis show ${key.id}\`.`;
+      throw new Error(`key ${key.id} was created, but setup did not finish: ${reason}. ${recovery}`);
     }
   });
 }

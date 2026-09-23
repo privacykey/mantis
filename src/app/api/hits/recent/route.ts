@@ -27,6 +27,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Capture database time before reading hits. Live clients use this as their
+  // first watermark so their local clocks cannot hide new arrivals.
+  const anchor = url.searchParams.get("anchor") === "1"
+    ? (await db.select({ at: sql<Date>`clock_timestamp()` }).from(sql`(select 1) as anchor_clock`))[0]
+    : undefined;
+
   const conditions: SQL[] = [];
   if (!auth.key.isAdmin) {
     conditions.push(eq(keys.createdByApiKeyId, auth.key.id));
@@ -109,6 +115,7 @@ export async function GET(req: NextRequest) {
       notifications: (notifyByHit.get(hit.id) ?? []).map(serializeNotification),
     })),
     next_cursor: nextCursor,
+    ...(anchor ? { server_time: anchor.at.toISOString() } : {}),
   });
 }
 

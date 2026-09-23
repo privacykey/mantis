@@ -1,6 +1,7 @@
 import type { MantisClient, RecentHit } from "../lib/api.js";
 import { c, formatTime, isJsonMode } from "../lib/out.js";
 import { parseIntervalMs } from "../lib/parse.js";
+import { primeHitAnchor } from "../lib/hit-anchor.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -19,14 +20,14 @@ export async function watchCmd(opts: WatchOpts): Promise<void> {
     );
 
     const seen = new Set<string>();
-    let since = oneSecondAgo();
-
     const prime = await client.listRecentHits({
       ...(keyId ? { key_id: keyId } : {}),
       limit: 500,
+      anchor: 1,
     });
-    for (const hit of prime.data) seen.add(hit.id);
-    since = backUpOneMs(newestOccurredAt(prime.data) ?? since);
+    const anchor = primeHitAnchor(prime);
+    for (const id of anchor.seenIds) seen.add(id);
+    let since = new Date(Math.max(0, anchor.watermarkMs - 1)).toISOString();
 
     const tick = async () => {
       try {
@@ -107,8 +108,4 @@ function backUpOneMs(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
   return new Date(t - 1).toISOString();
-}
-
-function oneSecondAgo(): string {
-  return new Date(Date.now() - 1000).toISOString();
 }
