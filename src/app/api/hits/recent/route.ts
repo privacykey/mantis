@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   // Capture database time before reading hits. Live clients use this as their
   // first watermark so their local clocks cannot hide new arrivals.
   const anchor = url.searchParams.get("anchor") === "1"
-    ? (await db.select({ at: sql<Date>`clock_timestamp()` }).from(sql`(select 1) as anchor_clock`))[0]
+    ? (await db.select({ at: sql<string>`to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` }).from(sql`(select 1) as anchor_clock`))[0]
     : undefined;
 
   const conditions: SQL[] = [];
@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
       notifications: (notifyByHit.get(hit.id) ?? []).map(serializeNotification),
     })),
     next_cursor: nextCursor,
-    ...(anchor ? { server_time: anchor.at.toISOString() } : {}),
+    ...(anchor ? { server_time: anchor.at } : {}),
   });
 }
 
