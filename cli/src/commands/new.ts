@@ -195,131 +195,139 @@ export async function newCmd(
         : {}),
     });
 
-    let qrAbsPath: string | undefined;
-    let qrTerminal: string | undefined;
-    if (effectiveOpts.qr) {
-      qrAbsPath = resolve(effectiveOpts.qr);
-      await QRCode.toFile(qrAbsPath, key.url, {
-        margin: 4,
-        width: 512,
-        errorCorrectionLevel: "M",
-        color: { dark: "#000000", light: "#ffffff" },
-      });
-      if (!isJsonMode()) {
-        qrTerminal = await QRCode.toString(key.url, {
-          type: "terminal",
-          small: true,
-          margin: 1,
+    try {
+      let qrAbsPath: string | undefined;
+      let qrTerminal: string | undefined;
+      if (effectiveOpts.qr) {
+        qrAbsPath = resolve(effectiveOpts.qr);
+        await QRCode.toFile(qrAbsPath, key.url, {
+          margin: 4,
+          width: 512,
+          errorCorrectionLevel: "M",
+          color: { dark: "#000000", light: "#ffffff" },
+        });
+        if (!isJsonMode()) {
+          qrTerminal = await QRCode.toString(key.url, {
+            type: "terminal",
+            small: true,
+            margin: 1,
+          });
+        }
+      }
+
+      const fileOutputs: Array<{ format: string; path: string }> = [];
+      for (const fmt of FILE_FORMATS.filter((f) => f !== "qr")) {
+        const target = effectiveOpts[fmt];
+        if (!target) continue;
+        const abs = resolve(target);
+        const { data } = await client.downloadFile(key.id, fmt);
+        await writeFile(abs, data);
+        fileOutputs.push({ format: fmt, path: abs });
+      }
+
+      const copied = effectiveOpts.copy
+        ? await copyToClipboard(key.url)
+        : null;
+
+      // Chain into the installer if requested. Uses the same client + the
+      // freshly-created key id; no redundant withClient or extra round-trip
+      // to resolve `last`/prefix.
+      let installerResult: { filename: string; writtenTo: string | null; content: string } | null =
+        null;
+      if (effectiveOpts.install) {
+        installerResult = await runInstaller(client, key.id, {
+          type: effectiveOpts.install,
+          out: effectiveOpts.out,
+          hostname: effectiveOpts.hostname,
+          sshOnly: effectiveOpts.sshOnly,
+          silent: true, // we emit the combined output below
         });
       }
-    }
 
-    const fileOutputs: Array<{ format: string; path: string }> = [];
-    for (const fmt of FILE_FORMATS.filter((f) => f !== "qr")) {
-      const target = effectiveOpts[fmt];
-      if (!target) continue;
-      const abs = resolve(target);
-      const { data } = await client.downloadFile(key.id, fmt);
-      await writeFile(abs, data);
-      fileOutputs.push({ format: fmt, path: abs });
-    }
-
-    const copied = effectiveOpts.copy
-      ? await copyToClipboard(key.url)
-      : null;
-
-    // Chain into the installer if requested. Uses the same client + the
-    // freshly-created key id; no redundant withClient or extra round-trip
-    // to resolve `last`/prefix.
-    let installerResult: { filename: string; writtenTo: string | null } | null =
-      null;
-    if (effectiveOpts.install) {
-      installerResult = await runInstaller(client, key.id, {
-        type: effectiveOpts.install,
-        out: effectiveOpts.out,
-        hostname: effectiveOpts.hostname,
-        sshOnly: effectiveOpts.sshOnly,
-        silent: true, // we emit the combined output below
-      });
-    }
-
-    emit(
-      () => {
-        if (effectiveOpts.idOnly) {
-          process.stdout.write(key.id + "\n");
-          return;
-        }
-        if (effectiveOpts.urlOnly) {
-          process.stdout.write(key.url + "\n");
-          return;
-        }
-        process.stdout.write(`${c.green("✓")} created ${c.bold(key.id)}\n`);
-        process.stdout.write(`  ${c.dim("memo:")}  ${key.memo}\n`);
-        process.stdout.write(`  ${c.dim("url: ")} ${c.cyan(key.url)}\n`);
-        if (copied !== null) {
-          process.stdout.write(
-            copied
-              ? `  ${c.dim("copy:")} copied URL to clipboard\n`
-              : `  ${c.yellow("copy:")} clipboard command not available\n`,
-          );
-        }
-        if (key.destinations.length === 0) {
-          process.stdout.write(
-            `  ${c.yellow("warning:")} no notification destinations configured; hits will be logged only\n`,
-          );
-        }
-        for (const d of key.destinations) {
-          const activation = d.activation ?? {
-            ok: d.last_activation_status === "ok",
-            error:
-              d.last_activation_status === "failed"
-                ? d.last_activation_error ?? undefined
-                : undefined,
-          };
-          const marker = activation.ok ? c.green("✓") : c.yellow("⚠");
-          process.stdout.write(
-            `  ${marker} ${c.dim(d.channel.padEnd(7))} ${d.target}\n`,
-          );
-          if (!activation.ok && activation.error) {
+      emit(
+        () => {
+          if (effectiveOpts.idOnly) {
+            process.stdout.write(key.id + "\n");
+            return;
+          }
+          if (effectiveOpts.urlOnly) {
+            process.stdout.write(key.url + "\n");
+            return;
+          }
+          process.stdout.write(`${c.green("✓")} created ${c.bold(key.id)}\n`);
+          process.stdout.write(`  ${c.dim("memo:")}  ${key.memo}\n`);
+          process.stdout.write(`  ${c.dim("url: ")} ${c.cyan(key.url)}\n`);
+          if (copied !== null) {
             process.stdout.write(
-              `    ${c.dim("activation failed:")} ${activation.error}\n`,
+              copied
+                ? `  ${c.dim("copy:")} copied URL to clipboard\n`
+                : `  ${c.yellow("copy:")} clipboard command not available\n`,
             );
           }
-        }
-        if (qrAbsPath) {
-          process.stdout.write(`  ${c.dim("qr:  ")} ${qrAbsPath}\n`);
-        }
-        for (const out of fileOutputs) {
-          process.stdout.write(
-            `  ${c.dim(out.format.padEnd(4) + ":")} ${out.path}\n`,
-          );
-        }
-        if (installerResult?.writtenTo) {
-          process.stdout.write(
-            `  ${c.dim("inst:")} ${effectiveOpts.install} → ${installerResult.writtenTo}\n`,
-          );
-        } else if (installerResult && !installerResult.writtenTo) {
-          // runInstaller(silent=true) didn't print snippet; replay it now to stdout.
-          process.stdout.write(
-            `  ${c.dim("inst:")} ${effectiveOpts.install} (snippet on stdout below)\n`,
-          );
-        }
-        if (qrTerminal) {
-          process.stdout.write("\n" + qrTerminal);
-        }
-      },
-      {
-        ...(copied === null ? key : { ...key, copied }),
-        ...(installerResult
-          ? {
-              installer: {
-                type: effectiveOpts.install,
-                written_to: installerResult.writtenTo,
-              },
+          if (key.destinations.length === 0) {
+            process.stdout.write(
+              `  ${c.yellow("warning:")} no notification destinations configured; hits will be logged only\n`,
+            );
+          }
+          for (const d of key.destinations) {
+            const activation = d.activation ?? {
+              ok: d.last_activation_status === "ok",
+              error:
+                d.last_activation_status === "failed"
+                  ? d.last_activation_error ?? undefined
+                  : undefined,
+            };
+            const marker = activation.ok ? c.green("✓") : c.yellow("⚠");
+            process.stdout.write(
+              `  ${marker} ${c.dim(d.channel.padEnd(7))} ${d.target}\n`,
+            );
+            if (!activation.ok && activation.error) {
+              process.stdout.write(
+                `    ${c.dim("activation failed:")} ${activation.error}\n`,
+              );
             }
-          : {}),
-      },
-    );
+          }
+          if (qrAbsPath) {
+            process.stdout.write(`  ${c.dim("qr:  ")} ${qrAbsPath}\n`);
+          }
+          for (const out of fileOutputs) {
+            process.stdout.write(
+              `  ${c.dim(out.format.padEnd(4) + ":")} ${out.path}\n`,
+            );
+          }
+          if (installerResult?.writtenTo) {
+            process.stdout.write(
+              `  ${c.dim("inst:")} ${effectiveOpts.install} → ${installerResult.writtenTo}\n`,
+            );
+          } else if (installerResult && !installerResult.writtenTo) {
+            process.stdout.write(
+              `  ${c.dim("inst:")} ${effectiveOpts.install} (snippet on stdout below)\n`,
+            );
+          }
+          if (qrTerminal) {
+            process.stdout.write("\n" + qrTerminal);
+          }
+          if (installerResult && !installerResult.writtenTo) {
+            process.stdout.write("\n" + installerResult.content);
+          }
+        },
+        {
+          ...(copied === null ? key : { ...key, copied }),
+          ...(installerResult
+            ? {
+                installer: {
+                  type: effectiveOpts.install,
+                  written_to: installerResult.writtenTo,
+                  ...(!installerResult.writtenTo ? { content: installerResult.content } : {}),
+                },
+              }
+            : {}),
+        },
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`key ${key.id} was created, but setup did not finish: ${reason}. Resume with \`mantis show ${key.id}\`.`);
+    }
   });
 }
 

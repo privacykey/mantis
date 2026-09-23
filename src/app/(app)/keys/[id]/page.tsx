@@ -16,6 +16,7 @@ import { getSessionApiKey } from "@/lib/session";
 import { toggleKeyAction } from "../actions";
 import { CopyUrl } from "./copy-url";
 import { DeleteButton } from "./delete-button";
+import { DestinationsEditor } from "./destinations-editor";
 import { DownloadFormats } from "./download-formats";
 import { HitsFeed } from "./hits-feed";
 import { InstallersCard } from "./installers";
@@ -182,6 +183,13 @@ export default async function KeyDetailPage({ params }: Props) {
               })}
             </ul>
           )}
+          <div className="mt-3 pt-3 border-t border-neutral-900">
+            <DestinationsEditor
+              key={destinations.map((d) => `${d.id}:${d.channel}:${d.target}`).join("|")}
+              keyId={key.id}
+              initial={destinations.map((d) => ({ id: d.id, channel: d.channel, target: d.target }))}
+            />
+          </div>
         </Card>
         <Card title="dedupe window">
           <p className="text-sm text-neutral-300">

@@ -400,7 +400,7 @@ export class MantisClient {
   }
 
   listRecentHits(
-    query: { limit?: number; since?: string; cursor?: string; key_id?: string } = {},
+    query: { limit?: number; since?: string; since_id?: string; cursor?: string; key_id?: string } = {},
   ): Promise<Page<RecentHit>> {
     return this.req<Page<RecentHit>>("/api/hits/recent", { query });
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkerUrl } from "../src/commands/edge.js";
+import { isExpectedTriggerStatus, parseWorkerUrl } from "../src/commands/edge.js";
 
 describe("parseWorkerUrl", () => {
   it("lifts the workers.dev URL out of typical wrangler output", () => {
@@ -39,5 +39,17 @@ describe("parseWorkerUrl", () => {
   it("returns null when there is no URL", () => {
     expect(parseWorkerUrl("Authentication error [code: 10000]")).toBeNull();
     expect(parseWorkerUrl("")).toBeNull();
+  });
+});
+
+describe("edge test responses", () => {
+  it("accepts each configured response status", () => {
+    expect(isExpectedTriggerStatus("gif", 200)).toBe(true);
+    expect(isExpectedTriggerStatus("json", 200)).toBe(true);
+    expect(isExpectedTriggerStatus("html", 200)).toBe(true);
+    expect(isExpectedTriggerStatus("empty", 204)).toBe(true);
+    expect(isExpectedTriggerStatus("redirect", 302)).toBe(true);
+    expect(isExpectedTriggerStatus("empty", 200)).toBe(false);
+    expect(isExpectedTriggerStatus("redirect", 404)).toBe(false);
   });
 });

@@ -84,10 +84,18 @@ async function followHits(
   intervalMs: number,
 ): Promise<void> {
   const seen = new Set<string>();
+  const seenOrder: string[] = [];
 
-  // Prime the seen set so we only print *new* hits going forward.
-  const initial = await client.listHits(id, { limit: 50 });
-  for (const h of initial.data) seen.add(h.id);
+  // Anchor at start time. A one-millisecond overlap covers hits sharing a
+  // timestamp; the ID set prevents reprinting them on the next poll.
+  let watermarkMs = Date.now();
+  const initial = await client.listRecentHits({ key_id: id, limit: 500 });
+  for (const h of initial.data) {
+    if (new Date(h.occurred_at).getTime() < watermarkMs) {
+      seen.add(h.id);
+      seenOrder.push(h.id);
+    }
+  }
 
   process.stderr.write(
     c.dim(`following ${id.slice(0, 8)}; ctrl-c to stop\n`),
@@ -103,14 +111,26 @@ async function followHits(
     await new Promise((r) => setTimeout(r, intervalMs));
     if (stop) break;
     try {
-      const page = await client.listHits(id, { limit: 50 });
-      // Oldest-first so we print in arrival order
-      for (const h of [...page.data].reverse()) {
+      const since = new Date(watermarkMs - 1).toISOString();
+      const arrived: Hit[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await client.listRecentHits({ key_id: id, since, cursor, limit: 500 });
+        arrived.push(...page.data);
+        cursor = page.next_cursor ?? undefined;
+      } while (cursor);
+      for (const h of arrived) {
+        watermarkMs = Math.max(watermarkMs, new Date(h.occurred_at).getTime());
+      }
+      // Oldest-first so the stream reflects arrival order.
+      for (const h of arrived.reverse()) {
         if (seen.has(h.id)) continue;
         seen.add(h.id);
+        seenOrder.push(h.id);
         if (!filter(h)) continue;
         printFollowLine(h);
       }
+      while (seenOrder.length > 10_000) seen.delete(seenOrder.shift()!);
     } catch (err) {
       process.stderr.write(
         c.red(`follow error: ${err instanceof Error ? err.message : String(err)}\n`),

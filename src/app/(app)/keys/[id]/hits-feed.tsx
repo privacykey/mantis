@@ -12,7 +12,7 @@ import { relativeTime } from "@/lib/ui";
 // CLI's `mantis hits --follow` cadence. See the hits-feed design notes in the PR.
 
 const POLL_MS = 3000;
-const PAGE_LIMIT = 100;
+const PAGE_LIMIT = 300;
 const MAX_ROWS = 300; // bound the DOM; older rows drop off the bottom
 const HIGHLIGHT_MS = 2500;
 
@@ -60,13 +60,11 @@ export function HitsFeed({
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
 
   const seen = useRef<Set<string>>(new Set());
-  const since = useRef<string | null>(null); // newest occurred_at ingested
   const liveRef = useRef(live);
   liveRef.current = live;
 
-  async function load(sinceArg: string | null): Promise<Hit[]> {
+  async function load(): Promise<Hit[]> {
     const qs = new URLSearchParams({ key_id: keyId, limit: String(PAGE_LIMIT) });
-    if (sinceArg) qs.set("since", sinceArg);
     const res = await fetch(`/api/hits/recent?${qs.toString()}`, {
       cache: "no-store",
     });
@@ -105,14 +103,16 @@ export function HitsFeed({
         return;
       }
       try {
-        const data = await load(since.current);
+        // Refresh the visible window so delivery states can move from pending
+        // to succeeded/failed, and keep the newest visible hits after a burst.
+        const data = await load();
+        if (stop) return;
         const fresh = data.filter((h) => !seen.current.has(h.id));
         if (fresh.length > 0) {
           for (const h of fresh) seen.current.add(h.id);
-          since.current = fresh[0]!.occurred_at; // API is desc → newest first
-          setHits((prev) => [...fresh, ...(prev ?? [])].slice(0, MAX_ROWS));
           markFresh(fresh.map((h) => h.id));
         }
+        setHits(data.slice(0, MAX_ROWS));
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -123,10 +123,9 @@ export function HitsFeed({
     // Initial load, then start polling.
     (async () => {
       try {
-        const data = await load(null);
+        const data = await load();
         for (const h of data) seen.current.add(h.id);
-        since.current = data[0]?.occurred_at ?? null;
-        setHits(data);
+        if (!stop) setHits(data);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setHits([]);

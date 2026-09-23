@@ -1,16 +1,18 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { hits, notifications, type Notification } from "@/db/schema";
 import { loadOwnedKey, requireApiKey } from "@/lib/auth";
 import { parseHostContext } from "@/lib/installers/headers";
 import { hitNotificationSerializer } from "@/lib/notify/redact";
+import { encodeHitCursor, parseHitCursor } from "@/lib/hit-cursor";
 import { listQuerySchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ id: string }> };
+const cursorTime = sql<string>`to_char(${hits.occurredAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   const auth = await requireApiKey(req);
@@ -34,20 +36,29 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     );
   }
   const { limit, cursor } = parsed.data;
+  const hitCursor = cursor ? parseHitCursor(cursor) : null;
+  if (cursor && !hitCursor) {
+    return NextResponse.json({ error: "validation_error", message: "invalid cursor" }, { status: 422 });
+  }
 
   const conditions = [eq(hits.keyId, id)];
-  if (cursor) conditions.push(lt(hits.occurredAt, new Date(cursor)));
+  if (hitCursor) {
+    const at = sql`${hitCursor.at}::timestamptz`;
+    conditions.push(hitCursor.id
+      ? or(lt(hits.occurredAt, at), and(eq(hits.occurredAt, at), lt(hits.id, hitCursor.id)))!
+      : lt(hits.occurredAt, at));
+  }
 
   const rows = await db
-    .select()
+    .select({ hit: hits, cursorTime })
     .from(hits)
     .where(and(...conditions))
-    .orderBy(desc(hits.occurredAt))
+    .orderBy(desc(hits.occurredAt), desc(hits.id))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
   const data = hasMore ? rows.slice(0, limit) : rows;
-  const hitIds = data.map((h) => h.id);
+  const hitIds = data.map(({ hit }) => hit.id);
 
   let notifyByHit = new Map<string, Notification[]>();
   let allNotifs: Notification[] = [];
@@ -63,11 +74,13 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const serializeNotification = await hitNotificationSerializer(allNotifs, auth.key);
 
   const nextCursor = hasMore
-    ? (rows[limit - 1]?.occurredAt.toISOString() ?? null)
+    ? (rows[limit - 1]
+      ? encodeHitCursor(rows[limit - 1]!.cursorTime, rows[limit - 1]!.hit.id)
+      : null)
     : null;
 
   return NextResponse.json({
-    data: data.map((h) => ({
+    data: data.map(({ hit: h }) => ({
       id: h.id,
       occurred_at: h.occurredAt,
       ip: h.ip,

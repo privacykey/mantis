@@ -1,16 +1,18 @@
-import { and, desc, eq, gt, inArray, lt, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, or, sql, type SQL } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { hits, keys, notifications, type Notification } from "@/db/schema";
 import { requireApiKeyOrSession } from "@/lib/auth";
 import { parseHostContext } from "@/lib/installers/headers";
 import { hitNotificationSerializer } from "@/lib/notify/redact";
+import { encodeHitCursor, parseHitCursor } from "@/lib/hit-cursor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const cursorTime = sql<string>`to_char(${hits.occurredAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 export async function GET(req: NextRequest) {
   const auth = await requireApiKeyOrSession(req);
@@ -33,16 +35,22 @@ export async function GET(req: NextRequest) {
     conditions.push(eq(keys.id, parsed.keyId));
   }
   if (parsed.since) {
-    conditions.push(gt(hits.occurredAt, parsed.since));
+    conditions.push(parsed.sinceId
+      ? or(gt(hits.occurredAt, parsed.since), and(eq(hits.occurredAt, parsed.since), gt(hits.id, parsed.sinceId)))!
+      : gt(hits.occurredAt, parsed.since));
   }
   if (parsed.cursor) {
-    conditions.push(lt(hits.occurredAt, parsed.cursor));
+    const at = sql`${parsed.cursor.at}::timestamptz`;
+    conditions.push(parsed.cursor.id
+      ? or(lt(hits.occurredAt, at), and(eq(hits.occurredAt, at), lt(hits.id, parsed.cursor.id)))!
+      : lt(hits.occurredAt, at));
   }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const rows = await db
     .select({
       hit: hits,
+      cursorTime,
       key: {
         id: keys.id,
         publicId: keys.publicId,
@@ -52,7 +60,7 @@ export async function GET(req: NextRequest) {
     .from(hits)
     .innerJoin(keys, eq(hits.keyId, keys.id))
     .where(where)
-    .orderBy(desc(hits.occurredAt))
+    .orderBy(desc(hits.occurredAt), desc(hits.id))
     .limit(parsed.limit + 1);
 
   const hasMore = rows.length > parsed.limit;
@@ -73,7 +81,9 @@ export async function GET(req: NextRequest) {
   const serializeNotification = await hitNotificationSerializer(allNotifs, auth.key);
 
   const nextCursor = hasMore
-    ? (rows[parsed.limit - 1]?.hit.occurredAt.toISOString() ?? null)
+    ? (rows[parsed.limit - 1]
+      ? encodeHitCursor(rows[parsed.limit - 1]!.cursorTime, rows[parsed.limit - 1]!.hit.id)
+      : null)
     : null;
 
   return NextResponse.json({
@@ -107,7 +117,8 @@ function parseQuery(params: URLSearchParams):
       ok: true;
       limit: number;
       since: Date | null;
-      cursor: Date | null;
+      sinceId: string | null;
+      cursor: { at: string; id: string | null } | null;
       keyId: string | null;
     }
   | { ok: false; message: string } {
@@ -127,15 +138,21 @@ function parseQuery(params: URLSearchParams):
     return { ok: false, message: "since must be an ISO timestamp" };
   }
 
-  const cursor = parseOptionalDate(params.get("cursor"));
-  if (cursor === false) {
-    return { ok: false, message: "cursor must be an ISO timestamp" };
+  const sinceId = params.get("since_id");
+  if (sinceId && (!UUID_RE.test(sinceId) || !since)) {
+    return { ok: false, message: "since_id requires a valid since timestamp and UUID" };
+  }
+  const cursorRaw = params.get("cursor");
+  const cursor = cursorRaw ? parseHitCursor(cursorRaw) : null;
+  if (cursorRaw && !cursor) {
+    return { ok: false, message: "cursor must be an ISO timestamp or hit cursor" };
   }
 
   return {
     ok: true,
     limit,
     since,
+    sinceId,
     cursor,
     keyId: keyId ?? null,
   };
