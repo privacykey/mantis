@@ -137,6 +137,7 @@ export type AuditEvent = {
 };
 
 export type Page<T> = { data: T[]; next_cursor: string | null };
+export type RecentHitsPage = Page<RecentHit> & { server_time?: string };
 
 export type Health = {
   status: "ok" | "degraded";
@@ -400,9 +401,9 @@ export class MantisClient {
   }
 
   listRecentHits(
-    query: { limit?: number; since?: string; since_id?: string; cursor?: string; key_id?: string } = {},
-  ): Promise<Page<RecentHit>> {
-    return this.req<Page<RecentHit>>("/api/hits/recent", { query });
+    query: { limit?: number; since?: string; since_id?: string; cursor?: string; key_id?: string; anchor?: number } = {},
+  ): Promise<RecentHitsPage> {
+    return this.req<RecentHitsPage>("/api/hits/recent", { query });
   }
 
   async fetchInstaller(
