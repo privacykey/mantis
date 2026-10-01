@@ -3,8 +3,6 @@ import { readFile, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const DEFAULT_INTERVAL_SECONDS = 30;
 const DEFAULT_COOLDOWN_SECONDS = 900;
@@ -40,7 +38,7 @@ export function createState() {
   return { firedAt: new Map(), logOffsets: new Map(), pendingLogs: new Map() };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (import.meta.main) {
   await main();
 }
 
