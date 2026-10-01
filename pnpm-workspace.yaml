@@ -27,7 +27,8 @@ allowBuilds:
 #   esbuild <0.28.1  → Deno binary-integrity RCE (GHSA-gv7w-rqvm-qjhr); also clears the
 #                      Windows dev-server path traversal (GHSA-g7r4-m6w7-qqqr) and the older
 #                      dev-server CORS bypass (GHSA-67mh-4wv8-2f99). Build-time devDep only.
-#   joi <17.13.6     → uncaught RangeError on deep recursive link() schemas (GHSA-q7cg-457f-vx79)
+#   joi <17.13.8     → isoDate() regular-expression denial of service (GHSA-6h2x-m376-mqjq),
+#                      uncaught RangeError on deep recursive link() schemas (GHSA-q7cg-457f-vx79)
 #                      and prototype pollution in custom messages/rename() (GHSA-6w3j-5fw6-r9vr,
 #                      GHSA-gg4h-3hg2-grpc); pulled in via passkit-generator. ^17.x stays off
 #                      the separate 18.0.0–18.2.0 vulnerable branch.
@@ -45,14 +46,15 @@ allowBuilds:
 #   sharp <0.35.4    → inherited libvips heap overflows / OOB reads (GHSA-f88m-g3jw-g9cj:
 #                      CVE-2026-33327/33328/35590/35591) and libheif vulnerabilities
 #                      (GHSA-rgj7-g3m4-5g8c); optional dep of next, so forced here.
-#   undici@7 <7.29.0 → the 7.x HTTP-cache/cookie/retry cluster: private-cache directive
+#   undici@7 <7.29.1 → BalancedPool TLS validation bypass (GHSA-w293-vg96-wgc3) and
+#                      the 7.x HTTP-cache/cookie/retry cluster: private-cache directive
 #                      crash + cross-user disclosure (GHSA-4cwx-7wf7-3272, high),
 #                      Cache-Control whitespace disclosure (GHSA-jr45-8vmc-qm54), retry
 #                      interceptor response desync (GHSA-8xcm-r25x-g524), setCookie
 #                      attribute injection (GHSA-v3r7-h72x-cjcm) and blob `type` CRLF
 #                      injection (GHSA-m8rv-5g2x-5cg5). NOTE the `undici@7` key: the
 #                      app's own dependency is undici ^8, which these advisories cover
-#                      separately (fixed in 8.9.0, and the root spec floor is ^8.9.0), so
+#                      separately (the root spec floor is now ^8.10.2), so
 #                      a bare `undici:` override would drag the app back onto the 7.x
 #                      line. Keying on the 7 range patches every 7.x consumer while
 #                      leaving 8.x alone — today that is miniflare's exact 7.28.0 pin
@@ -60,11 +62,11 @@ allowBuilds:
 #                      ships in the server image.
 overrides:
   nanoid@3: ^3.3.18
-  undici@7: ^7.29.0
+  undici@7: ^7.29.1
   sharp: ^0.35.4
   postcss: ^8.5.10
   esbuild: ^0.28.1
-  joi: ^17.13.6
+  joi: ^17.13.8
   ws: ^8.20.1
   uuid: ^11.1.1
   form-data: ^4.0.6
