@@ -381,11 +381,19 @@ export class MantisClient {
       `/status/${encodeURIComponent(publicId)}`,
       this.auth.baseUrl,
     );
-    return this.fetchWithPolicy(url).then(async (res) => {
+    return this.fetchWithPolicy(url, { headers: this.authHeaders(null) }).then(async (res) => {
       if (res.status === 404) {
         throw new ApiError(404, null, "not monitored");
       }
       const body = await res.json();
+      const recognized = body && typeof body === "object" && "status" in body && (body.status === "ok" || body.status === "tripped");
+      // A tripped monitor deliberately returns 503 for uptime tools.
+      if (!res.ok && !(res.status === 503 && recognized && body.status === "tripped")) {
+        throw new ApiError(res.status, body, `monitor status failed (HTTP ${res.status})`);
+      }
+      if (!recognized) {
+        throw new Error("monitor status response was not recognized");
+      }
       return body as { status: "ok" | "tripped"; tripped_at?: string };
     });
   }

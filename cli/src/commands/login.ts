@@ -4,6 +4,7 @@ import {
   DEFAULT_PROFILE,
   getCurrentProfileName,
   getProfile,
+  resolveCloudflareAuth,
   setKey,
   setProfile,
   useProfile,
@@ -78,7 +79,14 @@ export async function loginCmd(opts: {
       );
     }
 
-    const client = new MantisClient({ baseUrl: url, key });
+    // Access credentials belong to the stored server, not the profile name.
+    // Changing --url must not forward the old server's JWT to another host.
+    const accessProfile = existing && sameServerUrl(existing.baseUrl, url) ? existing : null;
+    const client = new MantisClient({
+      baseUrl: url,
+      key,
+      cloudflare: resolveCloudflareAuth(url, accessProfile),
+    });
     try {
       await client.ping();
     } catch (err) {
@@ -91,8 +99,8 @@ export async function loginCmd(opts: {
     await setProfile(profileName, {
       baseUrl: url,
       keyPrefix: key.slice(0, 18),
-      cloudflareAccessAppUrl: existing?.cloudflareAccessAppUrl,
-      cloudflareAccessMode: existing?.cloudflareAccessMode,
+      cloudflareAccessAppUrl: accessProfile?.cloudflareAccessAppUrl,
+      cloudflareAccessMode: accessProfile?.cloudflareAccessMode,
       edgeWorkerUrl: existing?.edgeWorkerUrl,
     });
     if (!opts.noSwitch) {
@@ -107,5 +115,15 @@ export async function loginCmd(opts: {
     );
   } finally {
     rl?.close();
+  }
+}
+
+function sameServerUrl(left: string, right: string): boolean {
+  try {
+    const a = new URL(left);
+    const b = new URL(right);
+    return a.origin === b.origin && a.pathname.replace(/\/+$/, "") === b.pathname.replace(/\/+$/, "");
+  } catch {
+    return false;
   }
 }
