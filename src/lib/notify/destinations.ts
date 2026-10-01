@@ -231,42 +231,27 @@ export async function listGlobalDestinations(): Promise<
 export async function replaceGlobalDestinations(
   inputs: DestinationInput[],
 ): Promise<DestinationResult[]> {
-  const existing = await listGlobalDestinations();
-  const existingByPair = new Map<string, NotificationDestination>(
-    existing.map((d) => [`${d.channel}\0${d.target}`, d]),
-  );
-
-  await db
-    .delete(notificationDestinations)
-    .where(isNull(notificationDestinations.keyId));
-
-  const results: DestinationResult[] = [];
-  for (const input of inputs) {
-    const carry = existingByPair.get(`${input.channel}\0${input.target}`);
-    if (carry) {
-      const [row] = await db
-        .insert(notificationDestinations)
-        .values({
-          keyId: null,
-          channel: carry.channel,
-          target: carry.target,
-          signingSecret: carry.signingSecret,
-          lastActivationStatus: carry.lastActivationStatus,
-          lastActivationError: carry.lastActivationError,
-          lastActivationAt: carry.lastActivationAt,
-        })
-        .returning();
-      if (row) {
-        results.push({
-          destination: row,
-          activation: {
-            ok: carry.lastActivationStatus === "ok",
-            error: carry.lastActivationError ?? undefined,
-          },
-        });
+  const persisted = await db.transaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(notificationDestinations)
+      .where(isNull(notificationDestinations.keyId));
+    const byPair = new Map<string, NotificationDestination[]>();
+    for (const row of existing) {
+      const pair = `${row.channel}\0${row.target}`;
+      byPair.set(pair, [...(byPair.get(pair) ?? []), row]);
+    }
+    const rows: Array<{ destination: NotificationDestination; carried: boolean }> = [];
+    const retained = new Set<string>();
+    for (const input of inputs) {
+      const pair = `${input.channel}\0${input.target}`;
+      const carry = byPair.get(pair)?.shift();
+      if (carry) {
+        retained.add(carry.id);
+        rows.push({ destination: carry, carried: true });
+        continue;
       }
-    } else {
-      const [row] = await db
+      const [destination] = await tx
         .insert(notificationDestinations)
         .values({
           keyId: null,
@@ -276,16 +261,36 @@ export async function replaceGlobalDestinations(
             input.channel === "webhook" ? sealSecret(newSigningSecret()) : null,
         })
         .returning();
-      if (!row) throw new Error("global destination insert returned no row");
-      // No key to describe — fireActivationPing handles a null key.
-      const activation = await fireActivationPing(null, row);
-      const [refreshed] = await db
-        .select()
-        .from(notificationDestinations)
-        .where(eq(notificationDestinations.id, row.id))
-        .limit(1);
-      results.push({ destination: refreshed ?? row, activation });
+      if (!destination) throw new Error("global destination insert returned no row");
+      rows.push({ destination, carried: false });
     }
+    const removed = existing.filter((row) => !retained.has(row.id)).map((row) => row.id);
+    if (removed.length > 0) {
+      await tx.delete(notificationDestinations).where(inArray(notificationDestinations.id, removed));
+    }
+    return rows;
+  });
+
+  const results: DestinationResult[] = [];
+  for (const { destination, carried } of persisted) {
+    let activation: DestinationResult["activation"] = {
+      ok: destination.lastActivationStatus === "ok",
+      error: destination.lastActivationError ?? undefined,
+    };
+    if (!carried) {
+      try {
+        activation = await fireActivationPing(null, destination);
+      } catch (err) {
+        activation = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+    const [refreshed] = await db
+      .select()
+      .from(notificationDestinations)
+      .where(eq(notificationDestinations.id, destination.id))
+      .limit(1)
+      .catch(() => [destination]);
+    results.push({ destination: refreshed ?? destination, activation });
   }
   return results;
 }

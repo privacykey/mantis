@@ -9,6 +9,7 @@ import {
   truncate,
 } from "../lib/out.js";
 import { parseIntervalMs, parseLimit } from "../lib/parse.js";
+import { primeHitAnchor } from "../lib/hit-anchor.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -86,15 +87,14 @@ async function followHits(
   const seen = new Set<string>();
   const seenOrder: string[] = [];
 
-  // Anchor at start time. A one-millisecond overlap covers hits sharing a
-  // timestamp; the ID set prevents reprinting them on the next poll.
-  let watermarkMs = Date.now();
-  const initial = await client.listRecentHits({ key_id: id, limit: 500 });
-  for (const h of initial.data) {
-    if (new Date(h.occurred_at).getTime() < watermarkMs) {
-      seen.add(h.id);
-      seenOrder.push(h.id);
-    }
+  // A one-millisecond overlap covers hits sharing the anchor timestamp; IDs
+  // prevent reprinting them on the next poll.
+  const initial = await client.listRecentHits({ key_id: id, limit: 500, anchor: 1 });
+  const anchor = primeHitAnchor(initial);
+  let watermarkMs = anchor.watermarkMs;
+  for (const id of anchor.seenIds) {
+    seen.add(id);
+    seenOrder.push(id);
   }
 
   process.stderr.write(
@@ -111,7 +111,7 @@ async function followHits(
     await new Promise((r) => setTimeout(r, intervalMs));
     if (stop) break;
     try {
-      const since = new Date(watermarkMs - 1).toISOString();
+      const since = new Date(Math.max(0, watermarkMs - 1)).toISOString();
       const arrived: Hit[] = [];
       let cursor: string | undefined;
       do {

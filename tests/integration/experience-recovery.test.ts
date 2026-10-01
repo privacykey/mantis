@@ -7,8 +7,8 @@ vi.mock("@/lib/log", () => ({
 
 import { GET as recentHits } from "@/app/api/hits/recent/route";
 import { db } from "@/db/client";
-import { hits, keys, notificationDestinations } from "@/db/schema";
-import { createKeyWithDestinations, replaceDestinations } from "@/lib/notify/destinations";
+import { hits, keys, notificationDestinations, notifications } from "@/db/schema";
+import { createKeyWithDestinations, replaceDestinations, replaceGlobalDestinations } from "@/lib/notify/destinations";
 import { buildJsonRequest, seedApiKey, seedCanaryKey } from "./_harness";
 
 describe("experience recovery", () => {
@@ -35,6 +35,38 @@ describe("experience recovery", () => {
     expect(removed!.id).not.toBe(kept!.id);
   });
 
+  it("keeps global destination identity and notification history across a save", async () => {
+    const owner = await seedApiKey();
+    const key = await seedCanaryKey(owner.row.id);
+    const [hit] = await db.insert(hits).values({ keyId: key.id }).returning();
+    const [kept, removed] = await db.insert(notificationDestinations).values([
+      { keyId: null, channel: "email", target: "keep@example.com", lastActivationStatus: "ok" },
+      { keyId: null, channel: "email", target: "remove@example.com", lastActivationStatus: "ok" },
+    ]).returning();
+    const [notification] = await db.insert(notifications).values({
+      hitId: hit!.id, keyId: key.id, destinationId: kept!.id,
+      channel: "email", target: "keep@example.com",
+    }).returning();
+
+    const results = await replaceGlobalDestinations([{ channel: "email", target: "keep@example.com" }]);
+    expect(results.map((result) => result.destination.id)).toEqual([kept!.id]);
+    expect(await db.select().from(notificationDestinations).where(eq(notificationDestinations.id, removed!.id))).toHaveLength(0);
+    const [after] = await db.select().from(notifications).where(eq(notifications.id, notification!.id));
+    expect(after?.destinationId).toBe(kept!.id);
+  });
+
+  it("rolls back a global destination replacement when a new row is invalid", async () => {
+    const [kept] = await db.insert(notificationDestinations).values({
+      keyId: null, channel: "email", target: "keep@example.com",
+    }).returning();
+    await expect(replaceGlobalDestinations([
+      { channel: "email", target: "keep@example.com" },
+      { channel: "email", target: null as unknown as string },
+    ])).rejects.toThrow();
+    const [after] = await db.select().from(notificationDestinations).where(eq(notificationDestinations.id, kept!.id));
+    expect(after?.id).toBe(kept!.id);
+  });
+
   it("paginates hits sharing one millisecond without skipping them", async () => {
     const owner = await seedApiKey();
     const key = await seedCanaryKey(owner.row.id);
@@ -48,5 +80,14 @@ describe("experience recovery", () => {
     const page2 = await second.json() as { data: Array<{ id: string }>; next_cursor: string | null };
     expect([...page1.data, ...page2.data].map((row) => row.id)).toEqual([...ids].reverse());
     expect(page2.next_cursor).toBeNull();
+  });
+
+  it("returns database time when a live client requests an anchor", async () => {
+    const owner = await seedApiKey();
+    const response = await recentHits(buildJsonRequest("/api/hits/recent?anchor=1", { bearer: owner.plaintext }));
+    const body = await response.json() as { data: unknown[]; server_time: string };
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual([]);
+    expect(Number.isFinite(Date.parse(body.server_time))).toBe(true);
   });
 });

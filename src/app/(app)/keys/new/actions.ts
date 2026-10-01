@@ -9,7 +9,7 @@ import {
   createKeyWithDestinations,
   type DestinationInput,
 } from "@/lib/notify/destinations";
-import { isPresetId } from "@/lib/presets";
+import { getPreset, isPresetId } from "@/lib/presets";
 
 export type CreateState = {
   error?: string;
@@ -39,10 +39,13 @@ export async function createKeyAction(
   if (!memo) return { error: "memo is required" };
   if (memo.length > 500) return { error: "memo too long (max 500)" };
 
-  const responseKindRaw = String(formData.get("response_kind") ?? "gif");
-  const responseKind = (VALID_KINDS as string[]).includes(responseKindRaw)
-    ? (responseKindRaw as ResponseKind)
-    : "gif";
+  const presetRaw = String(formData.get("preset") ?? "");
+  const preset = getPreset(isPresetId(presetRaw) ? presetRaw : null);
+  const responseKindRaw = String(formData.get("response_kind") ?? preset.responseKind);
+  if (!(VALID_KINDS as string[]).includes(responseKindRaw)) {
+    return { error: "invalid trigger response" };
+  }
+  const responseKind = responseKindRaw as ResponseKind;
 
   let responsePayload: unknown = null;
   if (responseKind === "redirect") {
@@ -97,7 +100,7 @@ export async function createKeyAction(
     destinations.push({ channel, target });
   }
 
-  const dedupRaw = String(formData.get("dedupe_window_seconds") ?? "60");
+  const dedupRaw = String(formData.get("dedupe_window_seconds") ?? preset.dedupeWindowSeconds);
   const dedupeWindowSeconds = Number.parseInt(dedupRaw, 10);
   if (!Number.isFinite(dedupeWindowSeconds) || dedupeWindowSeconds < 0 || dedupeWindowSeconds > 86_400) {
     return { error: "dedupe window must be 0–86400 seconds" };
@@ -117,7 +120,6 @@ export async function createKeyAction(
 
   // Carry the preset through so the key page can surface the matching
   // download format and deployment hint instead of a generic format list.
-  const presetRaw = String(formData.get("preset") ?? "");
   const presetQuery = isPresetId(presetRaw) ? `?preset=${presetRaw}` : "";
   redirect(`/keys/${row.id}${presetQuery}`);
 }

@@ -40,6 +40,9 @@ export function NewKeyForm({
   );
   const [touched, setTouched] = useState({ kind: false, dedupe: false });
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [redirectUrl, setRedirectUrl] = useState("");
+  const [htmlBody, setHtmlBody] = useState("");
+  const [jsonBody, setJsonBody] = useState("");
   const [destinations, setDestinations] = useState<Destination[]>([]);
 
   const choosePreset = (id: string) => {
@@ -60,6 +63,11 @@ export function NewKeyForm({
 
   return (
     <form action={formAction} className="space-y-5">
+      <input type="hidden" name="response_kind" value={kind} />
+      <input type="hidden" name="dedupe_window_seconds" value={dedupe} />
+      <input type="hidden" name="redirect_url" value={redirectUrl} />
+      <input type="hidden" name="html_body" value={htmlBody} />
+      <input type="hidden" name="json_body" value={jsonBody} />
       <p className="text-sm text-neutral-400 leading-relaxed">
         A mantis key is a tripwire. Pick what you&apos;re planting and mantis
         fills in sensible defaults — you can change any of them.
@@ -106,7 +114,6 @@ export function NewKeyForm({
           required
           maxLength={500}
           defaultValue={defaultMemo}
-          key={preset.id} // re-render placeholder when the preset changes
           placeholder={preset.memoExample || "e.g. honeypot doc in /finance"}
           className={`${inputBase} w-full`}
         />
@@ -140,7 +147,6 @@ export function NewKeyForm({
               hint="What the mantis URL returns when fetched. The preset picks the least conspicuous option for that medium."
             >
               <select
-                name="response_kind"
                 value={kind}
                 onChange={(e) => {
                   setKind(e.target.value);
@@ -159,8 +165,9 @@ export function NewKeyForm({
             {kind === "redirect" && (
               <Field label="redirect URL">
                 <input
-                  name="redirect_url"
                   type="url"
+                  value={redirectUrl}
+                  onChange={(e) => setRedirectUrl(e.target.value)}
                   placeholder="https://example.com"
                   className={`${inputBase} w-full`}
                 />
@@ -170,7 +177,8 @@ export function NewKeyForm({
             {kind === "html" && (
               <Field label="HTML body">
                 <textarea
-                  name="html_body"
+                  value={htmlBody}
+                  onChange={(e) => setHtmlBody(e.target.value)}
                   rows={4}
                   className={`${inputBase} w-full font-mono`}
                   placeholder="<!doctype html>…"
@@ -181,7 +189,8 @@ export function NewKeyForm({
             {kind === "json" && (
               <Field label="JSON body" hint="Leave blank to return {ok: true}.">
                 <textarea
-                  name="json_body"
+                  value={jsonBody}
+                  onChange={(e) => setJsonBody(e.target.value)}
                   rows={3}
                   className={`${inputBase} w-full font-mono`}
                   placeholder='{"status":"ok"}'
@@ -194,7 +203,6 @@ export function NewKeyForm({
               hint="Repeat hits inside this window are recorded but don't re-notify. 0 = alert on every hit (right for login/sudo alarms)."
             >
               <input
-                name="dedupe_window_seconds"
                 type="number"
                 value={dedupe}
                 onChange={(e) => {
