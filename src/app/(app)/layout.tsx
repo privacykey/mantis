@@ -12,17 +12,17 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-neutral-900 bg-neutral-950">
-        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between text-sm">
-          <div className="flex items-center gap-6">
+        <div className="max-w-5xl mx-auto px-6 py-3 grid grid-cols-[1fr_auto] items-center gap-x-6 gap-y-3 text-sm sm:grid-cols-[auto_1fr_auto]">
+          <div className="contents">
             <Link
               href="/keys"
-              className="text-neutral-200 no-underline hover:no-underline font-semibold"
+              className="col-start-1 row-start-1 text-neutral-200 no-underline hover:no-underline font-semibold"
             >
               mantis
             </Link>
             <nav
               aria-label="primary"
-              className="flex items-center gap-4 text-neutral-400"
+              className="col-start-1 col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 text-neutral-400 sm:col-start-2 sm:col-span-1 sm:row-start-1 [&>a]:whitespace-nowrap"
             >
               <Link href="/keys" className="text-neutral-400 no-underline hover:text-neutral-200">
                 keys
@@ -74,7 +74,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               </a>
             </nav>
           </div>
-          <div className="flex items-center gap-3 text-neutral-500">
+          <div className="col-start-2 row-start-1 flex items-center gap-3 text-neutral-500 sm:col-start-3">
             <span className="hidden sm:inline">{session.prefix}…</span>
             <form action="/logout" method="post">
               <button
