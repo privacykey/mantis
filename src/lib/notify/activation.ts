@@ -11,6 +11,7 @@ import { env, keyUrl } from "@/lib/env";
 import { log } from "@/lib/log";
 import { sanitizeHeaderValue } from "@/lib/sanitize";
 import { safePostJson } from "./safe-post";
+import { boundedSmtpUrl } from "./smtp";
 
 let mailer: Transporter | null | undefined;
 function getMailer(): Transporter | null {
@@ -19,7 +20,7 @@ function getMailer(): Transporter | null {
     mailer = null;
     return null;
   }
-  mailer = nodemailer.createTransport(env.smtpUrl);
+  mailer = nodemailer.createTransport(boundedSmtpUrl(env.smtpUrl));
   return mailer;
 }
 

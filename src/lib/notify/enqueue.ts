@@ -18,8 +18,9 @@ import {
 export async function enqueueNotifications(
   key: Key,
   hit: Hit,
+  client: Pick<typeof db, "select" | "insert"> = db,
 ): Promise<void> {
-  const destinations = await db
+  const destinations = await client
     .select()
     .from(notificationDestinations)
     .where(
@@ -55,5 +56,5 @@ export async function enqueueNotifications(
     signingSecret: d.signingSecret ?? null,
   }));
 
-  await db.insert(notifications).values(rows);
+  await client.insert(notifications).values(rows);
 }

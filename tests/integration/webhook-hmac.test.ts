@@ -68,7 +68,8 @@ describe("E2E-12 webhook HMAC signing", () => {
     const key = fakeKey();
     const hit = fakeHit(key.id);
 
-    await sendWebhook({ key, hit, target: sink.url, signingSecret: SECRET });
+    const deliveryId = "00000000-0000-4000-8000-000000000123";
+    await sendWebhook({ key, hit, target: sink.url, signingSecret: SECRET, deliveryId });
 
     expect(sink.requests).toHaveLength(1);
     const req = sink.requests[0]!;
@@ -77,6 +78,9 @@ describe("E2E-12 webhook HMAC signing", () => {
     const body = JSON.parse(req.body) as { type: string; key: { public_id: string } };
     expect(body.type).toBe("mantis.hit");
     expect(body.key.public_id).toBe(key.publicId);
+    expect(req.headers["x-mantis-delivery-id"]).toBe(deliveryId);
+    expect(req.headers["idempotency-key"]).toBe(deliveryId);
+    expect(JSON.parse(req.body).delivery_id).toBe(deliveryId);
 
     // Signature verifies against the raw bytes the sink actually received.
     const ts = req.headers["x-mantis-timestamp"];

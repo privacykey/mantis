@@ -66,16 +66,30 @@ export async function deviceCreateAction(
     createdByApiKeyId: session.id,
   }));
 
-  // Re-provisioning a rebuilt machine should reuse its keys, not mint a second
-  // set — the unique index on external_id absorbs the duplicates.
-  let insertedIds: string[];
+  // Ownership validation shares the insert transaction: a conflict on any
+  // vector must roll back the newly inserted vectors in the same suite.
   try {
-    const inserted = await db
-      .insert(keys)
-      .values(rows)
-      .onConflictDoNothing({ target: keys.externalId })
-      .returning();
-    insertedIds = inserted.map((r) => r.id);
+    const minted = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(keys)
+        .values(rows)
+        .onConflictDoNothing({ target: keys.externalId })
+        .returning();
+      const insertedIds = new Set(inserted.map((r) => r.id));
+      const found = await tx.select().from(keys).where(inArray(keys.externalId, externalIds));
+      const byExternalId = new Map(found.map((row) => [row.externalId!, row]));
+      return chosen.map((vector, i) => {
+        const row = byExternalId.get(externalIds[i]!);
+        if (!row || row.createdByApiKeyId !== session.id) {
+          throw new Error(`"${device}" is already in use by another account on this instance — pick a different device name.`);
+        }
+        return {
+          id: row.id, publicId: row.publicId, memo: row.memo,
+          slug: vector.slug, created: insertedIds.has(row.id),
+        };
+      });
+    });
+    return { device, os, minted };
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : "failed to create keys",
@@ -83,41 +97,4 @@ export async function deviceCreateAction(
       device,
     };
   }
-
-  // Read back by externalId to pick up rows that already existed. Scoped to the
-  // caller: external_id is unique table-wide, so without this filter another
-  // operator's "web01" keys would be handed to whoever asked for that name.
-  const found = await db
-    .select()
-    .from(keys)
-    .where(inArray(keys.externalId, externalIds));
-  const mine = new Map(
-    found
-      .filter((k) => k.createdByApiKeyId === session.id)
-      .map((k) => [k.externalId!, k]),
-  );
-
-  const minted: NonNullable<DeviceState["minted"]> = [];
-  for (const [i, vector] of chosen.entries()) {
-    const row = mine.get(externalIds[i]!);
-    if (!row) {
-      // The insert was absorbed but the row isn't ours: someone else on this
-      // instance already owns that device name. Say so rather than returning a
-      // bundle with a hole in it.
-      return {
-        error: `"${device}" is already in use by another account on this instance — pick a different device name.`,
-        os,
-        device,
-      };
-    }
-    minted.push({
-      id: row.id,
-      publicId: row.publicId,
-      memo: row.memo,
-      slug: vector.slug,
-      created: insertedIds.includes(row.id),
-    });
-  }
-
-  return { device, os, minted };
 }

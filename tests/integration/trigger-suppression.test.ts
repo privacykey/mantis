@@ -10,13 +10,6 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/log", () => ({
   log: { info() {}, warn() {}, error() {}, debug() {}, fatal() {}, trace() {} },
 }));
-// after() callbacks (the notify enqueue) don't auto-flush outside a Next request
-// scope; no-op them so the synchronous hit recording is what we assert on.
-vi.mock("next/server", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("next/server")>();
-  return { ...actual, after: (_fn: unknown) => {} };
-});
-
 import { GET as trigger } from "@/app/c/[publicId]/route";
 import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";

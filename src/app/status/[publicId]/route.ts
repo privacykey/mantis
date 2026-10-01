@@ -38,12 +38,15 @@ async function handle(publicId: string): Promise<Response> {
   let key: Key | null = null;
   try {
     key = await lookupKey(publicId);
+    if (!key) return notMonitored();
+    return await monitoredResponse(key);
   } catch (err) {
-    log.error({ err, publicId }, "status lookup failed");
+    log.error({ err, publicId }, "monitor status unavailable");
+    return NextResponse.json({ error: "unavailable" }, { status: 503, headers: NO_STORE_HEADERS });
   }
+}
 
-  if (!key) return notMonitored();
-
+async function monitoredResponse(key: Key): Promise<Response> {
   const state = await computeMonitorState(key);
   if (state.kind === "off") return notMonitored();
 

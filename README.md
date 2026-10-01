@@ -41,6 +41,13 @@ Components are versioned independently: the server, the CLI, and the edge worker
 - **Uptime Kuma integration** — a per-key status URL flips on hit, so Kuma can fan out to its own notification channels
 - **Fleet provisioning** — idempotent key creation keyed on an `external_id`, plus create-only enrollment API keys safe to embed in MDM scripts. See [`docs/FLEET-PROVISIONING.md`](./docs/FLEET-PROVISIONING.md)
 
+The server stores a primary hit and its notification jobs in one transaction.
+Interrupted deliveries resume after their worker lease expires. Delivery is at
+least once: a receiver may accept a message before the worker can record that
+success, so a recovery attempt can repeat it. Generic webhook receivers can
+deduplicate the stable `X-Mantis-Delivery-Id` / `Idempotency-Key` header (also
+`delivery_id` in the JSON payload). Third-party channels may still show repeats.
+
 ## Get it
 
 The fastest path either way is the guided CLI: `mantis init` asks server-or-edge and walks you through login and your first key.
