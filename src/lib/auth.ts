@@ -14,6 +14,7 @@ import {
   type RateLimitResult,
 } from "@/lib/rate-limit";
 import { extractIp } from "@/lib/request-info";
+import { log } from "@/lib/log";
 
 export type AuthResult = { ok: true; key: ApiKey } | { ok: false; res: NextResponse };
 
@@ -56,6 +57,22 @@ function unauthorized(message: string): NextResponse {
       headers: { "WWW-Authenticate": 'Bearer realm="mantis"' },
     },
   );
+}
+
+function authenticationUnavailable(): AuthResult {
+  // Driver/framework errors may include request or connection details. Keep
+  // the log and public response static rather than recording the exception.
+  log.warn("authentication dependency unavailable");
+  return {
+    ok: false,
+    res: NextResponse.json(
+      { error: "unavailable", message: "authentication is temporarily unavailable" },
+      {
+        status: 503,
+        headers: { "Cache-Control": "no-store", "Retry-After": "1" },
+      },
+    ),
+  };
 }
 
 function forbiddenScope(): NextResponse {
@@ -145,19 +162,23 @@ export async function requireApiKey(
   req: NextRequest,
   opts: RequireApiKeyOpts = {},
 ): Promise<AuthResult> {
-  const presented = extractBearer(req);
-  const fail = (message: string) => failBearer(req, message);
+  try {
+    const presented = extractBearer(req);
+    const fail = (message: string) => failBearer(req, message);
 
-  if (!presented) return fail("missing Authorization: Bearer token");
-  if (!isWellFormedApiKey(presented)) return fail("malformed API key");
-  const key = await resolveByPlaintext(presented);
-  if (!key) return fail("invalid or revoked API key");
-  // Valid credential, insufficient scope — 403 without consuming the
-  // brute-force limiter (this isn't a guessing attempt).
-  if (key.scope === "enroll" && !opts.allowEnroll) {
-    return { ok: false, res: forbiddenScope() };
+    if (!presented) return await fail("missing Authorization: Bearer token");
+    if (!isWellFormedApiKey(presented)) return await fail("malformed API key");
+    const key = await resolveByPlaintext(presented);
+    if (!key) return await fail("invalid or revoked API key");
+    // Valid credential, insufficient scope — 403 without consuming the
+    // brute-force limiter (this isn't a guessing attempt).
+    if (key.scope === "enroll" && !opts.allowEnroll) {
+      return { ok: false, res: forbiddenScope() };
+    }
+    return { ok: true, key };
+  } catch {
+    return authenticationUnavailable();
   }
-  return { ok: true, key };
 }
 
 // Allow either Bearer token (CLI/API) or the session cookie (dashboard browser).
@@ -166,15 +187,19 @@ export async function requireApiKey(
 export async function requireApiKeyOrSession(
   req: NextRequest,
 ): Promise<AuthResult> {
-  const bearer = extractBearer(req);
-  if (bearer) {
-    const key = await resolveByPlaintext(bearer);
-    if (key?.scope === "enroll") return { ok: false, res: forbiddenScope() };
-    if (key) return { ok: true, key };
-    return failBearer(req, "invalid or revoked API key");
+  try {
+    const bearer = extractBearer(req);
+    if (bearer) {
+      const key = await resolveByPlaintext(bearer);
+      if (key?.scope === "enroll") return { ok: false, res: forbiddenScope() };
+      if (key) return { ok: true, key };
+      return await failBearer(req, "invalid or revoked API key");
+    }
+    const { getSessionApiKey } = await import("@/lib/session");
+    const session = await getSessionApiKey();
+    if (session) return { ok: true, key: session };
+    return { ok: false, res: unauthorized("missing Authorization or session") };
+  } catch {
+    return authenticationUnavailable();
   }
-  const { getSessionApiKey } = await import("@/lib/session");
-  const session = await getSessionApiKey();
-  if (session) return { ok: true, key: session };
-  return { ok: false, res: unauthorized("missing Authorization or session") };
 }
