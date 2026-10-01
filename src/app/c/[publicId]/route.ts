@@ -74,6 +74,7 @@ async function handle(req: NextRequest, publicId: string): Promise<Response> {
     key = await lookupKey(publicId);
   } catch (err) {
     log.error({ err, publicId }, "lookup failed");
+    return new Response(null, { status: 503, headers: { "Retry-After": "1", "Cache-Control": "no-store" } });
   }
 
   if (!key || !shouldFire(key)) {
