@@ -32,7 +32,7 @@ import {
   type StoredConfig,
   type CloudflareAccessMode,
 } from "./config.js";
-import { getEdgeKey } from "./edge-key.js";
+import { getEdgeKey, listEdgeKeyWorkers } from "./edge-key.js";
 import { readLockfile } from "./plugins/lockfile.js";
 
 // Manually promisify so we control the options-arg signature. Node's
@@ -120,6 +120,8 @@ export type BackupPayload = {
   currentProfile?: string;
   profiles: BackupProfile[];
   plugins: BackupPlugin[];
+  /** Independent worker keys, including edge-only setups. Absent in older v1 bundles. */
+  edgeWorkers?: Array<{ workerUrl: string; key: string }>;
 };
 
 // ---------------------------------------------------------------------------
@@ -200,6 +202,21 @@ export async function collectBackupPayload(
     );
   }
 
+  // A worker does not need a server profile. Keep its key independently so
+  // edge-only setups and additional workers survive migration too. A scoped
+  // backup includes only the selected profile's linked worker.
+  const workerUrls = new Set(
+    filtered.flatMap(({ entry }) => entry.edgeWorkerUrl ? [entry.edgeWorkerUrl] : []),
+  );
+  if (onlyProfile === undefined) {
+    for (const workerUrl of await listEdgeKeyWorkers()) workerUrls.add(workerUrl);
+  }
+  const edgeWorkers: NonNullable<BackupPayload["edgeWorkers"]> = [];
+  for (const workerUrl of workerUrls) {
+    const key = getEdgeKey(workerUrl);
+    if (key) edgeWorkers.push({ workerUrl, key });
+  }
+
   const lock = await readLockfile();
   const plugins: BackupPlugin[] = lock.plugins
     // Local-path plugins aren't reproducible on another machine — skip them
@@ -219,6 +236,7 @@ export async function collectBackupPayload(
       onlyProfile === undefined ? current ?? undefined : onlyProfile,
     profiles: backupProfiles,
     plugins,
+    edgeWorkers,
   };
 }
 
@@ -435,6 +453,14 @@ function assertPayload(v: unknown): BackupPayload {
   }
   if (!Array.isArray(o.plugins)) {
     throw new Error("payload.plugins must be an array");
+  }
+  if (o.edgeWorkers !== undefined) {
+    if (!Array.isArray(o.edgeWorkers) || o.edgeWorkers.some((worker) =>
+      typeof worker !== "object" || worker === null ||
+      typeof worker.workerUrl !== "string" || typeof worker.key !== "string"
+    )) {
+      throw new Error("payload.edgeWorkers must contain workerUrl and key strings");
+    }
   }
   return o as unknown as BackupPayload;
 }

@@ -103,7 +103,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
   }
 
-  await recordWalletHit(req, auth.key, "wallet-installed");
+  if (!await recordWalletHit(req, auth.key, "wallet-installed")) return new NextResponse(null, { status: 503, headers: { "Retry-After": "1" } });
   return new NextResponse(null, { status: 201 });
 }
 
@@ -122,6 +122,6 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
       ),
     );
 
-  await recordWalletHit(req, auth.key, "wallet-uninstalled");
+  if (!await recordWalletHit(req, auth.key, "wallet-uninstalled")) return new NextResponse(null, { status: 503, headers: { "Retry-After": "1" } });
   return new NextResponse(null, { status: 200 });
 }

@@ -352,6 +352,12 @@ MANTIS_BASE_URL=https://mantis.example.com MANTIS_API_KEY=mantis_live_… mantis
 
 The keychain layout means **the same API key works across profiles that share a base URL** — useful when you have prod + a prod-with-different-CF-Access-mode profile pointing at the same server.
 
+`logout --profile <name>` and `profile rm <name> --yes` remove that profile.
+Shared server credentials stay available until the last profile for the URL is
+removed. To remove every server profile and its credentials, use `logout --all`.
+Logout removes local CLI credentials; it does not revoke the server API key or
+clear dashboard browser sessions.
+
 ### Where it's stored
 
 - Config file: `$XDG_CONFIG_HOME/mantis/config.json` (or `~/.config/mantis/config.json`), mode `0600`
@@ -379,6 +385,7 @@ The bundle uses scrypt (N=32768, r=8, p=1) → AES-256-GCM. Salt + nonce are ran
 **What's included:**
 
 - Every profile's `baseUrl`, `keyPrefix`, full `mantis_live_…` API key, Cloudflare Access mode + app URL + Service-Auth client-id/secret, linked edge worker URL, and edge AES key
+- All locally stored edge worker keys, including workers without a server profile. Edge-only installs can use backup/restore without logging into a server. Existing edge keys are kept on restore unless `--overwrite` is set. Older backup files remain supported.
 - The active-profile pointer
 - Plugin manifest: each plugin's `name`, `source` (GitHub `owner/repo`), pinned commit SHA, and version. **`restore` re-installs plugins via `mantis plugin add <source>@<ref>`** — the bundle does NOT carry the plugin contents themselves, so the new machine needs network access to GitHub for the re-install.
 
@@ -387,12 +394,17 @@ The bundle uses scrypt (N=32768, r=8, p=1) → AES-256-GCM. Salt + nonce are ran
 - Local-path plugins (`mantis plugin add ./some/path`) — those aren't reproducible on another machine; `backup` lists them as skipped.
 - `~/.cloudflared/` cached JWTs — owned by `cloudflared`, regenerated on next login.
 
+Full backup lists the edge worker URLs it included. Independent keys require
+keychain enumeration support; if your platform cannot enumerate entries,
+linked profile keys are still included. Check that list before migrating an
+edge-only setup and keep a separate vaulted copy of any omitted key.
+
 **Flag reference:**
 
 | Flag | What it does |
 |---|---|
 | `mantis backup --out <file>` | Where to write the bundle. Default `./mantis-backup.json`. |
-| `mantis backup --only <name>` | Back up just one profile. Default is all profiles. |
+| `mantis backup --only <name>` | Back up just one profile and its linked edge worker. Independent edge workers are omitted; the command reports this scope. Default includes all profiles and discoverable edge worker keys. |
 | `mantis backup --passphrase-stdin` | Read passphrase from stdin (for scripts piping a vault into the CLI). |
 | `mantis backup --passphrase-env <VAR>` | Read passphrase from the named env var. |
 | `mantis restore <file>` | Decrypt + restore. By default, existing profiles on the target machine are kept; bundle entries with the same name are skipped. |
@@ -503,7 +515,7 @@ Remove-StoredCredential -Target "mantis-cli/https://mantis.example.com"
 | Item | Owner | Where |
 |---|---|---|
 | Cloudflare Access SSO JWTs | `cloudflared` binary | `~/.cloudflared/` — short-lived (24h default); mantis shells out to `cloudflared access token` to read |
-| Browser cookies for the dashboard | Your browser | Per-profile cookie store; cleared by `mantis logout` only on the server side |
+| Browser cookies for the dashboard | Your browser | Per-profile cookie store; use the dashboard's sign-out action to clear its session |
 | `npx wrangler dev` `MANTIS_EDGE_KEY` | `wrangler` | `mantis-edge/.dev.vars` — plaintext, gitignored; only present on dev machines |
 | Git config / SSH keys | git / OpenSSH | Untouched |
 

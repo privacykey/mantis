@@ -8,7 +8,7 @@ import {
   setProfile,
   useProfile,
 } from "../lib/config.js";
-import { setEdgeKey } from "../lib/edge-key.js";
+import { getEdgeKey, setEdgeKey } from "../lib/edge-key.js";
 import {
   collectBackupPayload,
   collectSkippedLocalPlugins,
@@ -74,6 +74,12 @@ export async function backupCmd(opts: BackupCmdOpts): Promise<void> {
       process.stderr.write(
         `  ${c.dim("plugins: ")} ${payload.plugins.length === 0 ? c.dim("(none)") : payload.plugins.map((p) => p.name).join(", ")}\n`,
       );
+      process.stderr.write(
+        `  ${c.dim("edge workers:")} ${payload.edgeWorkers?.map((worker) => worker.workerUrl).join(", ") || c.dim("(none)")}\n`,
+      );
+      if (opts.profile) {
+        process.stderr.write(`  ${c.dim("scope:")} only profile ${opts.profile} and its linked worker; omit --only to include independent edge workers.\n`);
+      }
       if (skippedLocalPlugins.length > 0) {
         process.stderr.write(
           `  ${c.yellow("note:")} skipped ${skippedLocalPlugins.length} local-path plugin(s) (not reproducible on another machine): ${skippedLocalPlugins.join(", ")}\n`,
@@ -88,6 +94,8 @@ export async function backupCmd(opts: BackupCmdOpts): Promise<void> {
       profiles: payload.profiles.map((p) => p.name),
       plugins: payload.plugins.length,
       skipped_local_plugins: skippedLocalPlugins,
+      edge_workers: payload.edgeWorkers?.map((worker) => worker.workerUrl) ?? [],
+      scope: opts.profile ?? "all",
     },
   );
 }
@@ -159,6 +167,29 @@ export async function restoreCmd(
     }
   }
 
+  const edgeRestored: string[] = [];
+  const edgeSkipped: string[] = [];
+  const edgeErrors: Array<{ worker: string; reason: string }> = [];
+  // Legacy v1 files embedded keys in profiles. Apply the same protection to
+  // those keys as independent worker entries, even when the profile is new.
+  const workerKeys = new Map<string, string>();
+  for (const profile of payload.profiles) {
+    if (profile.edgeWorkerUrl && profile.edgeKey) workerKeys.set(profile.edgeWorkerUrl, profile.edgeKey);
+  }
+  for (const { workerUrl, key } of payload.edgeWorkers ?? []) workerKeys.set(workerUrl, key);
+  for (const [workerUrl, key] of workerKeys) {
+    if (getEdgeKey(workerUrl) && !opts.overwrite) {
+      edgeSkipped.push(workerUrl);
+      continue;
+    }
+    try {
+      setEdgeKey(workerUrl, key);
+      edgeRestored.push(workerUrl);
+    } catch (err) {
+      edgeErrors.push({ worker: workerUrl, reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   // Restore active-profile pointer if the backup specified one AND we
   // actually restored it AND the user didn't already have a different
   // current profile they care about.
@@ -202,6 +233,9 @@ export async function restoreCmd(
           `${c.red("✗")} ${e.name}: ${e.reason}\n`,
         );
       }
+      if (edgeRestored.length > 0) process.stderr.write(`${c.green("✓")} restored edge keys: ${edgeRestored.join(", ")}\n`);
+      if (edgeSkipped.length > 0) process.stderr.write(`${c.yellow("·")} kept existing edge keys (pass --overwrite to replace): ${edgeSkipped.join(", ")}\n`);
+      for (const e of edgeErrors) process.stderr.write(`${c.red("✗")} edge ${e.worker}: ${e.reason}\n`);
       if (!opts.skipPlugins) {
         if (pluginsRestored.length > 0) {
           process.stderr.write(
@@ -234,8 +268,12 @@ export async function restoreCmd(
       plugins_restored: pluginsRestored,
       plugins_failed: pluginsFailed,
       active_profile: payload.currentProfile,
+      edge_restored: edgeRestored,
+      edge_skipped: edgeSkipped,
+      edge_errors: edgeErrors,
     },
   );
+  if (errors.length || edgeErrors.length || pluginsFailed.length) process.exitCode = 1;
 }
 
 async function applyProfile(bp: BackupProfile): Promise<void> {
@@ -245,9 +283,6 @@ async function applyProfile(bp: BackupProfile): Promise<void> {
   // about this profile" marker).
   setKey(entry.baseUrl, secrets.apiKey);
   if (secrets.cf) setCloudflareServiceAuth(entry.baseUrl, secrets.cf);
-  if (secrets.edgeKey && entry.edgeWorkerUrl) {
-    setEdgeKey(entry.edgeWorkerUrl, secrets.edgeKey);
-  }
   await setProfile(bp.name, entry);
 }
 

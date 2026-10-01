@@ -1,12 +1,11 @@
 import { eq } from "drizzle-orm";
 import type { NextRequest } from "next/server";
 import { db } from "@/db/client";
-import { hits, keys, type Key } from "@/db/schema";
-import { decideHitRecording } from "@/lib/hits";
+import { keys, type Key } from "@/db/schema";
+import { recordHitWithNotifications } from "@/lib/hits";
 import { verifyAuthToken } from "@/lib/installers/apple-wallet";
 import { loadActiveWalletConfig } from "@/lib/installers/wallet-store";
 import { log } from "@/lib/log";
-import { enqueueNotifications } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import {
   capStoredRequestField,
@@ -75,28 +74,16 @@ export async function recordWalletHit(
   req: NextRequest,
   key: Key,
   walletSource: string,
-): Promise<void> {
-  if (key.disabledAt !== null) return;
-  if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return;
+): Promise<boolean> {
+  if (key.disabledAt !== null) return true;
+  if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return true;
 
   const ip = extractIp(req);
 
   // Flood guard: a pass holder can loop these callbacks indefinitely.
   if (!rateLimit(`wallet:${key.id}:${ip ?? "anon"}`, WALLET_RATE_LIMIT).ok) {
-    return;
+    return true;
   }
-
-  // Honour the key's dedupe window so repeated wallet events within it don't
-  // each fire a notification (mirrors the public trigger path). Notifications
-  // only fire on the primary, non-duplicate record.
-  let decision = await decideHitRecording(
-    key.id,
-    key.dedupeWindowSeconds,
-  ).catch((err) => {
-    log.error({ err, keyId: key.id }, "wallet duplicate-window check failed");
-    return { record: true, isDuplicate: false } as const;
-  });
-  if (!decision.record) return;
 
   const userAgent = capStoredRequestField(req.headers.get("user-agent"));
   const referer = capStoredRequestField(req.headers.get("referer"));
@@ -105,10 +92,7 @@ export async function recordWalletHit(
   const ua = parseUserAgent(userAgent);
 
   try {
-    const [hit] = await db
-      .insert(hits)
-      .values({
-        keyId: key.id,
+    await recordHitWithNotifications(key, {
         ip,
         userAgent,
         referer,
@@ -118,17 +102,10 @@ export async function recordWalletHit(
         uaOs: ua.os,
         uaDevice: ua.device,
         botLabel: ua.botLabel,
-        isDuplicate: decision.isDuplicate,
-      })
-      .returning();
-    if (hit && !decision.isDuplicate) {
-      try {
-        await enqueueNotifications(key, hit);
-      } catch (err) {
-        log.error({ err, hitId: hit.id }, "wallet enqueue failed");
-      }
-    }
+      });
+    return true;
   } catch (err) {
-    log.error({ err, keyId: key.id }, "wallet hit insert failed");
+    log.error({ err, keyId: key.id }, "wallet hit and delivery capture failed");
+    return false;
   }
 }

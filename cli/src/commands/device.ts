@@ -38,6 +38,7 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
     const profile = resolveProfile(profiles, opts.os, Boolean(opts.install));
     const device = resolveDeviceName(opts);
     const vectors = resolveVectors(profile, opts);
+    if (opts.install && !opts.dryRun) assertBundleInstallableHere(profile.os);
 
     if (opts.dryRun) {
       emit(
@@ -60,43 +61,58 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
     // returns its existing keys instead of minting a duplicate set.
     const minted: Array<{ id: string; slug: string; memo: string; url: string }> =
       [];
-    for (const v of vectors) {
-      const memo = `${device} — ${v.label}`;
-      const key = await client.createKey({
-        memo,
-        external_id: externalId(device, profile.os, v.slug),
-        response_kind: v.response_kind,
-        dedupe_window_seconds: v.dedupe_window_seconds,
-      });
-      minted.push({ id: key.id, slug: v.slug, memo, url: key.url });
-    }
-
     let bundlePath: string | null = null;
-    if (opts.bundle) {
-      const { data } = await client.downloadDeviceBundle({
-        device,
-        os: profile.os,
-        vectors: minted.map((m) => ({ id: m.id, slug: m.slug })),
-      });
-      bundlePath = resolve(opts.bundle);
-      await mkdir(dirname(bundlePath), { recursive: true });
-      await writeFile(bundlePath, data);
-    }
-
     let installed = false;
-    if (opts.install) {
-      installed = await runLocalInstall(client, {
-        device,
-        os: profile.os,
-        vectors: minted.map((m) => ({ id: m.id, slug: m.slug })),
-        assumeYes: Boolean(opts.yes),
-      });
+    try {
+      for (const v of vectors) {
+        const memo = `${device} — ${v.label}`;
+        const key = await client.createKey({
+          memo,
+          external_id: externalId(device, profile.os, v.slug),
+          response_kind: v.response_kind,
+          dedupe_window_seconds: v.dedupe_window_seconds,
+        });
+        minted.push({ id: key.id, slug: v.slug, memo, url: key.url });
+      }
+
+      if (opts.bundle) {
+        const { data } = await client.downloadDeviceBundle({
+          device,
+          os: profile.os,
+          vectors: minted.map((m) => ({ id: m.id, slug: m.slug })),
+        });
+        bundlePath = resolve(opts.bundle);
+        await mkdir(dirname(bundlePath), { recursive: true });
+        await writeFile(bundlePath, data);
+      }
+
+      if (opts.install) {
+        installed = await runLocalInstall(client, {
+          device,
+          os: profile.os,
+          vectors: minted.map((m) => ({ id: m.id, slug: m.slug })),
+          assumeYes: Boolean(opts.yes),
+        });
+      }
+    } catch (err) {
+      const confirmed = minted.map((m) => `  ${m.slug}: ${m.id} ${m.url}`).join("\n");
+      const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+      const target = client.profile ? `--profile ${quote(client.profile)}` : `--base-url ${quote(client.baseUrl)}`;
+      const resume = `mantis ${target} device new --name ${quote(device)} --os ${profile.os} --vectors ${quote(vectors.map((v) => v.slug).join(","))}` +
+        (opts.bundle ? ` --bundle ${quote(opts.bundle)}` : "") +
+        (opts.install ? " --install" : "");
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `device setup did not finish: ${reason}. ${minted.length} key(s) confirmed on the server` +
+        (confirmed ? `:\n${confirmed}` : ".") +
+        `\nResume with ${resume}, using the same authentication flags or environment. The same device/vector identities reuse existing keys, including a request that completed without returning its response.`,
+      );
     }
 
     emit(
       () => {
         process.stderr.write(
-          `${c.green("✓")} ${c.bold(device)} armed — ${minted.length} alarm(s)\n`,
+          `${c.green("✓")} ${c.bold(device)} ${installed ? "armed" : "minted"} — ${minted.length} alarm(s)\n`,
         );
         for (const m of minted) {
           process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.cyan(m.url)}\n`);
@@ -104,9 +120,9 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
         if (bundlePath) {
           process.stderr.write(`\n${c.green("✓")} bundle → ${c.cyan(bundlePath)}\n`);
         }
-        if (!opts.install && !opts.bundle) {
+        if (!installed) {
           process.stderr.write(
-            `\n${c.dim("Nothing installed. Re-run with --bundle <path> for a zip, or --install to apply here.")}\n`,
+            `\n${c.dim(bundlePath ? "Nothing installed. Run the install script in the exported bundle to activate these alarms." : opts.install ? "Installation canceled. Nothing installed; use the staged bundle path above to install later." : "Nothing installed. Re-run with --bundle <path> for a zip, or --install to apply here.")}\n`,
           );
         }
       },

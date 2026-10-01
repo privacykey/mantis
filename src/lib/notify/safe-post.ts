@@ -17,6 +17,7 @@ export type SafePostOpts = {
   signingSecret?: string | null;
   userAgent?: string;
   timeoutMs?: number;
+  deliveryId?: string;
 };
 
 /**
@@ -40,6 +41,10 @@ export async function safePostJson(
     "User-Agent": opts.userAgent ?? "mantis-webhook/0.13",
     "X-Mantis-Timestamp": timestamp,
   };
+  if (opts.deliveryId) {
+    headers["X-Mantis-Delivery-Id"] = opts.deliveryId;
+    headers["Idempotency-Key"] = opts.deliveryId;
+  }
   if (opts.signingSecret) {
     const sig = createHmac("sha256", opts.signingSecret)
       .update(`${timestamp}.${bodyStr}`)

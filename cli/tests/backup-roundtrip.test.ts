@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -146,6 +146,76 @@ async function wipeState(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 describe("mantis backup → mantis restore round-trip", () => {
+  it("round-trips independent edge keys without any server profile and preserves existing keys", async () => {
+    const outPath = join(tmpHome, "edge-only.json");
+    process.env.MANTIS_BACKUP_TEST_PASS = "edge-only-passphrase";
+    const { setEdgeKey, getEdgeKey } = await import("../src/lib/edge-key.js");
+    const worker = "https://standalone-edge.workers.dev";
+    setEdgeKey(worker, "original-edge-key");
+    const { backupCmd, restoreCmd } = await import("../src/commands/backup.js");
+    await backupCmd({ out: outPath, passphraseEnv: "MANTIS_BACKUP_TEST_PASS" });
+    await wipeState();
+    await restoreCmd(outPath, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS" });
+    expect(getEdgeKey(worker)).toBe("original-edge-key");
+    const config = await import("../src/lib/config.js");
+    expect(await config.readConfig()).toBeNull();
+    setEdgeKey(worker, "newer-local-key");
+    await restoreCmd(outPath, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS" });
+    expect(getEdgeKey(worker)).toBe("newer-local-key");
+    await restoreCmd(outPath, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", overwrite: true });
+    expect(getEdgeKey(worker)).toBe("original-edge-key");
+    delete process.env.MANTIS_BACKUP_TEST_PASS;
+  }, 15_000);
+
+  it("scopes --only to the selected profile's linked worker", async () => {
+    await populateState();
+    const { setEdgeKey } = await import("../src/lib/edge-key.js");
+    setEdgeKey("https://independent.workers.dev", "independent-key");
+    const { backupCmd } = await import("../src/commands/backup.js");
+    const { openBundle } = await import("../src/lib/backup.js");
+    const outPath = join(tmpHome, "scoped.json");
+    process.env.MANTIS_BACKUP_TEST_PASS = "scope-passphrase";
+    await backupCmd({ out: outPath, profile: "primary", passphraseEnv: "MANTIS_BACKUP_TEST_PASS" });
+    const payload = await openBundle(JSON.parse(await readFile(outPath, "utf8")), "scope-passphrase");
+    expect(payload.edgeWorkers?.map((worker) => worker.workerUrl)).toEqual(["https://primary-edge.workers.dev"]);
+    expect(vi.mocked(process.stderr.write).mock.calls.join(" ")).toContain("omit --only to include independent edge workers");
+    delete process.env.MANTIS_BACKUP_TEST_PASS;
+  });
+
+  it("restores old v1 bundles with edge keys embedded only in profiles", async () => {
+    await populateState();
+    const { collectBackupPayload, sealBundle } = await import("../src/lib/backup.js");
+    const payload = await collectBackupPayload(undefined);
+    delete payload.edgeWorkers;
+    const outPath = join(tmpHome, "legacy.json");
+    await writeFile(outPath, JSON.stringify(await sealBundle(payload, "legacy-passphrase")));
+    await wipeState();
+    process.env.MANTIS_BACKUP_TEST_PASS = "legacy-passphrase";
+    const { restoreCmd } = await import("../src/commands/backup.js");
+    await restoreCmd(outPath, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS" });
+    const { getEdgeKey } = await import("../src/lib/edge-key.js");
+    expect(getEdgeKey("https://primary-edge.workers.dev")).toBe("MGYWRl0WT3RcVuQrMQuv4Ph9DcZakhfwHcZk0lszKnE");
+    delete process.env.MANTIS_BACKUP_TEST_PASS;
+  });
+
+  it.each([false, true])("protects an existing independent worker key when restoring legacy profiles (overwrite=%s)", async (overwrite) => {
+    await populateState();
+    const { collectBackupPayload, sealBundle } = await import("../src/lib/backup.js");
+    const payload = await collectBackupPayload(undefined);
+    delete payload.edgeWorkers;
+    const outPath = join(tmpHome, "legacy-existing-worker.json");
+    await writeFile(outPath, JSON.stringify(await sealBundle(payload, "legacy-passphrase")));
+    await wipeState();
+    const { setEdgeKey, getEdgeKey } = await import("../src/lib/edge-key.js");
+    const worker = "https://primary-edge.workers.dev";
+    setEdgeKey(worker, "newer-independent-key");
+    process.env.MANTIS_BACKUP_TEST_PASS = "legacy-passphrase";
+    const { restoreCmd } = await import("../src/commands/backup.js");
+    await restoreCmd(outPath, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", overwrite });
+    expect(getEdgeKey(worker)).toBe(overwrite ? "MGYWRl0WT3RcVuQrMQuv4Ph9DcZakhfwHcZk0lszKnE" : "newer-independent-key");
+    delete process.env.MANTIS_BACKUP_TEST_PASS;
+  });
+
   it("restores every profile and its keychain entries on a clean machine", async () => {
     const outPath = join(tmpHome, "bundle.json");
     process.env.MANTIS_BACKUP_TEST_PASS = "diceware-style-test-passphrase";

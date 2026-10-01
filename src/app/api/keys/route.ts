@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { keys, notificationDestinations } from "@/db/schema";
@@ -23,6 +23,7 @@ import {
   serializeResult,
 } from "@/lib/notify/destinations";
 import { createKeySchema, listQuerySchema } from "@/lib/validators";
+import { encodeHitCursor, parseHitCursor } from "@/lib/hit-cursor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -243,21 +244,30 @@ export async function GET(req: NextRequest) {
     );
   }
   const { limit, cursor } = parsed.data;
+  const keyCursor = cursor ? parseHitCursor(cursor) : null;
+  if (cursor && !keyCursor) {
+    return NextResponse.json({ error: "validation_error", message: "invalid cursor" }, { status: 422 });
+  }
 
   // Non-admin keys see only their own; admins see all. See lib/auth.canAccessKey.
   const ownerClause = auth.key.isAdmin
     ? undefined
     : eq(keys.createdByApiKeyId, auth.key.id);
-  const cursorClause = cursor ? lt(keys.createdAt, new Date(cursor)) : undefined;
+  const cursorAt = keyCursor ? sql`${keyCursor.at}::timestamptz` : null;
+  const cursorClause = keyCursor && cursorAt
+    ? keyCursor.id
+      ? or(lt(keys.createdAt, cursorAt), and(eq(keys.createdAt, cursorAt), lt(keys.id, keyCursor.id)))
+      : lt(keys.createdAt, cursorAt)
+    : undefined;
   const whereClause =
     ownerClause && cursorClause
       ? and(ownerClause, cursorClause)
       : (ownerClause ?? cursorClause);
   const rows = await db
-    .select()
+    .select({ key: keys, cursorTime: sql<string>`to_char(${keys.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` })
     .from(keys)
     .where(whereClause)
-    .orderBy(desc(keys.createdAt))
+    .orderBy(desc(keys.createdAt), desc(keys.id))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
@@ -265,7 +275,7 @@ export async function GET(req: NextRequest) {
 
   let destByKey = new Map<string, typeof notificationDestinations.$inferSelect[]>();
   if (slice.length > 0) {
-    const keyIds = slice.map((k) => k.id);
+    const keyIds = slice.map(({ key }) => key.id);
     const allDests = await db
       .select()
       .from(notificationDestinations)
@@ -279,9 +289,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const data = slice.map((k) => serializeKey(k, destByKey.get(k.id) ?? []));
+  const data = slice.map(({ key }) => serializeKey(key, destByKey.get(key.id) ?? []));
   const nextCursor = hasMore
-    ? (rows[limit - 1]?.createdAt.toISOString() ?? null)
+    ? encodeHitCursor(rows[limit - 1]!.cursorTime, rows[limit - 1]!.key.id)
     : null;
 
   return NextResponse.json({ data, next_cursor: nextCursor });

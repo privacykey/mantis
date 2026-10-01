@@ -111,9 +111,8 @@ export async function applyBundleLocally(
   // here, so don't ask twice.
   const code = await run(script, dir);
   if (code !== 0) {
-    fail(
+    throw new Error(
       `installer exited with code ${code}. Files are at ${dir} for inspection.`,
-      ExitCode.Generic,
     );
   }
   return true;

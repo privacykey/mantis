@@ -14,6 +14,7 @@ import { log } from "@/lib/log";
 import { sanitizeHeaderValue } from "@/lib/sanitize";
 import { escapeCode, escapeMarkdown, escapeSlack } from "./escape";
 import { safePostJson } from "./safe-post";
+import { boundedSmtpUrl } from "./smtp";
 
 let mailer: Transporter | null | undefined;
 function getMailer(): Transporter | null {
@@ -22,7 +23,7 @@ function getMailer(): Transporter | null {
     mailer = null;
     return null;
   }
-  mailer = nodemailer.createTransport(env.smtpUrl);
+  mailer = nodemailer.createTransport(boundedSmtpUrl(env.smtpUrl));
   return mailer;
 }
 
@@ -32,6 +33,8 @@ export type SendContext = {
   target: string;
   /** Per-destination HMAC secret. Webhook body is signed with X-Mantis-Signature when set. */
   signingSecret?: string | null;
+  /** Stable across retries; receivers can deduplicate uncertain delivery outcomes. */
+  deliveryId?: string;
 };
 
 export async function loadSendContext(
@@ -80,6 +83,7 @@ export async function send(
 export async function sendWebhook(ctx: SendContext): Promise<void> {
   await postJson(ctx.target, buildPayload(ctx), {
     signingSecret: ctx.signingSecret ?? null,
+    deliveryId: ctx.deliveryId,
   });
 }
 
@@ -95,6 +99,7 @@ export async function sendEmail(ctx: SendContext): Promise<void> {
     to: ctx.target,
     subject: `[mantis] ${sanitizeHeaderValue(ctx.key.memo)}`,
     text: buildEmailText(ctx),
+    ...(ctx.deliveryId ? { messageId: `<${ctx.deliveryId}@mantis.invalid>` } : {}),
   });
 }
 
@@ -140,7 +145,7 @@ export async function sendSlack(ctx: SendContext): Promise<void> {
       },
       { type: "section", fields: fields.slice(0, 10) },
     ],
-  });
+  }, { deliveryId: ctx.deliveryId });
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +189,7 @@ export async function sendDiscord(ctx: SendContext): Promise<void> {
         fields: fields.slice(0, 25),
       },
     ],
-  });
+  }, { deliveryId: ctx.deliveryId });
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +244,7 @@ export async function sendTeams(ctx: SendContext): Promise<void> {
         },
       },
     ],
-  });
+  }, { deliveryId: ctx.deliveryId });
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +275,7 @@ export async function sendHomeAssistant(ctx: SendContext): Promise<void> {
       host_context: hostCtx,
       hit_id: hit.id,
     },
-    { signingSecret: ctx.signingSecret ?? null },
+    { signingSecret: ctx.signingSecret ?? null, deliveryId: ctx.deliveryId },
   );
 }
 
@@ -281,10 +286,11 @@ export async function sendHomeAssistant(ctx: SendContext): Promise<void> {
 async function postJson(
   url: string,
   body: unknown,
-  opts: { signingSecret?: string | null } = {},
+  opts: { signingSecret?: string | null; deliveryId?: string } = {},
 ): Promise<void> {
   await safePostJson(url, body, {
     signingSecret: opts.signingSecret,
+    deliveryId: opts.deliveryId,
     userAgent: "mantis-webhook/0.13",
   });
 }
@@ -294,9 +300,10 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1) + "…";
 }
 
-function buildPayload({ key, hit }: SendContext) {
+function buildPayload({ key, hit, deliveryId }: SendContext) {
   return {
     type: "mantis.hit",
+    ...(deliveryId ? { delivery_id: deliveryId } : {}),
     key: {
       id: key.id,
       public_id: key.publicId,

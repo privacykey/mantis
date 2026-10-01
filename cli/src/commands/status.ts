@@ -96,6 +96,7 @@ async function detail(
 ): Promise<void> {
   const key = await client.getKey(id);
   const status = await fetchStatusSafe(client, key.public_id);
+  if (status.status === "error") process.exitCode = 1;
 
   // Pull the hit slice we need to explain the trip.
   const hitLimit = parseLimit(opts.limit);
@@ -220,8 +221,10 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
     })),
   );
 
+  const failed = statuses.filter(({ status }) => status.status === "error");
+  if (failed.length > 0) process.exitCode = 1;
   const filtered = opts.trippedOnly
-    ? statuses.filter(({ status }) => status.status === "tripped")
+    ? statuses.filter(({ status }) => status.status === "tripped" || status.status === "error")
     : statuses;
 
   if (filtered.length === 0 && opts.trippedOnly) {
@@ -261,6 +264,9 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
       }
       if (notes.length > 0) {
         process.stderr.write(c.dim(`\n(${notes.join("; ")})\n`));
+      }
+      if (failed.length > 0) {
+        process.stderr.write(c.yellow(`\n${failed.length} monitor state(s) unavailable; check connectivity and retry.\n`));
       }
     },
     {

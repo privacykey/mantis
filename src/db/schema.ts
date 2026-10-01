@@ -220,6 +220,9 @@ export const notifications = pgTable(
     /** Denormalized destination secret at enqueue. In-flight rows keep the old secret if the destination rotates. */
     signingSecret: text("signing_secret"),
     status: notificationStatusEnum("status").notNull().default("pending"),
+    /** Fences late completions after an expired claim has been recovered. */
+    claimToken: uuid("claim_token"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
     attempts: integer("attempts").notNull().default(0),
     maxAttempts: integer("max_attempts").notNull().default(5),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
@@ -239,6 +242,7 @@ export const notifications = pgTable(
       .on(t.nextAttemptAt)
       .where(sql`status = 'pending'`),
     index("notifications_hit_idx").on(t.hitId),
+    index("notifications_lease_idx").on(t.leaseUntil).where(sql`status = 'in_flight'`),
     // Supports the hourly retention purge (DELETE ... WHERE status IN (...)
     // AND updated_at < cutoff); without it the sweep seq-scans the table.
     index("notifications_settled_updated_idx")

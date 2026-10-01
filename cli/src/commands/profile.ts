@@ -1,6 +1,4 @@
 import {
-  deleteCloudflareServiceAuth,
-  deleteKey,
   getKey,
   listProfiles,
   patchProfile,
@@ -89,17 +87,13 @@ export async function profileRmCmd(
   if (!result.removed) {
     return fail(`profile '${name}' not found`);
   }
-  if (result.baseUrl) {
-    deleteKey(result.baseUrl);
-    deleteCloudflareServiceAuth(result.baseUrl);
-  }
   const tail = result.wasCurrent
     ? result.newCurrent
       ? c.dim(` (current → ${result.newCurrent})`)
       : c.dim(" (was current; no profiles remain)")
     : "";
   process.stderr.write(
-    `${c.green("✓")} removed profile ${c.bold(name)}${tail}\n`,
+    `${c.green("✓")} removed profile ${c.bold(name)}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
   );
 }
 

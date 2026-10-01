@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   const auth = await authenticateWalletRequest(req, passTypeId, serial);
   if (!auth.ok) return new NextResponse(null, { status: auth.status });
 
-  await recordWalletHit(req, auth.key, "wallet-fetched");
+  if (!await recordWalletHit(req, auth.key, "wallet-fetched")) return new NextResponse(null, { status: 503, headers: { "Retry-After": "1" } });
 
   const buf = await generateApplePass({
     publicId: auth.key.publicId,
