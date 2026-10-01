@@ -971,6 +971,8 @@ function buildScrypted({ url, memo }: InstallerInput): Installer {
  */
 
 const MANTIS_URL = ${JSON.stringify(url)};
+// Bound each delivery; a failed request is reported in the script log.
+const DELIVERY_TIMEOUT_MS = 10_000;
 
 // Edit these entries. deviceId is visible in the Scrypted device URL/details.
 // Common interfaces: "MotionSensor", "BinarySensor", "ObjectDetector", "OnOff".
@@ -995,8 +997,10 @@ async function fireMantis(item, eventData) {
     at: new Date().toISOString(),
   };
 
-  await fetch(MANTIS_URL, {
+  const response = await fetch(MANTIS_URL, {
     method: "POST",
+    redirect: "manual",
+    signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       "X-Mantis-Source": "scrypted",
@@ -1007,6 +1011,12 @@ async function fireMantis(item, eventData) {
     },
     body: JSON.stringify(body),
   });
+  // Acceptance is known from the response headers. Do not follow a redirect
+  // target or wait for an arbitrary response body before reporting delivery.
+  void response.body?.cancel().catch(() => {});
+  if (response.status < 200 || response.status >= 400) {
+    throw new Error("HTTP " + response.status);
+  }
 }
 
 for (const item of WATCH) {
