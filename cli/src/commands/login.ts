@@ -4,6 +4,7 @@ import {
   DEFAULT_PROFILE,
   getCurrentProfileName,
   getProfile,
+  resolveCloudflareAuth,
   setKey,
   setProfile,
   useProfile,
@@ -78,7 +79,11 @@ export async function loginCmd(opts: {
       );
     }
 
-    const client = new MantisClient({ baseUrl: url, key });
+    const client = new MantisClient({
+      baseUrl: url,
+      key,
+      cloudflare: resolveCloudflareAuth(url, existing),
+    });
     try {
       await client.ping();
     } catch (err) {

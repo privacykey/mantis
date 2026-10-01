@@ -30,16 +30,12 @@ export async function logoutCmd(opts: {
 
   const result = await removeProfile(target);
   if (!result.removed) return fail(`profile '${target}' not found`);
-  if (result.baseUrl) {
-    deleteKey(result.baseUrl);
-    deleteCloudflareServiceAuth(result.baseUrl);
-  }
   const tail = result.wasCurrent
     ? result.newCurrent
       ? c.dim(` (current → ${result.newCurrent})`)
       : ""
     : "";
   process.stderr.write(
-    `${c.green("✓")} logged out of profile ${c.bold(target)}${tail}\n`,
+    `${c.green("✓")} removed profile ${c.bold(target)}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
   );
 }

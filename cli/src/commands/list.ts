@@ -23,7 +23,7 @@ export async function listCmd(opts: ListOpts): Promise<void> {
   }
   await withClient(opts, async (client) => {
     const limit = parseLimit(opts.limit);
-    const items = await collect(client.listKeys.bind(client), opts.all ? 1000 : limit);
+    const items = await collect(client.listKeys.bind(client), opts.all ? Infinity : limit);
     emit(
       () => {
         if (items.length === 0) {
