@@ -74,3 +74,16 @@ it("uses configured Access credentials for monitor status on the private API hos
   expect(await client.fetchStatus("pub")).toEqual({ status: "ok" });
   expect(requests[0]?.headers).toMatchObject({ "CF-Access-Client-Id": "client.access", "CF-Access-Client-Secret": "fake-secret" });
 });
+
+it("does not forward old Access credentials or metadata when login changes the server", async () => {
+  const cfg = await import("../src/lib/config.js");
+  const { loginCmd } = await import("../src/commands/login.js");
+  await cfg.setProfile("prod", { baseUrl, cloudflareAccessMode: "sso", cloudflareAccessAppUrl: baseUrl, edgeWorkerUrl: "https://edge.example.com" });
+  const requests: RequestInit[] = [];
+  vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => { requests.push(init); return Response.json({ data: [], next_cursor: null }); });
+  await loginCmd({ profile: "prod", url: "https://new-server.example.com", key: "mantis_live_replacement" });
+  expect(requests[0]?.headers).toEqual({ Authorization: "Bearer mantis_live_replacement" });
+  expect(await cfg.getProfile("prod")).toMatchObject({ baseUrl: "https://new-server.example.com", edgeWorkerUrl: "https://edge.example.com" });
+  expect((await cfg.getProfile("prod"))?.cloudflareAccessMode).toBeUndefined();
+  expect((await cfg.getProfile("prod"))?.cloudflareAccessAppUrl).toBeUndefined();
+});

@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { bulkCreateCmd } from "../src/commands/bulk-create.js";
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, writeFile: vi.fn(actual.writeFile) };
+});
 const auth = { baseUrl: "https://mantis.example.com", key: "fake" };
 let dir: string;
 let errors: string[];
@@ -61,4 +65,23 @@ it("drains in-flight creation on Ctrl-C and leaves unsent rows safe to identify"
   expect(csv).toContain("https://mantis.example.com/c/pub1");
   expect(csv).toContain("second canary");
   expect(csv).toContain("interrupted before creation; no request sent");
+});
+
+it("keeps interruption recovery active while the final output is being flushed", async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.stubGlobal("fetch", async () => created(1));
+  const out = join(dir, "out.csv");
+  vi.mocked(writeFile).mockImplementationOnce(async (path, data, options) => {
+    expect(process.listenerCount("SIGINT")).toBeGreaterThan(0);
+    process.emit("SIGINT");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await actual.writeFile(path, data, options);
+  });
+  const before = process.listenerCount("SIGINT");
+  await bulkCreateCmd({ ...auth, csv: join(dir, "in.csv"), out, concurrency: "1" });
+  expect(process.exitCode).toBe(130);
+  expect(await readFile(out, "utf8")).toContain("https://mantis.example.com/c/pub1");
+  expect(errors.join("")).toContain("Recovery CSV:");
+  expect(errors.join("")).toContain("confirmed mappings are saved at");
+  expect(process.listenerCount("SIGINT")).toBe(before);
 });

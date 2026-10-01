@@ -101,6 +101,7 @@ export async function bulkCreateCmd(opts: BulkCreateOpts): Promise<void> {
     const journal = openSync(recoveryPath, "wx", 0o600);
     appendFileSync(journal, writeCsv(loaded.outputHeaders, []));
     fsyncSync(journal);
+    process.stderr.write(`Recovery CSV: ${recoveryPath} (completed mappings until output is saved).\n`);
     const total = loaded.rows.length;
     const onProgress = makeProgressReporter(total);
 
@@ -131,49 +132,52 @@ export async function bulkCreateCmd(opts: BulkCreateOpts): Promise<void> {
     };
     process.on("SIGINT", onSigint);
     try {
-      if (opts.failFast) {
-        await createSequentially(
-          client,
-          loaded.rows,
-          opts,
-          globalDestinations,
-          sink,
-          record,
-          shouldStop,
-        );
-      } else {
-        await mapLimit(
-          loaded.rows,
-          concurrency,
-          (row) => createOne(client, row, opts, globalDestinations),
-          sink,
-          record,
-          shouldStop,
-        );
+      try {
+        if (opts.failFast) {
+          await createSequentially(
+            client,
+            loaded.rows,
+            opts,
+            globalDestinations,
+            sink,
+            record,
+            shouldStop,
+          );
+        } else {
+          await mapLimit(
+            loaded.rows,
+            concurrency,
+            (row) => createOne(client, row, opts, globalDestinations),
+            sink,
+            record,
+            shouldStop,
+          );
+        }
+      } finally {
+        closeSync(journal);
       }
+
+      const results = finalize(interrupted ? "interrupted before creation; no request sent" : "not created");
+      if (journalError !== undefined) {
+        // If even the recovery destination failed, retain the full completed
+        // mappings in the command log as the last available recovery surface.
+        process.stderr.write("Completed mappings (CSV):\n" + writeCsv(loaded.outputHeaders, results.filter((r) => r.created).map((r) => r.row)));
+        throw new Error(`stopped because recovery CSV could not be saved. Confirmed mappings are printed above; do not re-run the original CSV. ${String(journalError)}`);
+      }
+      try {
+        await writeResults(outPath, loaded.outputHeaders, results);
+      } catch (err) {
+        throw new Error(`keys may already exist on the server. Completed mappings are saved at ${recoveryPath}; do not re-run the original CSV. Could not write ${outPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await rm(recoveryDir, { recursive: true, force: true });
+      emitSummary(opts.out!, results, false);
+      if (interrupted) {
+        process.stderr.write(`Stopped; confirmed mappings are saved at ${outPath}. Retry only rows marked interrupted before creation. Requests that failed without returning a key may already have completed; inspect the server before retrying them.\n`);
+        process.exitCode = 130;
+      } else if (results.some((result) => result.failed)) process.exitCode = 1;
     } finally {
       process.removeListener("SIGINT", onSigint);
-      closeSync(journal);
     }
-
-    const results = finalize(interrupted ? "interrupted before creation; no request sent" : "not created");
-    if (journalError !== undefined) {
-      // If even the recovery destination failed, retain the full completed
-      // mappings in the command log as the last available recovery surface.
-      process.stderr.write("Completed mappings (CSV):\n" + writeCsv(loaded.outputHeaders, results.filter((r) => r.created).map((r) => r.row)));
-      throw new Error(`stopped because recovery CSV could not be saved. Confirmed mappings are printed above; do not re-run the original CSV. ${String(journalError)}`);
-    }
-    try {
-      await writeResults(outPath, loaded.outputHeaders, results);
-    } catch (err) {
-      throw new Error(`keys may already exist on the server. Completed mappings are saved at ${recoveryPath}; do not re-run the original CSV. Could not write ${outPath}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    await rm(recoveryDir, { recursive: true, force: true });
-    emitSummary(opts.out!, results, false);
-    if (interrupted) {
-      process.stderr.write(`Stopped; confirmed mappings are saved at ${outPath}. Retry only rows marked interrupted before creation. Requests that failed without returning a key may already have completed; inspect the server before retrying them.\n`);
-      process.exitCode = 130;
-    } else if (results.some((result) => result.failed)) process.exitCode = 1;
   });
 }
 
