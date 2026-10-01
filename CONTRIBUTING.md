@@ -5,8 +5,10 @@
 This repo is a pnpm workspace ([`pnpm-workspace.yaml`](./pnpm-workspace.yaml)).
 pnpm is the only supported package manager — the exact version is pinned in
 `packageManager` in [`package.json`](./package.json), and CI installs pnpm from
-that field rather than a hard-coded version. Node comes from
-[`.nvmrc`](./.nvmrc).
+that field rather than a hard-coded version. Development and CI use Node 26
+from [`.nvmrc`](./.nvmrc), which satisfies the test tooling's supported runtime.
+Use `nvm use` before installing dependencies. The app's production runtime
+minimum is recorded separately in each package's `engines` field.
 
 ## Run from source
 

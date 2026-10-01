@@ -84,7 +84,7 @@ The prose documentation lives at [docs.mantis.privacykey.org](https://docs.manti
 
 ## Contributing
 
-The repo is a pnpm workspace and pnpm is the only supported package manager — the version is pinned in `packageManager` and CI reads it from there. Node comes from [`.nvmrc`](./.nvmrc).
+The repo is a pnpm workspace and pnpm is the only supported package manager — the version is pinned in `packageManager` and CI reads it from there. Development and CI use Node 26 from [`.nvmrc`](./.nvmrc); run `nvm use` before installing. Production runtime minimums are recorded separately in each package's `engines` field.
 
 ```bash
 pnpm install --frozen-lockfile
