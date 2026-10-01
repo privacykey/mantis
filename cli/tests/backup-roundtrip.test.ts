@@ -198,6 +198,24 @@ describe("mantis backup → mantis restore round-trip", () => {
     delete process.env.MANTIS_BACKUP_TEST_PASS;
   });
 
+  it.each([false, true])("protects an existing independent worker key when restoring legacy profiles (overwrite=%s)", async (overwrite) => {
+    await populateState();
+    const { collectBackupPayload, sealBundle } = await import("../src/lib/backup.js");
+    const payload = await collectBackupPayload(undefined);
+    delete payload.edgeWorkers;
+    const outPath = join(tmpHome, "legacy-existing-worker.json");
+    await writeFile(outPath, JSON.stringify(await sealBundle(payload, "legacy-passphrase")));
+    await wipeState();
+    const { setEdgeKey, getEdgeKey } = await import("../src/lib/edge-key.js");
+    const worker = "https://primary-edge.workers.dev";
+    setEdgeKey(worker, "newer-independent-key");
+    process.env.MANTIS_BACKUP_TEST_PASS = "legacy-passphrase";
+    const { restoreCmd } = await import("../src/commands/backup.js");
+    await restoreCmd(outPath, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", overwrite });
+    expect(getEdgeKey(worker)).toBe(overwrite ? "MGYWRl0WT3RcVuQrMQuv4Ph9DcZakhfwHcZk0lszKnE" : "newer-independent-key");
+    delete process.env.MANTIS_BACKUP_TEST_PASS;
+  });
+
   it("restores every profile and its keychain entries on a clean machine", async () => {
     const outPath = join(tmpHome, "bundle.json");
     process.env.MANTIS_BACKUP_TEST_PASS = "diceware-style-test-passphrase";

@@ -157,7 +157,7 @@ export async function restoreCmd(
       continue;
     }
     try {
-      await applyProfile(bp, payload.edgeWorkers === undefined);
+      await applyProfile(bp);
       restored.push(bp.name);
     } catch (err) {
       errors.push({
@@ -170,7 +170,14 @@ export async function restoreCmd(
   const edgeRestored: string[] = [];
   const edgeSkipped: string[] = [];
   const edgeErrors: Array<{ worker: string; reason: string }> = [];
-  for (const { workerUrl, key } of payload.edgeWorkers ?? []) {
+  // Legacy v1 files embedded keys in profiles. Apply the same protection to
+  // those keys as independent worker entries, even when the profile is new.
+  const workerKeys = new Map<string, string>();
+  for (const profile of payload.profiles) {
+    if (profile.edgeWorkerUrl && profile.edgeKey) workerKeys.set(profile.edgeWorkerUrl, profile.edgeKey);
+  }
+  for (const { workerUrl, key } of payload.edgeWorkers ?? []) workerKeys.set(workerUrl, key);
+  for (const [workerUrl, key] of workerKeys) {
     if (getEdgeKey(workerUrl) && !opts.overwrite) {
       edgeSkipped.push(workerUrl);
       continue;
@@ -269,16 +276,13 @@ export async function restoreCmd(
   if (errors.length || edgeErrors.length || pluginsFailed.length) process.exitCode = 1;
 }
 
-async function applyProfile(bp: BackupProfile, restoreLegacyEdgeKey: boolean): Promise<void> {
+async function applyProfile(bp: BackupProfile): Promise<void> {
   const { entry, secrets } = profileEntryFromBackup(bp);
   // Write keychain entries BEFORE the config so a partial failure leaves
   // the most-recent state (the config file is the authoritative "we know
   // about this profile" marker).
   setKey(entry.baseUrl, secrets.apiKey);
   if (secrets.cf) setCloudflareServiceAuth(entry.baseUrl, secrets.cf);
-  if (restoreLegacyEdgeKey && secrets.edgeKey && entry.edgeWorkerUrl) {
-    setEdgeKey(entry.edgeWorkerUrl, secrets.edgeKey);
-  }
   await setProfile(bp.name, entry);
 }
 
