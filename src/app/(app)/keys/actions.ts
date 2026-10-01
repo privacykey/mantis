@@ -89,7 +89,7 @@ export async function deleteKeyAction(formData: FormData): Promise<void> {
   redirect("/keys");
 }
 
-export type MonitorActionState = { error?: string };
+export type MonitorActionState = { error?: string; saved?: boolean };
 
 export type DestinationsActionState = { error?: string; saved?: boolean };
 
@@ -135,9 +135,18 @@ export async function setMonitorAction(
   _prev: MonitorActionState,
   formData: FormData,
 ): Promise<MonitorActionState> {
-  const session = await requireSession();
+  let session;
+  try { session = await getSessionApiKey(); } catch {
+    return { error: "could not verify your session; your changes are still in the form" };
+  }
+  if (!session) return { error: "session expired; sign in in another tab, then save again" };
   const id = String(formData.get("id") ?? "");
-  const owned = await loadOwned(session, id);
+  let owned;
+  try {
+    owned = await loadOwned(session, id);
+  } catch {
+    return { error: "could not load monitor settings; your changes are still in the form" };
+  }
   if (!owned) return { error: "invalid key id" };
 
   const modeRaw = String(formData.get("monitor_mode") ?? "");
@@ -155,28 +164,34 @@ export async function setMonitorAction(
     return { error: "window must be 30–86400 seconds" };
   }
 
-  await db
-    .update(keys)
-    .set({
-      monitorMode: modeRaw,
-      monitorWindowSeconds: windowSeconds,
-    })
-    .where(eq(keys.id, id));
+  try {
+    await db.update(keys).set({ monitorMode: modeRaw, monitorWindowSeconds: windowSeconds }).where(eq(keys.id, id));
+  } catch {
+    return { error: "could not save monitor settings; your changes are still in the form" };
+  }
 
   revalidatePath(`/keys/${id}`);
-  return {};
+  return { saved: true };
 }
 
-export async function resetMonitorAction(formData: FormData): Promise<void> {
-  const session = await requireSession();
+export async function resetMonitorAction(_prev: MonitorActionState, formData: FormData): Promise<MonitorActionState> {
+  let session;
+  try { session = await getSessionApiKey(); } catch {
+    return { error: "could not verify your session; try again when the server is available" };
+  }
+  if (!session) return { error: "session expired; sign in again" };
   const id = String(formData.get("id") ?? "");
-  const owned = await loadOwned(session, id);
-  if (!owned) return;
+  let owned;
+  try { owned = await loadOwned(session, id); } catch {
+    return { error: "could not load monitor; try again when the server is available" };
+  }
+  if (!owned) return { error: "invalid key id" };
 
-  await db
-    .update(keys)
-    .set({ monitorResetAt: new Date() })
-    .where(eq(keys.id, id));
+  try {
+    await db.update(keys).set({ monitorResetAt: new Date() }).where(eq(keys.id, id));
+  } catch {
+    return { error: "could not reset monitor; try again when the server is available" };
+  }
 
   await audit({
     type: "monitor.reset",
@@ -189,4 +204,5 @@ export async function resetMonitorAction(formData: FormData): Promise<void> {
   });
 
   revalidatePath(`/keys/${id}`);
+  return { saved: true };
 }

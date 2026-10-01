@@ -10,6 +10,7 @@ vi.mock("@/lib/log", () => ({
 }));
 
 import { GET as status } from "@/app/status/[publicId]/route";
+import { GET as dashboardStatus } from "@/app/api/keys/[id]/monitor/route";
 import { POST as reset } from "@/app/api/keys/[id]/reset/route";
 import { NextRequest } from "next/server";
 import { db } from "@/db/client";
@@ -74,5 +75,18 @@ describe("E2E-19 monitor + status round-trip", () => {
     expect((await statusReq("mondisab01")).status).toBe(404);
     expect((await statusReq("nosuchkey99")).status).toBe(404);
     void disabled;
+  });
+
+  it("returns current dashboard state after a trip and window expiry, gated by ownership", async () => {
+    const owner = await seedApiKey(); const stranger = await seedApiKey();
+    const key = await seedCanaryKey(owner.row.id, { monitorMode: "window", monitorWindowSeconds: 30 });
+    const read = (bearer = owner.plaintext) => dashboardStatus(buildJsonRequest(`/api/keys/${key.id}/monitor`, { bearer }), ctxParams({ id: key.id }));
+    expect((await (await read()).json()).state).toBe("ok");
+    const [hit] = await db.insert(hits).values({ keyId: key.id }).returning();
+    expect((await (await read()).json()).state).toBe("tripped");
+    const { eq } = await import("drizzle-orm");
+    await db.update(hits).set({ occurredAt: new Date(Date.now() - 60_000) }).where(eq(hits.id, hit!.id));
+    expect((await (await read()).json()).state).toBe("ok");
+    expect((await read(stranger.plaintext)).status).toBe(404);
   });
 });

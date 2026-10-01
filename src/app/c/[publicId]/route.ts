@@ -1,10 +1,9 @@
 import { eq } from "drizzle-orm";
-import { type NextRequest, after } from "next/server";
+import { type NextRequest } from "next/server";
 import { db } from "@/db/client";
-import { hits, keys, type Hit, type Key } from "@/db/schema";
-import { decideHitRecording, type HitRecordDecision } from "@/lib/hits";
+import { keys, type Key } from "@/db/schema";
+import { recordHitWithNotifications } from "@/lib/hits";
 import { log } from "@/lib/log";
-import { enqueueNotifications } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import {
   capStoredRequestField,
@@ -108,54 +107,15 @@ async function handle(req: NextRequest, publicId: string): Promise<Response> {
     headers["x-mantis-source"] = rawSrc;
   }
 
-  let recordDecision: HitRecordDecision = {
-    record: true,
-    isDuplicate: false,
-  };
   try {
-    recordDecision = await decideHitRecording(
-      key.id,
-      key.dedupeWindowSeconds,
-    );
-  } catch (err) {
-    log.error({ err, keyId: key.id }, "failed to evaluate duplicate window");
-  }
-
-  let hit: Hit | null = null;
-  if (recordDecision.record) {
-    try {
-      const [row] = await db
-        .insert(hits)
-        .values({
-          keyId: key.id,
-          ip,
-          userAgent,
-          referer,
-          headers,
-          uaBrowser: ua.browser,
-          uaBrowserVersion: ua.browserVersion,
-          uaOs: ua.os,
-          uaDevice: ua.device,
-          botLabel: ua.botLabel,
-          isDuplicate: recordDecision.isDuplicate,
-        })
-        .returning();
-      hit = row ?? null;
-    } catch (err) {
-      log.error({ err, keyId: key.id }, "failed to insert hit");
-    }
-  }
-
-  if (hit && !recordDecision.isDuplicate) {
-    const capturedKey = key;
-    const capturedHit = hit;
-    after(async () => {
-      try {
-        await enqueueNotifications(capturedKey, capturedHit);
-      } catch (err) {
-        log.error({ err, hitId: capturedHit.id }, "enqueue failed");
-      }
+    await recordHitWithNotifications(key, {
+      ip, userAgent, referer, headers,
+      uaBrowser: ua.browser, uaBrowserVersion: ua.browserVersion,
+      uaOs: ua.os, uaDevice: ua.device, botLabel: ua.botLabel,
     });
+  } catch (err) {
+    log.error({ err, keyId: key.id }, "failed to capture hit and delivery jobs");
+    return new Response(null, { status: 503, headers: { "Retry-After": "1", "Cache-Control": "no-store" } });
   }
 
   return buildTriggerResponse(
