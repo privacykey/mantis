@@ -8,6 +8,13 @@ export type HostContext = {
   tty: string | null;
   sudo_cmd: string | null;
   network_interface: string | null;
+  event: string | null;
+  device: string | null;
+  entity_id: string | null;
+  automation: string | null;
+  area: string | null;
+  iot_mac: string | null;
+  iot_ip: string | null;
 };
 
 function clean(v: string | undefined): string | null {
@@ -28,6 +35,13 @@ export function parseHostContext(
   const tty = clean(get("x-mantis-tty"));
   const sudo_cmd = clean(get("x-mantis-sudo-cmd"));
   const network_interface = clean(get("x-mantis-network-interface"));
+  const event = clean(get("x-mantis-event"));
+  const device = clean(get("x-mantis-device"));
+  const entity_id = clean(get("x-mantis-entity-id"));
+  const automation = clean(get("x-mantis-automation"));
+  const area = clean(get("x-mantis-area"));
+  const iot_mac = clean(get("x-mantis-iot-mac"));
+  const iot_ip = clean(get("x-mantis-iot-ip"));
 
   if (
     !source &&
@@ -37,7 +51,14 @@ export function parseHostContext(
     !ssh_connection &&
     !tty &&
     !sudo_cmd &&
-    !network_interface
+    !network_interface &&
+    !event &&
+    !device &&
+    !entity_id &&
+    !automation &&
+    !area &&
+    !iot_mac &&
+    !iot_ip
   ) {
     return null;
   }
@@ -52,5 +73,12 @@ export function parseHostContext(
     tty,
     sudo_cmd,
     network_interface,
+    event,
+    device,
+    entity_id,
+    automation,
+    area,
+    iot_mac,
+    iot_ip,
   };
 }

@@ -30,6 +30,42 @@ describe("forward header allowlist", () => {
     await forward({ w: "https://hooks.example.com/inbox" }, req);
   }
 
+  it("delivers structured IoT context in the actual webhook payload", async () => {
+    await fire({
+      "x-mantis-source": "iot-network",
+      "x-mantis-device": "garage-camera",
+      "x-mantis-event": "unexpected-online",
+      "x-mantis-iot-mac": "aa:bb:cc:dd:ee:ff",
+      "x-mantis-iot-ip": "192.0.2.10",
+      "x-mantis-network-interface": "eth0",
+    });
+    const hit = (capturedBody as { hit: { host_context: Record<string, string> } }).hit;
+    expect(hit.host_context).toMatchObject({
+      source: "iot-network", device: "garage-camera", event: "unexpected-online",
+      iot_mac: "aa:bb:cc:dd:ee:ff", iot_ip: "192.0.2.10", network_interface: "eth0",
+    });
+  });
+
+  it.each(["slack", "discord", "teams"] as const)("includes escaped device and event in %s alerts", async (channel) => {
+    await forward({ w: "https://hooks.example.com/inbox", c: channel }, new Request("https://mantis-edge.example.workers.dev/c/blob", {
+      headers: { "x-mantis-device": "camera <garage> *unit*", "x-mantis-event": "door <opened> *alarm*" },
+    }));
+    let fields: Array<{ name?: string; title?: string; text?: string; value?: string }>;
+    if (channel === "slack") {
+      fields = (capturedBody as { blocks: Array<{ fields?: typeof fields }> }).blocks.flatMap((block) => block.fields ?? []);
+      expect(fields).toContainEqual({ type: "mrkdwn", text: "*Device*\ncamera &lt;garage&gt; *unit*" });
+      expect(fields).toContainEqual({ type: "mrkdwn", text: "*Event*\ndoor &lt;opened&gt; *alarm*" });
+    } else if (channel === "discord") {
+      fields = (capturedBody as { embeds: Array<{ fields: typeof fields }> }).embeds[0]!.fields;
+      expect(fields).toContainEqual({ name: "Device", value: "camera <garage\\> \\*unit\\*", inline: true });
+      expect(fields).toContainEqual({ name: "Event", value: "door <opened\\> \\*alarm\\*", inline: true });
+    } else {
+      fields = (capturedBody as { attachments: Array<{ content: { body: Array<{ facts?: typeof fields }> } }> }).attachments[0]!.content.body.flatMap((block) => block.facts ?? []);
+      expect(fields).toContainEqual({ title: "Device", value: "camera <garage\\> \\*unit\\*" });
+      expect(fields).toContainEqual({ title: "Event", value: "door <opened\\> \\*alarm\\*" });
+    }
+  });
+
   it("forwards only safe headers; drops auth/session/credential-shaped names", async () => {
     await fire({
       "user-agent": "curl/8.7.1",
