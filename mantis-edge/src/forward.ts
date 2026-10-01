@@ -200,6 +200,12 @@ function formatSlack(ctx: FormatCtx): unknown {
   if (ctx.hostCtx?.host) {
     fields.push({ type: "mrkdwn", text: `*Host*\n${escapeSlack(ctx.hostCtx.host)}` });
   }
+  if (ctx.hostCtx?.device) {
+    fields.push({ type: "mrkdwn", text: `*Device*\n${escapeSlack(truncate(ctx.hostCtx.device, 120))}` });
+  }
+  if (ctx.hostCtx?.event) {
+    fields.push({ type: "mrkdwn", text: `*Event*\n${escapeSlack(truncate(ctx.hostCtx.event, 120))}` });
+  }
   if (ctx.hostCtx?.ssh_client_ip) {
     fields.push({
       type: "mrkdwn",
@@ -247,6 +253,12 @@ function formatDiscord(ctx: FormatCtx): unknown {
   if (ctx.hostCtx?.host) {
     fields.push({ name: "Host", value: escapeMarkdown(ctx.hostCtx.host), inline: true });
   }
+  if (ctx.hostCtx?.device) {
+    fields.push({ name: "Device", value: escapeMarkdown(truncate(ctx.hostCtx.device, 120)), inline: true });
+  }
+  if (ctx.hostCtx?.event) {
+    fields.push({ name: "Event", value: escapeMarkdown(truncate(ctx.hostCtx.event, 120)), inline: true });
+  }
   if (ctx.hostCtx?.ssh_client_ip) {
     fields.push({
       name: "SSH from",
@@ -284,6 +296,8 @@ function formatTeams(ctx: FormatCtx): unknown {
   ];
   if (ctx.hostCtx?.user) facts.push({ title: "User", value: escapeMarkdown(ctx.hostCtx.user) });
   if (ctx.hostCtx?.host) facts.push({ title: "Host", value: escapeMarkdown(ctx.hostCtx.host) });
+  if (ctx.hostCtx?.device) facts.push({ title: "Device", value: escapeMarkdown(truncate(ctx.hostCtx.device, 120)) });
+  if (ctx.hostCtx?.event) facts.push({ title: "Event", value: escapeMarkdown(truncate(ctx.hostCtx.event, 120)) });
   if (ctx.hostCtx?.ssh_client_ip) {
     facts.push({ title: "SSH from", value: escapeMarkdown(ctx.hostCtx.ssh_client_ip) });
   }

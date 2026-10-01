@@ -32,4 +32,31 @@ describe("parseHostContext (edge)", () => {
       tty: "/dev/pts/0",
     });
   });
+
+  it("retains all IoT context emitted by the helper and smart-home installers", () => {
+    expect(parseHostContext({
+      "x-mantis-source": "iot-network",
+      "x-mantis-event": " unexpected-online ",
+      "x-mantis-device": " garage-camera ",
+      "x-mantis-entity-id": "binary_sensor.garage_camera",
+      "x-mantis-automation": "Night watch",
+      "x-mantis-area": "Garage",
+      "x-mantis-iot-mac": "aa:bb:cc:dd:ee:ff",
+      "x-mantis-iot-ip": "192.0.2.10",
+    })).toMatchObject({
+      source: "iot-network",
+      event: "unexpected-online",
+      device: "garage-camera",
+      entity_id: "binary_sensor.garage_camera",
+      automation: "Night watch",
+      area: "Garage",
+      iot_mac: "aa:bb:cc:dd:ee:ff",
+      iot_ip: "192.0.2.10",
+    });
+  });
+
+  it("recognizes an IoT event without shell headers or a source label", () => {
+    expect(parseHostContext({ "x-mantis-device": "front-door" })).toMatchObject({ device: "front-door" });
+    expect(parseHostContext({ "x-mantis-event": "   " })).toBeNull();
+  });
 });
