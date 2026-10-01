@@ -27,8 +27,8 @@ function mintToken(): { plaintext: string; prefix: string; hash: string } {
   };
 }
 
-/** Resolves the session cookie to its API key, or null if missing/revoked/expired. */
-export async function getSessionApiKey(): Promise<ApiKey | null> {
+/** Authenticated dashboard context. The draft scope cannot authenticate requests. */
+export async function getDashboardSession(): Promise<{ apiKey: ApiKey; draftScope: string } | null> {
   const jar = await cookies();
   const value = jar.get(COOKIE_NAME)?.value;
   if (!value || !isWellFormedSession(value)) return null;
@@ -56,7 +56,17 @@ export async function getSessionApiKey(): Promise<ApiKey | null> {
     .where(eq(sessions.id, row.sessionId))
     .catch(() => {});
 
-  return row.key;
+  return {
+    apiKey: row.key,
+    // Derive this from the validated row identity, never from a credential or
+    // its stored hash. A fresh sign-in gets a different browser draft scope.
+    draftScope: createHash("sha256").update(`mantis:monitor-drafts:v1:${row.sessionId}`).digest("hex"),
+  };
+}
+
+/** Resolves the session cookie to its API key, or null if missing/revoked/expired. */
+export async function getSessionApiKey(): Promise<ApiKey | null> {
+  return (await getDashboardSession())?.apiKey ?? null;
 }
 
 /** Mints a session, writes the cookie, returns the plaintext token. */

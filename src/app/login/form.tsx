@@ -1,11 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { useFormStatus } from "react-dom";
+import { clearBrowserMonitorDrafts } from "@/lib/monitor-drafts";
 import { loginAction, type LoginState } from "./actions";
 
 export function LoginForm() {
   const [state, formAction] = useActionState<LoginState, FormData>(loginAction, {});
+  useEffect(clearBrowserMonitorDrafts, []);
 
   return (
     <form action={formAction} className="space-y-3">
