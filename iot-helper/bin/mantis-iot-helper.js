@@ -3,41 +3,53 @@ import { readFile, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_INTERVAL_SECONDS = 30;
 const DEFAULT_COOLDOWN_SECONDS = 900;
+const DEFAULT_DELIVERY_TIMEOUT_SECONDS = 10;
 
-const args = parseArgs(process.argv.slice(2));
-if (args.help) {
-  printHelp();
-  process.exit(0);
+export async function main(argv = process.argv.slice(2)) {
+  const args = parseArgs(argv);
+  if (args.help) {
+    printHelp();
+    return;
+  }
+
+  const configPath = String(args.config ?? process.env.MANTIS_IOT_CONFIG ?? "mantis-iot.json");
+  const config = await loadConfig(configPath);
+  const intervalMs = seconds(config.interval_seconds, DEFAULT_INTERVAL_SECONDS) * 1000;
+  const cooldownMs = seconds(config.cooldown_seconds, DEFAULT_COOLDOWN_SECONDS) * 1000;
+  const deliveryTimeoutMs = seconds(config.delivery_timeout_seconds, DEFAULT_DELIVERY_TIMEOUT_SECONDS) * 1000;
+  const dryRun = Boolean(args["dry-run"] ?? config.dry_run);
+  const once = Boolean(args.once);
+
+  const state = createState();
+
+  console.error(`mantis-iot-helper watching ${config.devices?.length ?? 0} devices, ${config.log_watchers?.length ?? 0} logs`);
+
+  do {
+    await tick(config, state, { cooldownMs, dryRun, deliveryTimeoutMs });
+    if (once) break;
+    await sleep(intervalMs);
+  } while (true);
 }
 
-const configPath = String(args.config ?? process.env.MANTIS_IOT_CONFIG ?? "mantis-iot.json");
-const config = await loadConfig(configPath);
-const intervalMs = seconds(config.interval_seconds, DEFAULT_INTERVAL_SECONDS) * 1000;
-const cooldownMs = seconds(config.cooldown_seconds, DEFAULT_COOLDOWN_SECONDS) * 1000;
-const dryRun = Boolean(args["dry-run"] ?? config.dry_run);
-const once = Boolean(args.once);
+export function createState() {
+  return { firedAt: new Map(), logOffsets: new Map(), pendingLogs: new Map() };
+}
 
-const state = {
-  firedAt: new Map(),
-  logOffsets: new Map(),
-};
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await main();
+}
 
-console.error(`mantis-iot-helper watching ${config.devices?.length ?? 0} devices, ${config.log_watchers?.length ?? 0} logs`);
-
-do {
-  await tick(config, state, { cooldownMs, dryRun });
-  if (once) break;
-  await sleep(intervalMs);
-} while (true);
-
-async function tick(config, state, opts) {
-  const neighbors = await getNeighbors();
+export async function tick(config, state, opts) {
+  const neighbors = opts.neighbors ?? await getNeighbors();
   const now = new Date();
   for (const device of config.devices ?? []) {
-    const present = await isDevicePresent(device, neighbors);
+    const networkInterface = device.interface ?? config.interface;
+    const present = await isDevicePresent({ ...device, interface: networkInterface }, neighbors);
     if (!present) continue;
     if (isAllowedNow(device.allowed, now)) continue;
     await fireWithCooldown({
@@ -45,13 +57,14 @@ async function tick(config, state, opts) {
       state,
       cooldownMs: opts.cooldownMs,
       dryRun: opts.dryRun,
+      deliveryTimeoutMs: opts.deliveryTimeoutMs,
       url: device.mantis_url,
       event: "unexpected-online",
       source: "iot-network",
       device: device.name,
       mac: normalizeMac(device.mac),
       ip: device.ip,
-      networkInterface: device.interface ?? config.interface,
+      networkInterface,
       payload: { device, present, at: now.toISOString() },
     });
   }
@@ -72,69 +85,78 @@ async function getNeighbors() {
   return parseArp(arp);
 }
 
-async function isDevicePresent(device, neighbors) {
+export async function isDevicePresent(device, neighbors) {
   const mac = normalizeMac(device.mac);
-  if (mac && neighbors.byMac.has(mac)) return true;
-  if (device.ip && neighbors.byIp.has(device.ip)) return true;
+  const entries = neighbors.entries ?? [...neighbors.byMac.values(), ...neighbors.byIp.values()];
+  if (entries.some((entry) =>
+    (!device.interface || entry.dev === device.interface) &&
+    ((mac && entry.mac === mac) || (device.ip && entry.ip === device.ip))
+  )) return true;
   if (device.ping && device.ip) {
-    return ping(device.ip);
+    return ping(device.ip, device.interface);
   }
   return false;
 }
 
-function parseIpNeighJson(raw) {
-  const byMac = new Map();
-  const byIp = new Map();
+export function parseIpNeighJson(raw) {
+  const neighbors = emptyNeighbors();
   try {
     const rows = JSON.parse(raw);
     for (const row of rows) {
       const ip = row.dst;
       const mac = normalizeMac(row.lladdr);
-      if (!ip) continue;
-      byIp.set(ip, { ip, mac, dev: row.dev, state: row.state });
-      if (mac) byMac.set(mac, { ip, mac, dev: row.dev, state: row.state });
+      if (!ip || invalidNeighborState(row.state)) continue;
+      addNeighbor(neighbors, { ip, mac, dev: row.dev, state: row.state });
     }
   } catch {
     return emptyNeighbors();
   }
-  return { byMac, byIp };
+  return neighbors;
 }
 
-function parseIpNeighText(raw) {
-  const byMac = new Map();
-  const byIp = new Map();
+export function parseIpNeighText(raw) {
+  const neighbors = emptyNeighbors();
   for (const line of raw.split(/\r?\n/)) {
     const ip = line.match(/^(\S+)/)?.[1];
     const dev = line.match(/\bdev\s+(\S+)/)?.[1];
     const mac = normalizeMac(line.match(/\blladdr\s+(\S+)/)?.[1]);
-    if (!ip) continue;
-    byIp.set(ip, { ip, mac, dev });
-    if (mac) byMac.set(mac, { ip, mac, dev });
+    if (!ip || invalidNeighborState(line)) continue;
+    addNeighbor(neighbors, { ip, mac, dev });
   }
-  return { byMac, byIp };
+  return neighbors;
 }
 
-function parseArp(raw) {
-  const byMac = new Map();
-  const byIp = new Map();
+export function parseArp(raw) {
+  const neighbors = emptyNeighbors();
   for (const line of raw.split(/\r?\n/)) {
     const ip = line.match(/\(([^)]+)\)/)?.[1];
     const mac = normalizeMac(line.match(/\bat\s+([0-9a-f:.-]+)/i)?.[1]);
-    if (!ip) continue;
-    byIp.set(ip, { ip, mac });
-    if (mac) byMac.set(mac, { ip, mac });
+    const dev = line.match(/\bon\s+(\S+)/)?.[1];
+    if (!ip || invalidNeighborState(line)) continue;
+    addNeighbor(neighbors, { ip, mac, dev });
   }
-  return { byMac, byIp };
+  return neighbors;
 }
 
 function emptyNeighbors() {
-  return { byMac: new Map(), byIp: new Map() };
+  return { byMac: new Map(), byIp: new Map(), entries: [] };
 }
 
-async function ping(ip) {
+function invalidNeighborState(value) {
+  return /\b(FAILED|INCOMPLETE)\b/i.test(Array.isArray(value) ? value.join(" ") : String(value ?? ""));
+}
+
+function addNeighbor(neighbors, entry) {
+  neighbors.entries.push(entry);
+  neighbors.byIp.set(entry.ip, entry);
+  if (entry.mac) neighbors.byMac.set(entry.mac, entry);
+}
+
+async function ping(ip, networkInterface) {
   const args = platform() === "darwin"
     ? ["-c", "1", "-W", "1000", ip]
     : ["-c", "1", "-W", "1", ip];
+  if (networkInterface) args.unshift(platform() === "darwin" ? "-b" : "-I", networkInterface);
   try {
     await run("ping", args, { timeoutMs: 2500 });
     return true;
@@ -143,8 +165,12 @@ async function ping(ip) {
   }
 }
 
-async function scanLogWatcher(watcher, state, opts) {
+export async function scanLogWatcher(watcher, state, opts) {
   if (!watcher.path || !watcher.pattern || !watcher.mantis_url) return;
+  // Each destination consumes its own stream, even when it watches the same
+  // file/name. Keep failed events outside the file so rotation cannot lose them.
+  const key = JSON.stringify([watcher.name, watcher.path, watcher.pattern, watcher.event, watcher.mantis_url]);
+  if (!await flushPendingLogs(key, state)) return;
   let info;
   try {
     info = await stat(watcher.path);
@@ -152,34 +178,63 @@ async function scanLogWatcher(watcher, state, opts) {
     return;
   }
 
-  const previous = state.logOffsets.get(watcher.path) ?? info.size;
-  const start = previous > info.size ? 0 : previous;
-  state.logOffsets.set(watcher.path, info.size);
-  if (start === info.size) return;
+  const previous = state.logOffsets.get(key);
+  const fileId = `${info.dev}:${info.ino}`;
+  const continuing = previous && previous.fileId === fileId && previous.offset <= info.size;
+  const start = !previous ? info.size : continuing ? previous.offset : 0;
+  if (start === info.size) {
+    state.logOffsets.set(key, { offset: info.size, fileId, partial: continuing ? previous.partial ?? "" : "" });
+    return;
+  }
 
-  const text = await readRange(watcher.path, start, info.size);
+  let text;
+  try {
+    text = await readRange(watcher.path, start, info.size);
+  } catch (err) {
+    console.error("log read failed", watcher.name, err instanceof Error ? err.message : String(err));
+    return;
+  }
+  const lines = `${continuing ? previous.partial ?? "" : ""}${text}`.split(/\r?\n/);
+  const partial = lines.pop() ?? "";
+  state.logOffsets.set(key, { offset: info.size, fileId, partial });
   const re = new RegExp(watcher.pattern, "i");
-  for (const line of text.split(/\r?\n/)) {
+  const events = [];
+  for (const line of lines) {
     if (!re.test(line)) continue;
-    await fireWithCooldown({
-      key: `log:${watcher.name}`,
+    const event = {
+      key: `log:${key}`,
       state,
       cooldownMs: opts.cooldownMs,
       dryRun: opts.dryRun,
+      deliveryTimeoutMs: opts.deliveryTimeoutMs,
       url: watcher.mantis_url,
       event: watcher.event ?? "device-log",
       source: "iot-log",
       device: watcher.device ?? watcher.name,
       payload: { watcher: watcher.name, line, at: new Date().toISOString() },
-    });
+    };
+    events.push(event);
   }
+  if (events.length) state.pendingLogs.set(key, events);
+  await flushPendingLogs(key, state);
 }
 
-async function fireWithCooldown({
+async function flushPendingLogs(key, state) {
+  const events = state.pendingLogs.get(key) ?? [];
+  while (events.length) {
+    if (!await fireWithCooldown(events[0])) return false;
+    events.shift();
+  }
+  state.pendingLogs.delete(key);
+  return true;
+}
+
+export async function fireWithCooldown({
   key,
   state,
   cooldownMs,
   dryRun,
+  deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_SECONDS * 1000,
   url,
   event,
   source,
@@ -189,11 +244,11 @@ async function fireWithCooldown({
   networkInterface,
   payload,
 }) {
-  if (!url) return;
+  if (!url) return false;
+  const targetKey = JSON.stringify([key, url]);
   const now = Date.now();
-  const last = state.firedAt.get(key) ?? 0;
-  if (now - last < cooldownMs) return;
-  state.firedAt.set(key, now);
+  const last = state.firedAt.get(targetKey);
+  if (last !== undefined && now - last < cooldownMs) return true;
 
   const headers = {
     "Content-Type": "application/json",
@@ -207,7 +262,8 @@ async function fireWithCooldown({
 
   if (dryRun) {
     console.error("dry-run fire", event, device, url);
-    return;
+    state.firedAt.set(targetKey, now);
+    return true;
   }
 
   try {
@@ -215,11 +271,19 @@ async function fireWithCooldown({
       method: "POST",
       headers,
       body: JSON.stringify(payload ?? {}),
+      redirect: "manual",
+      signal: AbortSignal.timeout(Math.max(1, Math.floor(deliveryTimeoutMs))),
     });
-    await res.arrayBuffer().catch(() => undefined);
+    // The trigger has accepted the event once its response headers arrive.
+    // Don't wait for an arbitrary response body or follow redirect targets.
+    void res.body?.cancel().catch(() => {});
+    if (res.status < 200 || res.status >= 400) throw new Error(`HTTP ${res.status}`);
+    state.firedAt.set(targetKey, Date.now());
     console.error("fired", event, device ?? "-", res.status);
+    return true;
   } catch (err) {
     console.error("fire failed", event, device ?? "-", err instanceof Error ? err.message : String(err));
+    return false;
   }
 }
 

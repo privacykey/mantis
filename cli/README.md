@@ -379,6 +379,7 @@ The bundle uses scrypt (N=32768, r=8, p=1) → AES-256-GCM. Salt + nonce are ran
 **What's included:**
 
 - Every profile's `baseUrl`, `keyPrefix`, full `mantis_live_…` API key, Cloudflare Access mode + app URL + Service-Auth client-id/secret, linked edge worker URL, and edge AES key
+- All locally stored edge worker keys, including workers without a server profile. Edge-only installs can use backup/restore without logging into a server. Existing edge keys are kept on restore unless `--overwrite` is set. Older backup files remain supported.
 - The active-profile pointer
 - Plugin manifest: each plugin's `name`, `source` (GitHub `owner/repo`), pinned commit SHA, and version. **`restore` re-installs plugins via `mantis plugin add <source>@<ref>`** — the bundle does NOT carry the plugin contents themselves, so the new machine needs network access to GitHub for the re-install.
 
@@ -387,12 +388,17 @@ The bundle uses scrypt (N=32768, r=8, p=1) → AES-256-GCM. Salt + nonce are ran
 - Local-path plugins (`mantis plugin add ./some/path`) — those aren't reproducible on another machine; `backup` lists them as skipped.
 - `~/.cloudflared/` cached JWTs — owned by `cloudflared`, regenerated on next login.
 
+Full backup lists the edge worker URLs it included. Independent keys require
+keychain enumeration support; if your platform cannot enumerate entries,
+linked profile keys are still included. Check that list before migrating an
+edge-only setup and keep a separate vaulted copy of any omitted key.
+
 **Flag reference:**
 
 | Flag | What it does |
 |---|---|
 | `mantis backup --out <file>` | Where to write the bundle. Default `./mantis-backup.json`. |
-| `mantis backup --only <name>` | Back up just one profile. Default is all profiles. |
+| `mantis backup --only <name>` | Back up just one profile and its linked edge worker. Independent edge workers are omitted; the command reports this scope. Default includes all profiles and discoverable edge worker keys. |
 | `mantis backup --passphrase-stdin` | Read passphrase from stdin (for scripts piping a vault into the CLI). |
 | `mantis backup --passphrase-env <VAR>` | Read passphrase from the named env var. |
 | `mantis restore <file>` | Decrypt + restore. By default, existing profiles on the target machine are kept; bundle entries with the same name are skipped. |

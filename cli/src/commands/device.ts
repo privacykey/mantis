@@ -96,7 +96,7 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
     emit(
       () => {
         process.stderr.write(
-          `${c.green("✓")} ${c.bold(device)} armed — ${minted.length} alarm(s)\n`,
+          `${c.green("✓")} ${c.bold(device)} ${installed ? "armed" : "minted"} — ${minted.length} alarm(s)\n`,
         );
         for (const m of minted) {
           process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.cyan(m.url)}\n`);
@@ -104,9 +104,9 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
         if (bundlePath) {
           process.stderr.write(`\n${c.green("✓")} bundle → ${c.cyan(bundlePath)}\n`);
         }
-        if (!opts.install && !opts.bundle) {
+        if (!installed) {
           process.stderr.write(
-            `\n${c.dim("Nothing installed. Re-run with --bundle <path> for a zip, or --install to apply here.")}\n`,
+            `\n${c.dim(bundlePath ? "Nothing installed. Run the install script in the exported bundle to activate these alarms." : opts.install ? "Installation canceled. Nothing installed; use the staged bundle path above to install later." : "Nothing installed. Re-run with --bundle <path> for a zip, or --install to apply here.")}\n`,
           );
         }
       },
