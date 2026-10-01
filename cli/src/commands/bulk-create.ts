@@ -1,6 +1,7 @@
-import { writeFileSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { appendFileSync, closeSync, fsyncSync, openSync } from "node:fs";
+import { mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import type {
   Key,
   KeyWithDestinationResults,
@@ -90,68 +91,93 @@ export async function bulkCreateCmd(opts: BulkCreateOpts): Promise<void> {
   }
 
   await withClient(opts, async (client) => {
+    // Verify the requested output before sending a non-idempotent POST. Append
+    // mode leaves an existing result file intact until the completed write.
+    const outPath = resolve(opts.out!);
+    const output = await open(outPath, "a");
+    await output.close();
+    const recoveryDir = await mkdtemp(join(tmpdir(), "mantis-bulk-recovery-"));
+    const recoveryPath = join(recoveryDir, "completed.csv");
+    const journal = openSync(recoveryPath, "wx", 0o600);
+    appendFileSync(journal, writeCsv(loaded.outputHeaders, []));
+    fsyncSync(journal);
+    process.stderr.write(`Recovery CSV: ${recoveryPath} (completed mappings until output is saved).\n`);
     const total = loaded.rows.length;
     const onProgress = makeProgressReporter(total);
 
-    // Results land here as they complete (out of order under concurrency). The
-    // SIGINT handler reads it so an interrupt still flushes a valid id↔URL
-    // mapping — without it, keys created server-side would be unrecoverable
-    // locally, and a re-run would duplicate them (createKey has no idempotency
-    // key). Rows that never ran are marked so the operator sees what to retry.
+    // Each completed row is synced independently of the requested output path.
+    // A failed final write or interrupt can therefore retain confirmed mappings.
     const sink: (RowResult | undefined)[] = new Array(total);
     const finalize = (uncreatedNote: string): RowResult[] =>
       loaded.rows.map((row, i) => sink[i] ?? rowError(row, uncreatedNote));
 
     let interrupted = false;
+    let journalError: unknown;
+    const shouldStop = () => interrupted || journalError !== undefined;
+    const record = (result: RowResult) => {
+      try {
+        appendFileSync(journal, writeCsvRow(loaded.outputHeaders, result.row) + "\n");
+        fsyncSync(journal);
+      } catch (err) {
+        journalError ??= err;
+      }
+      onProgress?.(result);
+    };
     const onSigint = () => {
       if (interrupted) return;
       interrupted = true;
-      const results = finalize("interrupted before creation");
-      const outPath = resolve(opts.out!);
-      try {
-        writeFileSync(
-          outPath,
-          writeCsv(loaded.outputHeaders, results.map((r) => r.row)),
-          "utf8",
-        );
-      } catch {
-        /* best effort on the way out */
-      }
-      const created = results.filter((r) => r.created).length;
       process.stderr.write(
-        `\n${c.yellow("interrupted")} — wrote ${created}/${total} created so far to ${outPath}. ` +
-          `Those keys exist on the server; a re-run will create duplicates.\n`,
+        `\n${c.yellow("stopping")} — waiting for in-flight requests; completed mappings are saved at ${recoveryPath}.\n`,
       );
-      process.exit(130);
     };
     process.on("SIGINT", onSigint);
     try {
-      if (opts.failFast) {
-        await createSequentially(
-          client,
-          loaded.rows,
-          opts,
-          globalDestinations,
-          sink,
-          onProgress,
-        );
-      } else {
-        await mapLimit(
-          loaded.rows,
-          concurrency,
-          (row) => createOne(client, row, opts, globalDestinations),
-          sink,
-          onProgress,
-        );
+      try {
+        if (opts.failFast) {
+          await createSequentially(
+            client,
+            loaded.rows,
+            opts,
+            globalDestinations,
+            sink,
+            record,
+            shouldStop,
+          );
+        } else {
+          await mapLimit(
+            loaded.rows,
+            concurrency,
+            (row) => createOne(client, row, opts, globalDestinations),
+            sink,
+            record,
+            shouldStop,
+          );
+        }
+      } finally {
+        closeSync(journal);
       }
+
+      const results = finalize(interrupted ? "interrupted before creation; no request sent" : "not created");
+      if (journalError !== undefined) {
+        // If even the recovery destination failed, retain the full completed
+        // mappings in the command log as the last available recovery surface.
+        process.stderr.write("Completed mappings (CSV):\n" + writeCsv(loaded.outputHeaders, results.filter((r) => r.created).map((r) => r.row)));
+        throw new Error(`stopped because recovery CSV could not be saved. Confirmed mappings are printed above; do not re-run the original CSV. ${String(journalError)}`);
+      }
+      try {
+        await writeResults(outPath, loaded.outputHeaders, results);
+      } catch (err) {
+        throw new Error(`keys may already exist on the server. Completed mappings are saved at ${recoveryPath}; do not re-run the original CSV. Could not write ${outPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      await rm(recoveryDir, { recursive: true, force: true });
+      emitSummary(opts.out!, results, false);
+      if (interrupted) {
+        process.stderr.write(`Stopped; confirmed mappings are saved at ${outPath}. Retry only rows marked interrupted before creation. Requests that failed without returning a key may already have completed; inspect the server before retrying them.\n`);
+        process.exitCode = 130;
+      } else if (results.some((result) => result.failed)) process.exitCode = 1;
     } finally {
       process.removeListener("SIGINT", onSigint);
     }
-
-    const results = finalize("not created");
-    await writeResults(opts.out!, loaded.outputHeaders, results);
-    emitSummary(opts.out!, results, false);
-    if (results.some((result) => result.failed)) process.exitCode = 1;
   });
 }
 
@@ -298,8 +324,10 @@ async function createSequentially(
   globalDestinations: DestinationInput[],
   sink: (RowResult | undefined)[],
   onProgress?: (result: RowResult) => void,
+  shouldStop: () => boolean = () => false,
 ): Promise<void> {
   for (let i = 0; i < rows.length; i++) {
+    if (shouldStop()) return;
     const result = await createOne(client, rows[i]!, opts, globalDestinations);
     sink[i] = result;
     onProgress?.(result);
@@ -623,12 +651,14 @@ async function mapLimit<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   sink: Array<R | undefined>,
   onProgress?: (result: R) => void,
+  shouldStop: () => boolean = () => false,
 ): Promise<void> {
   let next = 0;
   const workers = Array.from(
     { length: Math.min(limit, items.length) },
     async () => {
       for (;;) {
+        if (shouldStop()) return;
         const index = next;
         next += 1;
         if (index >= items.length) return;
@@ -713,11 +743,13 @@ function parseCsv(raw: string): string[][] {
 function writeCsv(headers: string[], rows: CsvRecord[]): string {
   const lines = [
     headers.map(quoteCsvField).join(","),
-    ...rows.map((row) =>
-      headers.map((header) => quoteCsvField(row[header] ?? "")).join(","),
-    ),
+    ...rows.map((row) => writeCsvRow(headers, row)),
   ];
   return lines.join("\n") + "\n";
+}
+
+function writeCsvRow(headers: string[], row: CsvRecord): string {
+  return headers.map((header) => quoteCsvField(row[header] ?? "")).join(",");
 }
 
 // Cell starts that Excel/Sheets/Numbers evaluate as a formula. Prefix `'`

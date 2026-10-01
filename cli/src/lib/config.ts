@@ -267,11 +267,19 @@ export async function resolveAuth(opts: {
     );
   }
 
-  let cloudflare: ResolvedCloudflareAuth | undefined;
+  const cloudflare = resolveCloudflareAuth(baseUrl, profileEntry);
+  return { baseUrl, key, profile: profileName, cloudflare };
+}
+
+/** Resolve Access credentials without requiring an existing Mantis API key. */
+export function resolveCloudflareAuth(
+  baseUrl: string,
+  profileEntry: ProfileEntry | null | undefined,
+): ResolvedCloudflareAuth | undefined {
   if (profileEntry?.cloudflareAccessMode === "service-auth") {
     const sa = getCloudflareServiceAuth(baseUrl);
     if (sa) {
-      cloudflare = {
+      return {
         mode: "service-auth",
         clientId: sa.client_id,
         clientSecret: sa.client_secret,
@@ -281,10 +289,8 @@ export async function resolveAuth(opts: {
     profileEntry?.cloudflareAccessMode === "sso" &&
     profileEntry.cloudflareAccessAppUrl
   ) {
-    cloudflare = { mode: "sso", appUrl: profileEntry.cloudflareAccessAppUrl };
+    return { mode: "sso", appUrl: profileEntry.cloudflareAccessAppUrl };
   }
-
-  return { baseUrl, key, profile: profileName, cloudflare };
 }
 
 /** Returns the profile name selected by env/current — used by login / profile / edge commands. */
@@ -349,6 +355,7 @@ export async function removeProfile(name: string): Promise<{
   baseUrl?: string;
   wasCurrent: boolean;
   newCurrent?: string;
+  credentialsRetained?: boolean;
 }> {
   const stored = await readConfig();
   if (!stored || !stored.profiles[name]) {
@@ -366,11 +373,18 @@ export async function removeProfile(name: string): Promise<{
     } else {
       // No profiles left — drop config entirely
       await clearConfig();
-      return { removed: true, baseUrl: removed.baseUrl, wasCurrent };
+      deleteKey(removed.baseUrl);
+      deleteCloudflareServiceAuth(removed.baseUrl);
+      return { removed: true, baseUrl: removed.baseUrl, wasCurrent, credentialsRetained: false };
     }
   }
   await writeConfig(stored);
-  return { removed: true, baseUrl: removed.baseUrl, wasCurrent, newCurrent };
+  const credentialsRetained = Object.values(stored.profiles).some((p) => p.baseUrl === removed.baseUrl);
+  if (!credentialsRetained) {
+    deleteKey(removed.baseUrl);
+    deleteCloudflareServiceAuth(removed.baseUrl);
+  }
+  return { removed: true, baseUrl: removed.baseUrl, wasCurrent, newCurrent, credentialsRetained };
 }
 
 export async function useProfile(name: string): Promise<void> {

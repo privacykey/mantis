@@ -243,7 +243,7 @@ program
 
 program
   .command("logout")
-  .description("clear stored credentials for a profile (default: current)")
+  .description("remove a profile; clear server credentials when no profiles share its URL")
   .option("--all", "clear all profiles and the config file")
   .action(async (opts, cmd: Command) => {
     const globals = cmd.parent!.opts<GlobalRaw>();
