@@ -437,7 +437,8 @@ export async function installCmd(
 async function renderInstaller(
   url: string,
   opts: InstallerOpts,
-): Promise<{ filename: string; written: string | null }> {
+  emitResult = true,
+): Promise<{ filename: string; written: string | null; content?: string; mime: string }> {
   const type = opts.type;
   if (!isInstallType(type)) {
     fail(
@@ -474,7 +475,7 @@ async function renderInstaller(
     writtenTo = target;
   }
 
-  emit(
+  if (emitResult || !isJsonMode()) emit(
     () => {
       if (writtenTo) {
         process.stderr.write(
@@ -497,7 +498,7 @@ async function renderInstaller(
     },
   );
 
-  return { filename: installer.filename, written: writtenTo };
+  return { filename: installer.filename, written: writtenTo, content: writtenTo ? undefined : content, mime: installer.mime };
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +617,7 @@ export async function mintCmd(opts: MintOpts): Promise<void> {
   // Chained installer (--install <type>) runs after URL is produced. We
   // render it inline here so the user gets URL → test → installer in one
   // coherent stream, rather than spawning a second command.
-  let installResult: { filename: string; written: string | null } | null = null;
+  let installResult: Awaited<ReturnType<typeof renderInstaller>> | null = null;
   if (opts.install) {
     installResult = await renderInstaller(url, {
       type: opts.install,
@@ -624,7 +625,7 @@ export async function mintCmd(opts: MintOpts): Promise<void> {
       sshOnly: opts.sshOnly,
       hostname: opts.hostname,
       memo: opts.memo,
-    });
+    }, false);
   }
 
   emit(
@@ -667,6 +668,9 @@ export async function mintCmd(opts: MintOpts): Promise<void> {
             installer: {
               type: opts.install,
               written_to: installResult.written,
+              filename: installResult.filename,
+              mime: installResult.mime,
+              content: installResult.content,
             },
           }
         : {}),

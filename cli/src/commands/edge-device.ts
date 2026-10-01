@@ -195,7 +195,7 @@ export async function edgeDeviceCmd(opts: EdgeDeviceOpts): Promise<void> {
   emit(
     () => {
       process.stderr.write(
-        `${c.green("✓")} ${c.bold(device)} armed (edge) — ${minted.length} alarm(s)\n`,
+        `${c.green("✓")} ${c.bold(device)} ${installed ? "armed" : "minted"} (edge) — ${minted.length} alarm(s)\n`,
       );
       for (const m of minted) {
         process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.cyan(m.url)}\n`);
@@ -213,9 +213,9 @@ export async function edgeDeviceCmd(opts: EdgeDeviceOpts): Promise<void> {
           `${c.yellow("not on edge:")} ${v.slug} normally dedupes hits in a ${v.dedupeWindowSeconds}s window server-side; the stateless worker cannot remember the last hit, so expect bursts (e.g. Wi-Fi roams) to notify several times.\n`,
         );
       }
-      if (!opts.install && !bundleDir) {
+      if (!installed) {
         process.stderr.write(
-          `\n${c.dim("Nothing installed. Re-run with --bundle <dir> for an install directory, or --install to apply here.")}\n`,
+          `\n${c.dim(bundleDir ? "Nothing installed. Run the install script in the exported bundle to activate these alarms." : opts.install ? "Installation canceled. Nothing installed; use the staged bundle path above to install later." : "Nothing installed. Re-run with --bundle <dir> for an install directory, or --install to apply here.")}\n`,
         );
       }
     },

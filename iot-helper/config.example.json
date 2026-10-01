@@ -1,6 +1,7 @@
 {
   "interval_seconds": 30,
   "cooldown_seconds": 900,
+  "delivery_timeout_seconds": 10,
   "interface": "br0",
   "devices": [
     {

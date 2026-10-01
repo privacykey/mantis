@@ -44,6 +44,7 @@ node bin/mantis-iot-helper.js --config mantis-iot.json
 {
   "interval_seconds": 30,
   "cooldown_seconds": 900,
+  "delivery_timeout_seconds": 10,
   "interface": "br0",
   "devices": [
     {
@@ -77,7 +78,18 @@ that cross midnight are supported, for example `{"start":"23:00","end":"06:00"}`
 
 - Network detection is best-effort. ARP/neighbor tables only include devices
   recently seen by the watcher host; set `"ping": true` for devices that answer
-  ICMP and need active probing.
+  ICMP and need active probing. Failed/incomplete neighbor entries do not count
+  as presence. `interface` restricts matching and ping probes to that interface;
+  a device's own `interface` overrides the global setting.
 - Login detection requires a log source. Many cameras/routers can send syslog
   to a local host; point `log_watchers[].path` at that received log.
 - Run with enough permissions to read neighbor tables and log files.
+- Delivery has a bounded timeout (10 seconds by default). Accepted 2xx/3xx
+  trigger responses start the cooldown; failures retry on the next polling
+  tick. Redirect responses are accepted without following the target.
+- Cooldowns and log offsets are separate for each destination, so repeated
+  device/watcher entries can notify multiple servers independently.
+- Log watching starts at the end of the file on startup. Failed log events are
+  retained in memory and retried even if that file rotates or disappears. This
+  state is not durable across helper restarts; stopping/restarting the helper
+  drops pending events and starts at the current end of each file again.
