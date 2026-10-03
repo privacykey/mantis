@@ -83,6 +83,19 @@ describe("js-clone-detector expected hostname", () => {
     expect(runOn(out.content, "[2001:db8::1]")).toEqual([]);
   });
 
+  it("normalises hostile free text in linear time", () => {
+    const started = Date.now();
+    for (const hostname of [
+      `${"#".repeat(200_000)}\n`,
+      `${".".repeat(200_000)}x`,
+      `${"@".repeat(200_000)}own-site.test`,
+      `own-site.test${":".repeat(200_000)}`,
+    ]) {
+      buildInstaller("js-clone-detector", { ...base, hostname });
+    }
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   it("still warns, and fires everywhere, when no hostname is given", () => {
     for (const hostname of [undefined, "", "   ", "https://"]) {
       const out = buildInstaller("js-clone-detector", { ...base, hostname });

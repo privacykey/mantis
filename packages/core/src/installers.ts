@@ -847,15 +847,36 @@ body {
  * match and the detector would fire on the operator's own site.
  */
 function normalizeExpectedHostname(raw: string | undefined): string {
+  // Plain scanning rather than open-ended patterns: the value is free text,
+  // and a pattern that can backtrack over it is quadratic on a hostile input.
   let h = (raw ?? "").trim().toLowerCase();
-  h = h.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^\/\//, "");
-  h = h.replace(/[/?#].*$/, "");
-  h = h.replace(/^.*@/, "");
-  // A bracketed IPv6 literal keeps its brackets, as location.hostname does.
-  h = h.startsWith("[")
-    ? h.replace(/\]:\d*$/, "]")
-    : h.replace(/^([^:]*):\d*$/, "$1");
-  return h.replace(/\.+$/, "").trim();
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//.exec(h);
+  if (scheme) h = h.slice(scheme[0].length);
+  if (h.startsWith("//")) h = h.slice(2);
+  // Path, query and fragment.
+  for (let i = 0; i < h.length; i++) {
+    if (h[i] === "/" || h[i] === "?" || h[i] === "#") {
+      h = h.slice(0, i);
+      break;
+    }
+  }
+  // Userinfo.
+  h = h.slice(h.lastIndexOf("@") + 1);
+  // Port. A bracketed IPv6 literal keeps its brackets, as location.hostname does.
+  const isPort = (s: string) => /^\d*$/.test(s);
+  if (h.startsWith("[")) {
+    const close = h.indexOf("]");
+    if (close !== -1 && h[close + 1] === ":" && isPort(h.slice(close + 2))) {
+      h = h.slice(0, close + 1);
+    }
+  } else {
+    const colon = h.indexOf(":");
+    if (colon !== -1 && isPort(h.slice(colon + 1))) h = h.slice(0, colon);
+  }
+  // Trailing dots.
+  let end = h.length;
+  while (end > 0 && h[end - 1] === ".") end--;
+  return h.slice(0, end).trim();
 }
 
 function buildJsCloneDetector({ url, memo, hostname }: InstallerInput): Installer {

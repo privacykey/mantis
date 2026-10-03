@@ -87,7 +87,13 @@ it("names the target profile and base URL before the secret is stored", async ()
 
   await cloudflareSetServiceAuthCmd({ ...serviceAuth, profile: "prod" });
 
-  const announced = events.findIndex((e) => e.startsWith("stderr") && e.includes("prod") && e.includes(PROD));
+  // Whole-word comparison: the base URL must be printed exactly.
+  const announced = events.findIndex(
+    (e) =>
+      e.startsWith("stderr") &&
+      e.includes("prod") &&
+      e.split(/\s+/).some((word) => word === PROD),
+  );
   const stored = events.findIndex((e) => e === `set ${CF}:${PROD}`);
   expect(announced).toBeGreaterThanOrEqual(0);
   expect(stored).toBeGreaterThan(announced);
