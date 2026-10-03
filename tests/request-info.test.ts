@@ -3,6 +3,7 @@ import {
   capStoredRequestField,
   clientIpFromHeaders,
   isSecureRequest,
+  parseIpLiteral,
   snapshotHeaders,
 } from "@/lib/request-info";
 
@@ -140,6 +141,160 @@ describe("clientIpFromHeaders (X-Forwarded-For spoof resistance)", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// Whichever header wins, its value has to be an IP literal. A header the ingress
+// does not overwrite is client-controlled, and free text in it must never be
+// recorded as the hit's IP or become a limiter key.
+describe("clientIpFromHeaders (IP-literal validation)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
+
+  it("skips a non-IP value and falls through to the next header (unpinned)", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    for (const junk of [
+      "not-an-ip",
+      "<script>alert(1)</script>",
+      "unknown",
+      "999.1.1.1",
+      "1.2.3",
+      "1.2.3.4.5",
+      "12345::1::2",
+      "localhost",
+      "203.0.113.9 extra",
+    ]) {
+      expect(
+        clientIpFromHeaders(
+          get({
+            "cf-connecting-ip": junk,
+            "x-real-ip": junk,
+            "x-forwarded-for": "6.6.6.6, 203.0.113.9",
+          }),
+        ),
+        junk,
+      ).toBe("203.0.113.9");
+    }
+  });
+
+  it("returns null when no trusted header carries an IP literal", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    expect(
+      clientIpFromHeaders(
+        get({ "cf-connecting-ip": "evil\tvalue", "x-forwarded-for": "client, proxy" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for a non-IP value in the pinned header, never another header", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-real-ip");
+    expect(
+      clientIpFromHeaders(
+        get({ "x-real-ip": "garbage", "cf-connecting-ip": "6.6.6.6" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("does not look further left when the trusted XFF hop is not an IP", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-forwarded-for");
+    // The rightmost hop is what the proxy wrote; the leftmost is the client's.
+    expect(
+      clientIpFromHeaders(get({ "x-forwarded-for": "6.6.6.6, unknown" })),
+    ).toBeNull();
+  });
+
+  it("accepts IPv6 and normalises the decorations proxies add", () => {
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-forwarded-for");
+    const cases: Array<[string, string]> = [
+      ["2001:db8::1", "2001:db8::1"],
+      ["::1", "::1"],
+      ["::ffff:203.0.113.9", "::ffff:203.0.113.9"],
+      ["2001:db8:0:0:0:0:0:1", "2001:db8:0:0:0:0:0:1"],
+      ["203.0.113.9:4711", "203.0.113.9"],
+      ["[2001:db8::1]:4711", "2001:db8::1"],
+      ["[2001:db8::1]", "2001:db8::1"],
+    ];
+    for (const [value, expected] of cases) {
+      expect(clientIpFromHeaders(get({ "x-forwarded-for": value })), value).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("parseIpLiteral rejects everything that is not an address", () => {
+    for (const bad of [
+      "",
+      " ",
+      "1.2.3.4/24",
+      "01.2.3.4",
+      "1:2:3:4:5:6:7",
+      "1:2:3:4:5:6:7:8:9",
+      "::g",
+      "[::1",
+      "::1]",
+      "1.2.3.4:port",
+      "fe80::1%bad zone",
+      "example.com",
+    ]) {
+      expect(parseIpLiteral(bad), JSON.stringify(bad)).toBeNull();
+    }
+    expect(parseIpLiteral(" 198.51.100.7 ")).toBe("198.51.100.7");
+    expect(parseIpLiteral("fe80::1%eth0")).toBe("fe80::1%eth0");
+    expect(parseIpLiteral("1:2:3:4:5:6:7::")).toBe("1:2:3:4:5:6:7::");
+  });
+});
+
+// The unpinned ordered fallback is kept for compatibility, but it is only safe
+// behind an ingress that overwrites the first header in the list — say so once.
+describe("clientIpFromHeaders (unpinned trust warning)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  const get = (map: Record<string, string>) => (n: string) => map[n] ?? null;
+
+  async function freshModule() {
+    vi.resetModules();
+    return import("@/lib/request-info");
+  }
+
+  it("warns once in production when trust is on and no header is pinned", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mod = await freshModule();
+
+    expect(mod.clientIpFromHeaders(get({ "x-forwarded-for": "203.0.113.9" }))).toBe(
+      "203.0.113.9",
+    );
+    mod.clientIpFromHeaders(get({ "x-forwarded-for": "203.0.113.9" }));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0]?.[0]);
+    expect(message).toContain("TRUSTED_IP_HEADER");
+    expect(message).toContain("x-forwarded-for behind Tailscale");
+  });
+
+  it("stays quiet when the header is pinned, or outside production", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    vi.stubEnv("TRUSTED_IP_HEADER", "x-forwarded-for");
+    let mod = await freshModule();
+    mod.clientIpFromHeaders(get({ "x-forwarded-for": "203.0.113.9" }));
+
+    vi.unstubAllEnvs();
+    vi.stubEnv("TRUST_PROXY_HEADERS", "1");
+    mod = await freshModule();
+    mod.clientIpFromHeaders(get({ "x-forwarded-for": "203.0.113.9" }));
+
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

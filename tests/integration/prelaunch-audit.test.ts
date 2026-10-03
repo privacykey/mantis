@@ -137,7 +137,7 @@ describe("AUDIT-2 external_id claims by a non-owner are refused", () => {
     expect(text).not.toContain("victim laptop");
   });
 
-  it("an enrollment-scoped key that did not create the key gets the URL but not the memo or routing", async () => {
+  it("an enrollment-scoped key of the same fleet that did not create the key gets the URL but not the memo or routing", async () => {
     // Documented fleet flow (deploy/kandji): a re-imaged machine recovers its
     // trigger URL by serial under a rotated enroll key. Disclosure is limited
     // to what the device needs and the claim is audited as cross_key.
@@ -149,7 +149,7 @@ describe("AUDIT-2 external_id claims by a non-owner are refused", () => {
     await db
       .insert(notificationDestinations)
       .values({ keyId: victimKey.id, channel: "webhook", target: OWN_WEBHOOK });
-    const enroll = await seedApiKey({ scope: "enroll" });
+    const enroll = await seedApiKey({ scope: "enroll", ownerId: victim.row.id });
     const res = await createKey(
       buildJsonRequest("/api/keys", {
         method: "POST",

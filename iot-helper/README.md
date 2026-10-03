@@ -93,3 +93,16 @@ that cross midnight are supported, for example `{"start":"23:00","end":"06:00"}`
   retained in memory and retried even if that file rotates or disappears. This
   state is not durable across helper restarts; stopping/restarting the helper
   drops pending events and starts at the current end of each file again.
+- Log reading is bounded, so a burst of syslog from the LAN cannot exhaust the
+  helper's memory before a login line is alerted. Each watcher reads its log
+  in 256 KiB chunks and delivers matches as it goes; per poll it reads at most
+  about 32 MiB and turns at most 64 matching lines into events. Anything
+  beyond that stays in the file and is read on the next polls from exactly
+  where the last one stopped. Only the first 16 KiB of a line is matched and
+  sent; the rest of an over-long line is skipped. If a log outgrows 32 MiB per
+  poll for long, the watcher falls behind — and what it has not read yet is
+  lost when the file rotates — so point it at a log that receives only the
+  devices you care about, and rate-limit the syslog receiver.
+- Run the helper under a supervisor that restarts it (`restart: unless-stopped`
+  in Docker, `Restart=on-failure` in systemd, the Watchdog toggle for the Home
+  Assistant add-on). A stopped helper raises no alerts at all.

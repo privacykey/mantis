@@ -18,7 +18,9 @@ export type AuditEventType =
   | "destination.secret_revealed"
   | "wallet_config.saved"
   | "wallet_config.cleared"
-  | "monitor.reset";
+  | "monitor.reset"
+  /** The instance-wide (global) destination set was replaced in settings → notifications. */
+  | "global_destinations.replaced";
 
 export type AuditInput = {
   type: AuditEventType;

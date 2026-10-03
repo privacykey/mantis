@@ -5,14 +5,25 @@ name: Deploy to Fly.io
 # FLY_DEPLOY_ENABLED=true, so forks and unconfigured clones never try (and
 # never fail) a deploy.
 #
+# Only `main` is ever deployed. A manual run (workflow_dispatch) started from
+# any other branch or tag is skipped, so an unmerged branch cannot be built
+# and released to the production app.
+#
 # One-time setup:
 #   1. bash deploy/fly-launch.sh --app <name>   # creates the app + database
 #   2. fly tokens create deploy -a <name>       # scoped deploy token
-#   3. Repo → Settings → Secrets and variables → Actions:
-#        secret    FLY_API_TOKEN     = <the token from step 2>
-#        variable  FLY_APP           = <name>
+#   3. Repo → Settings → Environments → New environment: `production`
+#        Deployment branches and tags → Selected branches and tags → add `main`
+#        Environment secrets → FLY_API_TOKEN = <the token from step 2>
+#      Store the token ONLY there. A repository-level Actions secret is handed
+#      to a run on any branch; an environment secret is released only to runs
+#      that pass the environment's branch rule, and GitHub enforces that rule
+#      outside this file. If you created FLY_API_TOKEN as a repository secret
+#      earlier, delete it after adding the environment secret.
+#   4. Repo → Settings → Secrets and variables → Actions → Variables:
+#        variable  FLY_APP            = <name>
 #        variable  FLY_DEPLOY_ENABLED = true
-#   4. Commit the fly.toml that step 1 generated.
+#   5. Commit the fly.toml that step 1 generated.
 #
 # The deploy token is scoped to this one app — it cannot touch anything else
 # in your Fly organization.
@@ -34,32 +45,59 @@ jobs:
     name: fly deploy
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: vars.FLY_DEPLOY_ENABLED == 'true'
+    # The ref check covers every trigger, including workflow_dispatch (which
+    # can be started from any ref). It stops accidental and low-privilege
+    # branch deploys; the environment's deployment-branch rule (setup step 3)
+    # is what binds the token itself to main.
+    if: vars.FLY_DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Build exactly the main commit this run was started for.
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: preflight
+        # Repository variables reach the script through env, never ${{ }}
+        # interpolation into the script body.
+        env:
+          FLY_APP: ${{ vars.FLY_APP }}
         run: |
-          test -n "${{ vars.FLY_APP }}" || {
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "::error::refusing to deploy a ref other than main"; exit 1; }
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" || {
+            echo "::error::checked-out commit is not the commit this run was started for"; exit 1; }
+          test -n "$FLY_APP" || {
             echo "::error::repository variable FLY_APP is not set"; exit 1; }
+          # Same rule as deploy/fly-launch.sh: the name becomes <name>.fly.dev.
+          case "$FLY_APP" in
+            *[!a-z0-9-]*|-*|*-)
+              echo "::error::repository variable FLY_APP must be lowercase letters, digits and inner hyphens"; exit 1 ;;
+          esac
           test -f fly.toml || {
             echo "::error::fly.toml not committed — run deploy/fly-launch.sh and commit it"; exit 1; }
           # Deploying without this silently records ip = null on every hit.
           grep -q 'TRUST_PROXY_HEADERS' fly.toml || {
             echo "::error::fly.toml is missing TRUST_PROXY_HEADERS — copy the [env] block from deploy/fly.toml.example"; exit 1; }
+          # Trusting proxy headers without pinning the one Fly writes lets a
+          # client forge its recorded IP with a CF-Connecting-IP header.
+          grep -q 'TRUSTED_IP_HEADER' fly.toml || {
+            echo "::error::fly.toml sets TRUST_PROXY_HEADERS without TRUSTED_IP_HEADER — copy the [env] block from deploy/fly.toml.example"; exit 1; }
 
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
 
       - name: deploy
-        run: flyctl deploy --app "${{ vars.FLY_APP }}" --config fly.toml --remote-only
+        run: flyctl deploy --app "$FLY_APP" --config fly.toml --remote-only
         env:
+          FLY_APP: ${{ vars.FLY_APP }}
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
       - name: verify health
+        env:
+          FLY_APP: ${{ vars.FLY_APP }}
         run: |
-          url="https://${{ vars.FLY_APP }}.fly.dev/api/health"
+          url="https://${FLY_APP}.fly.dev/api/health"
           for i in $(seq 1 30); do
             body="$(curl -fsS --max-time 10 "$url" 2>/dev/null || true)"
             case "$body" in

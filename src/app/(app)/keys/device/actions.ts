@@ -1,8 +1,11 @@
 "use server";
 
 import { inArray } from "drizzle-orm";
+import { headers } from "next/headers";
 import { db } from "@/db/client";
 import { keys } from "@/db/schema";
+import { audit } from "@/lib/audit";
+import { clientIpFromHeaders } from "@/lib/request-info";
 import {
   deviceExternalId,
   deviceMemo,
@@ -66,6 +69,11 @@ export async function deviceCreateAction(
     createdByApiKeyId: session.id,
   }));
 
+  const h = await headers();
+  const ip = clientIpFromHeaders((n) => h.get(n));
+  // A refused claim is audited after the transaction rolls back.
+  let denied: { keyId: string; externalId: string } | null = null;
+
   // Ownership validation shares the insert transaction: a conflict on any
   // vector must roll back the newly inserted vectors in the same suite.
   try {
@@ -81,6 +89,7 @@ export async function deviceCreateAction(
       return chosen.map((vector, i) => {
         const row = byExternalId.get(externalIds[i]!);
         if (!row || row.createdByApiKeyId !== session.id) {
+          if (row) denied = { keyId: row.id, externalId: externalIds[i]! };
           throw new Error(`"${device}" is already in use by another account on this instance — pick a different device name.`);
         }
         return {
@@ -89,8 +98,38 @@ export async function deviceCreateAction(
         };
       });
     });
+    for (const m of minted) {
+      if (!m.created) continue;
+      await audit({
+        type: "key.created",
+        actorApiKeyId: session.id,
+        actorLabel: session.name,
+        subjectKind: "key",
+        subjectId: m.id,
+        metadata: {
+          memo: m.memo,
+          external_id: externalIds[chosen.findIndex((v) => v.slug === m.slug)],
+          destination_count: 0,
+          destination_channels: [],
+          via: "dashboard",
+        },
+        ip,
+      });
+    }
     return { device, os, minted };
   } catch (err) {
+    const refused = denied as { keyId: string; externalId: string } | null;
+    if (refused) {
+      await audit({
+        type: "key.claimed",
+        actorApiKeyId: session.id,
+        actorLabel: session.name,
+        subjectKind: "key",
+        subjectId: refused.keyId,
+        metadata: { external_id: refused.externalId, denied: true, via: "dashboard" },
+        ip,
+      });
+    }
     return {
       error: err instanceof Error ? err.message : "failed to create keys",
       os,

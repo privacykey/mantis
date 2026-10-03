@@ -11,7 +11,7 @@ import {
   getProfile,
   resolveAuth,
 } from "../lib/config.js";
-import { c, emit } from "../lib/out.js";
+import { c, emit, safeText } from "../lib/out.js";
 import type { GlobalOpts } from "../lib/runner.js";
 import { CLI_VERSION } from "../version.js";
 
@@ -192,8 +192,9 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             : check.status === "warn"
             ? c.yellow("warn")
             : c.red("fail");
-        process.stdout.write(`${label.padEnd(9)} ${c.bold(check.name)}: ${check.detail}\n`);
-        if (check.hint) process.stdout.write(`          ${c.dim(check.hint)}\n`);
+        // Details quote the server (health fields, error strings) and config.
+        process.stdout.write(`${label.padEnd(9)} ${c.bold(safeText(check.name))}: ${safeText(check.detail)}\n`);
+        if (check.hint) process.stdout.write(`          ${c.dim(safeText(check.hint))}\n`);
       }
     },
     { ok, checks },
@@ -217,24 +218,10 @@ async function checkPublicSplit(
   const api = await fetchPublic(publicOrigin, "/api/keys", timeoutMs);
   addPublicOnlyCheck(add, "public /api", api);
 
-  const status = await fetchPublic(publicOrigin, "/status/nonexistent", timeoutMs);
-  if (status.ok && status.status === 404) {
-    add("ok", "public status", "status route is reachable on the public host");
-  } else if (status.ok) {
-    add(
-      "warn",
-      "public status",
-      `/status/nonexistent returned HTTP ${status.status}`,
-      "Public trigger/status routes may not be served from this host",
-    );
-  } else {
-    add(
-      "warn",
-      "public status",
-      status.message,
-      "Verify the public trigger hostname is reachable",
-    );
-  }
+  // No probe of the public status route: a status URL only answers with the
+  // per-key capability the server puts in monitor_status_url, and anything
+  // the CLI could build itself gets the same 404 as a blocked path. Whether
+  // the public host is reachable at all is already shown by the probes above.
 }
 
 function addPublicOnlyCheck(

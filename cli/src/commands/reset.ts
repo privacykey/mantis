@@ -1,10 +1,10 @@
 import { c, emit } from "../lib/out.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export async function resetCmd(id: string, opts: GlobalOpts): Promise<void> {
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, id);
+    const fullId = await resolveKeyRefForAction(client, id);
     const key = await client.resetMonitor(fullId);
     emit(
       () => {

@@ -1,4 +1,5 @@
 import type { NotificationChannel } from "@/db/schema";
+import { isSelfTarget, SELF_DESTINATION } from "./self-target";
 
 const SLACK_RE = /^https:\/\/hooks\.slack\.com\/services\//;
 const DISCORD_RE =
@@ -56,10 +57,13 @@ export function validateDestination(
         if (u.protocol !== "https:" && u.protocol !== "http:") {
           return { ok: false, error: "webhook URL must be http(s)" };
         }
-        return { ok: true };
       } catch {
         return { ok: false, error: "not a valid URL" };
       }
+      // A webhook aimed at our own trigger URL would record every delivery
+      // as a new hit and alert on it again.
+      if (isSelfTarget(target)) return { ok: false, error: SELF_DESTINATION };
+      return { ok: true };
 
     case "slack":
       if (!SLACK_RE.test(target)) {
@@ -110,6 +114,7 @@ export function validateDestination(
           error: "Home Assistant URL must end with /api/webhook/<id>",
         };
       }
+      if (isSelfTarget(target)) return { ok: false, error: SELF_DESTINATION };
       return { ok: true };
     }
 

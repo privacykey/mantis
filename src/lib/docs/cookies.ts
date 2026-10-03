@@ -9,9 +9,12 @@ import { type DocOptions, splitUrl } from "./util";
  * entirely. A jar is therefore both the thing an intruder grabs first and the
  * thing they are most likely to *replay* rather than merely read.
  *
- * The bait entry is scoped to the trigger URL's exact path, so a replay against
- * the canary registers as a hit. Everything else in the file is decoration that
- * makes the jar look lived-in — a one-line cookies.txt is not a cookie jar.
+ * Be clear about the trigger: this is discovery bait. Loading the jar into a
+ * browser or tool issues no request, and the hit does not depend on the cookie
+ * being sent — it comes when someone requests the URL the bait entry points at,
+ * which is why that entry is scoped to the trigger URL's host and exact path.
+ * Everything else in the file is decoration that makes the jar look lived-in —
+ * a one-line cookies.txt is not a cookie jar.
  */
 export function generateCookies(opts: DocOptions): Promise<Buffer> {
   const { host, path, secure } = splitUrl(opts.url);
@@ -26,7 +29,7 @@ export function generateCookies(opts: DocOptions): Promise<Buffer> {
     [".okta.com", "TRUE", "/", "TRUE", String(soon), "sid", "102Xk9fQpLmVn3RtYuIoP4aSdF"],
     [".github.com", "TRUE", "/", "TRUE", String(later), "user_session", "8Kd0pQzRxV2mNbC7hJlA3sWe"],
     ["vpn.internal.example.com", "FALSE", "/", "TRUE", String(soon), "SESSIONID", "b41f9c2e77a04e1d8f3b6a90c2d5e814"],
-    // The bait: path-scoped to the canary so a replayed jar hits it exactly.
+    // The bait: scoped to the canary's host + path, i.e. the trigger URL.
     [host, "FALSE", path, secure ? "TRUE" : "FALSE", String(later), "mantis_session", "s%3A9f2c1b7e4a86d035.7Qk1YxZ0"],
   ];
 

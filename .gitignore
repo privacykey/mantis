@@ -16,3 +16,6 @@ next-env.d.ts
 # Scratch files bun leaves in the CWD when `bun build --compile` is
 # interrupted or fails partway (cli/scripts/build-bin.sh).
 *.bun-build
+# Default output of `mantis backup` (a credential bundle). Keep it out of
+# version control.
+mantis-backup.json

@@ -66,12 +66,17 @@ it("uses configured Access credentials for monitor status on the private API hos
   const cfg = await sharedProfiles();
   const { MantisClient } = await import("../src/lib/api.js");
   const requests: RequestInit[] = [];
-  vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) => {
+  const paths: string[] = [];
+  vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
     requests.push(init);
-    return Response.json({ status: "ok" });
+    paths.push(url.pathname);
+    return Response.json({ state: "ok", tripped_at: null, mode: "latch", window_seconds: 300 });
   });
   const client = new MantisClient(await cfg.resolveAuth({ profile: "prod" }));
-  expect(await client.fetchStatus("pub")).toEqual({ status: "ok" });
+  const keyId = "00000000-0000-4000-8000-000000000001";
+  expect(await client.fetchStatus(keyId)).toEqual({ status: "ok" });
+  // Owner-gated API route by key id; never the public /status/ path.
+  expect(paths).toEqual([`/api/keys/${keyId}/monitor`]);
   expect(requests[0]?.headers).toMatchObject({ "CF-Access-Client-Id": "client.access", "CF-Access-Client-Secret": "fake-secret" });
 });
 

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { log } from "@/lib/log";
+import { consumeRateLimit } from "@/lib/rate-limit";
 
 /**
  * Background retention sweep, idempotent. Each category opts in via env:
@@ -8,7 +9,13 @@ import { log } from "@/lib/log";
  *   MANTIS_NOTIFICATION_RETENTION_DAYS — settled notifications only
  *   MANTIS_AUDIT_RETENTION_DAYS        — append-only audit_events
  *   MANTIS_SESSION_RETENTION_DAYS      — terminated sessions only
- * Unset = retain forever. Runs inside the notify worker.
+ * Unset = retain forever.
+ *
+ * Two drivers, both roughly hourly: the notify worker loop calls
+ * runRetentionSweep() directly, and — for deployments where that worker is off
+ * (Vercel, RUN_NOTIFY_WORKER=0) — each authorised /api/cron/notifications call
+ * goes through runRetentionSweepIfDue(). With the worker off and no cron
+ * scheduled, nothing is ever deleted (instrumentation.ts warns at boot).
  *
  * The rate_limits sweep below is the exception: it always runs and is not
  * env-gated. That table is internal operational state (one row per limiter
@@ -20,6 +27,34 @@ import { log } from "@/lib/log";
 // TTL for spent rate_limits rows. All limiter windows are ~1 minute, so a day
 // is comfortably past any live window — a row this old cannot be in use.
 const RATE_LIMIT_RETENTION_DAYS = 1;
+
+// Cron-driven sweeps: at most one per interval across every instance. The cron
+// endpoint is typically hit once a minute, and the rate_limits / terminated-
+// sessions deletes are not index-backed, so an unthrottled sweep would rescan
+// those tables on every call.
+const CRON_SWEEP_INTERVAL_MS = 60 * 60_000; // hourly, same as the worker
+const CRON_SWEEP_SLOT_KEY = "retention-sweep";
+let nextCronSweepCheckAt = 0;
+
+/**
+ * Runs the sweep if none has been claimed in the last hour, else returns null.
+ * The hourly slot is claimed in the shared rate_limits table so short-lived
+ * serverless instances and multiple replicas agree on it; the in-process
+ * timestamp only spares this instance the UPSERT until that slot has run out.
+ * A sweep that fails is retried at the next slot, as in the worker loop.
+ */
+export async function runRetentionSweepIfDue(): Promise<Awaited<
+  ReturnType<typeof runRetentionSweep>
+> | null> {
+  if (Date.now() < nextCronSweepCheckAt) return null;
+  const slot = await consumeRateLimit(CRON_SWEEP_SLOT_KEY, {
+    limit: 1,
+    windowMs: CRON_SWEEP_INTERVAL_MS,
+  });
+  nextCronSweepCheckAt = slot.resetAt;
+  if (!slot.ok) return null;
+  return runRetentionSweep();
+}
 
 function readPositiveInt(name: string): number | null {
   const raw = process.env[name];

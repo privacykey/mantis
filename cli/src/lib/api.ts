@@ -1,6 +1,6 @@
 import { buildCloudflareHeaders } from "./cloudflare.js";
 import type { ResolvedAuth } from "./config.js";
-import { c, isDebug } from "./out.js";
+import { c, isDebug, safeText } from "./out.js";
 
 export type MonitorMode = "off" | "latch" | "window";
 export type MonitorState = "off" | "ok" | "tripped";
@@ -50,6 +50,16 @@ export type Key = {
 
 export type KeyWithDestinationResults = Omit<Key, "destinations"> & {
   destinations: DestinationWithActivation[];
+  /**
+   * Set when the server returned an EXISTING key for the request's
+   * external_id instead of creating one.
+   */
+  reused?: boolean;
+  /**
+   * On a reused key: whether the calling credential is the one that created
+   * it. Absent on servers that predate the field.
+   */
+  created_by_caller?: boolean;
 };
 
 export type KeyWithMonitorState = Key & {
@@ -292,7 +302,9 @@ export class MantisClient {
           ? (body as { error: string }).error
           : null) ??
         `HTTP ${res.status}`;
-      throw new ApiError(res.status, body, msg);
+      // The message ends up in terminal output and can quote request input
+      // back, so it is made inert here, once, for every caller.
+      throw new ApiError(res.status, body, safeText(msg));
     }
     return body as T;
   }
@@ -325,7 +337,13 @@ export class MantisClient {
     });
   }
 
-  listKeys(query: { limit?: number; cursor?: string } = {}): Promise<Page<Key>> {
+  /**
+   * `mine: 1` restricts the listing to keys this credential created — admins
+   * included, whose listing otherwise spans every creator on the instance.
+   */
+  listKeys(
+    query: { limit?: number; cursor?: string; mine?: 1 } = {},
+  ): Promise<Page<Key>> {
     return this.req<Page<Key>>("/api/keys", { query });
   }
 
@@ -374,28 +392,30 @@ export class MantisClient {
     );
   }
 
-  fetchStatus(
-    publicId: string,
+  /**
+   * A key's monitor state, read through the owner-gated API by key id.
+   *
+   * The public status URL (`monitor_status_url`) exists for uptime tools and
+   * carries a capability the CLI neither needs nor can derive, so the CLI
+   * never builds or calls a /status/ URL itself. A key with monitoring off
+   * rejects with a 404 ApiError, like a key that does not exist.
+   */
+  async fetchStatus(
+    id: string,
   ): Promise<{ status: "ok" | "tripped"; tripped_at?: string }> {
-    const url = new URL(
-      `/status/${encodeURIComponent(publicId)}`,
-      this.auth.baseUrl,
-    );
-    return this.fetchWithPolicy(url, { headers: this.authHeaders(null) }).then(async (res) => {
-      if (res.status === 404) {
-        throw new ApiError(404, null, "not monitored");
-      }
-      const body = await res.json();
-      const recognized = body && typeof body === "object" && "status" in body && (body.status === "ok" || body.status === "tripped");
-      // A tripped monitor deliberately returns 503 for uptime tools.
-      if (!res.ok && !(res.status === 503 && recognized && body.status === "tripped")) {
-        throw new ApiError(res.status, body, `monitor status failed (HTTP ${res.status})`);
-      }
-      if (!recognized) {
-        throw new Error("monitor status response was not recognized");
-      }
-      return body as { status: "ok" | "tripped"; tripped_at?: string };
-    });
+    const body = await this.req<{
+      state?: unknown;
+      tripped_at?: unknown;
+    } | null>(`/api/keys/${encodeURIComponent(id)}/monitor`);
+    const state = body && typeof body === "object" ? body.state : undefined;
+    if (state === "off") throw new ApiError(404, null, "not monitored");
+    if (state === "ok") return { status: "ok" };
+    if (state === "tripped") {
+      return typeof body!.tripped_at === "string"
+        ? { status: "tripped", tripped_at: body!.tripped_at }
+        : { status: "tripped" };
+    }
+    throw new Error("monitor state response was not recognized");
   }
 
   listHits(

@@ -14,6 +14,13 @@ compatibility_date = "2026-05-01"
 # Example value:
 #   hooks.slack.com,discord.com,*.example.com
 
+# A *.workers.dev hostname cannot be protected by zone WAF / rate-limiting
+# rules. Once your edge URLs use the custom domain below, uncomment this so
+# the unprotected hostname stops reaching the worker (URLs still minted for
+# *.workers.dev stop working — swap their host first). See deploy.md.
+# Keep it ABOVE [[routes]]: in TOML a key after a table belongs to that table.
+# workers_dev = false
+
 # Custom domain (optional). Replace with your own zone, or delete this section
 # and use the default *.workers.dev URL.
 # [[routes]]

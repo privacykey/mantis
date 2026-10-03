@@ -1,4 +1,4 @@
-import { c, emit, fail, isJsonMode, isQuiet } from "../lib/out.js";
+import { c, emit, fail, isJsonMode, isQuiet, safeText } from "../lib/out.js";
 import {
   installPlugin,
   parseInstallSpec,
@@ -43,15 +43,15 @@ export async function pluginAddCmd(spec: string): Promise<void> {
     emit(
       () => {
         const w = process.stderr.write.bind(process.stderr);
-        w(`${c.green("✓")} installed ${c.bold(loaded.manifest.name)}@${entry.version}\n`);
+        w(`${c.green("✓")} installed ${c.bold(safeText(loaded.manifest.name))}@${safeText(entry.version)}\n`);
         if (entry.resolvedSha) {
-          w(`  ${c.dim("commit:")}  ${entry.resolvedSha}\n`);
+          w(`  ${c.dim("commit:")}  ${safeText(entry.resolvedSha)}\n`);
         }
         if (loaded.installers.length > 0) {
-          w(`  ${c.dim("installers:")} ${loaded.installers.map((i) => i.type).join(", ")}\n`);
+          w(`  ${c.dim("installers:")} ${loaded.installers.map((i) => safeText(i.type)).join(", ")}\n`);
         }
         if (loaded.formats.length > 0) {
-          w(`  ${c.dim("formats:")}    ${loaded.formats.map((f) => f.id).join(", ")}\n`);
+          w(`  ${c.dim("formats:")}    ${loaded.formats.map((f) => safeText(f.id)).join(", ")}\n`);
         }
       },
       {
@@ -97,19 +97,19 @@ export async function pluginListCmd(): Promise<void> {
       }
       const w = process.stdout.write.bind(process.stdout);
       for (const r of rows) {
-        w(`${c.bold(r.name)}@${r.version}\n`);
-        w(`  ${c.dim("source:")}  ${r.source}\n`);
+        w(`${c.bold(safeText(r.name))}@${safeText(r.version)}\n`);
+        w(`  ${c.dim("source:")}  ${safeText(r.source)}\n`);
         if (r.resolved_sha) {
-          w(`  ${c.dim("commit:")}  ${r.resolved_sha.slice(0, 12)}\n`);
+          w(`  ${c.dim("commit:")}  ${safeText(r.resolved_sha).slice(0, 12)}\n`);
         }
         if (r.installers.length > 0) {
-          w(`  ${c.dim("installers:")} ${r.installers.join(", ")}\n`);
+          w(`  ${c.dim("installers:")} ${r.installers.map(safeText).join(", ")}\n`);
         }
         if (r.formats.length > 0) {
-          w(`  ${c.dim("formats:")}    ${r.formats.join(", ")}\n`);
+          w(`  ${c.dim("formats:")}    ${r.formats.map(safeText).join(", ")}\n`);
         }
         if (r.load_error) {
-          w(`  ${c.red("load error:")} ${r.load_error}\n`);
+          w(`  ${c.red("load error:")} ${safeText(r.load_error)}\n`);
         }
         w("\n");
       }
@@ -130,7 +130,7 @@ export async function pluginRemoveCmd(name: string): Promise<void> {
   }
   emit(
     () => {
-      process.stderr.write(`${c.green("✓")} removed ${c.bold(name)}\n`);
+      process.stderr.write(`${c.green("✓")} removed ${c.bold(safeText(name))}\n`);
     },
     { name, removed: true },
   );
@@ -173,9 +173,9 @@ export async function pluginUpgradeCmd(name: string): Promise<void> {
       () => {
         const w = process.stderr.write.bind(process.stderr);
         if (moved) {
-          w(`${c.green("✓")} ${c.bold(name)}: ${c.dim(entry.resolvedSha.slice(0, 12) || "?")} → ${newEntry.resolvedSha.slice(0, 12) || "?"}\n`);
+          w(`${c.green("✓")} ${c.bold(safeText(name))}: ${c.dim(safeText(entry.resolvedSha).slice(0, 12) || "?")} → ${safeText(newEntry.resolvedSha).slice(0, 12) || "?"}\n`);
         } else {
-          w(`${c.dim("·")} ${name} already at latest (${newEntry.resolvedSha.slice(0, 12) || "?"})\n`);
+          w(`${c.dim("·")} ${safeText(name)} already at latest (${safeText(newEntry.resolvedSha).slice(0, 12) || "?"})\n`);
         }
       },
       {

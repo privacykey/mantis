@@ -33,6 +33,76 @@ export const c = {
   cyan: wrap(36),
 };
 
+// Text written by another principal (memos, destination targets, user agents,
+// headers, host context, server error strings) or read from the filesystem
+// (file names, matched lines) must reach the terminal inert. C0 controls
+// (ESC, CR, LF, BS, BEL, ...), DEL, C1 controls, the Unicode line/paragraph
+// separators and the bidi embedding/override/isolate controls become visible
+// \uXXXX escapes, so the only control sequences a terminal ever sees are the
+// SGR codes c.*() emits.
+const UNSAFE_CLASS = String.raw`\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069`;
+const UNSAFE_RE = new RegExp(`[${UNSAFE_CLASS}]`, "g");
+const UNSAFE_BLOCK_RE = new RegExp(`\\r\\n|[${UNSAFE_CLASS}]`, "g");
+const UNSAFE_KEEP_SGR_RE = new RegExp(`\\x1b\\[[0-9;]*m|[${UNSAFE_CLASS}]`, "g");
+const JSON_RAW_RE = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+function visibleEscape(ch: string): string {
+  return `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`;
+}
+
+/**
+ * Make one API- or filesystem-sourced value safe to print on a single line.
+ * Apply it BEFORE c.*() and truncate(), so the escapes are what gets colored
+ * and measured.
+ */
+export function safeText(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(UNSAFE_RE, visibleEscape);
+}
+
+/**
+ * safeText() for multi-line text (error messages, installer snippets): tabs
+ * and LF / CRLF line endings survive; everything else, a bare CR included, is
+ * escaped.
+ */
+export function safeBlock(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(UNSAFE_BLOCK_RE, (m) =>
+    m === "\n" || m === "\t" || m === "\r\n" ? m : visibleEscape(m),
+  );
+}
+
+/**
+ * A payload destined for stdout (an installer snippet): byte-exact when
+ * stdout is redirected to a file or pipe, escaped when it is a terminal.
+ */
+export function stdoutPayload(text: string): string {
+  return process.stdout.isTTY ? safeBlock(text) : text;
+}
+
+// Last line of defense for strings that are already colored: keeps the SGR
+// codes we emit and escapes every other control byte. Callers still run
+// safeText() first — an SGR sequence smuggled in by untrusted text would
+// survive this pass.
+function keepOnlySgr(s: string): string {
+  return s.replace(UNSAFE_KEEP_SGR_RE, (m) =>
+    m.length > 1 ? m : visibleEscape(m),
+  );
+}
+
+/**
+ * JSON.stringify for stdout/stderr. JSON already escapes C0 controls; DEL, C1
+ * (U+0080-U+009F) and the line-separator / bidi controls are left raw, and a
+ * terminal showing the stream would act on them. Escaping them keeps the
+ * output valid JSON that parses to the same value.
+ */
+export function jsonText(value: unknown, indent?: number): string {
+  return (JSON.stringify(value, null, indent) ?? "null").replace(
+    JSON_RAW_RE,
+    visibleEscape,
+  );
+}
+
 // Unicode glyphs (… · ← 🔐) turn to mojibake on dumb/legacy terminals. Default
 // to on (Node is UTF-8 on modern systems); fall back to ASCII only on a clear
 // signal: explicit opt-out (MANTIS_ASCII), TERM=dumb, or a non-UTF-8 locale.
@@ -116,7 +186,7 @@ export function isDebug(): boolean {
 
 export function emit(human: () => void, jsonValue?: unknown): void {
   if (isJsonMode()) {
-    process.stdout.write(JSON.stringify(jsonValue ?? null) + "\n");
+    process.stdout.write(jsonText(jsonValue ?? null) + "\n");
     return;
   }
   if (quiet) return;
@@ -125,9 +195,10 @@ export function emit(human: () => void, jsonValue?: unknown): void {
 
 export function fail(message: string, code = 1): never {
   if (isJsonMode()) {
-    process.stderr.write(JSON.stringify({ error: message }) + "\n");
+    process.stderr.write(jsonText({ error: message }) + "\n");
   } else {
-    process.stderr.write(`${c.red("error:")} ${message}\n`);
+    // Messages routinely embed server or filesystem text (API errors, paths).
+    process.stderr.write(`${c.red("error:")} ${safeBlock(message)}\n`);
   }
   process.exit(code);
 }
@@ -175,7 +246,7 @@ function fitColumns(widths: number[]): void {
 
 function formatCell(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return c.dim("-");
-  return String(v);
+  return keepOnlySgr(String(v));
 }
 
 function padRight(s: string, width: number): string {
@@ -185,7 +256,9 @@ function padRight(s: string, width: number): string {
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function stripAnsi(s: string): string {
-  // intentionally narrow: only strips the CSI sequences we emit
+  // intentionally narrow: only strips the CSI sequences we emit. Any other
+  // control byte is counted as visible, which is what it becomes once
+  // truncate() / table() have escaped it.
   return s.replace(ANSI_RE, "");
 }
 
@@ -199,9 +272,14 @@ export function visibleLength(s: string): number {
  * terminal can't render unicode). ANSI color codes are preserved and a reset
  * is re-appended if truncation cut inside a colored span, so colored table
  * cells stay balanced. Replaces the per-command truncate() helpers.
+ *
+ * Control bytes other than our own color codes never pass through: they are
+ * escaped first (whether or not the string needs cutting), so they are
+ * measured and cut as the visible text they become.
  */
 export function truncate(s: string, max: number): string {
   if (max <= 0) return "";
+  s = keepOnlySgr(s);
   if (visibleLength(s) <= max) return s;
   const ell = unicodeEnabled() ? "…" : "...";
   const budget = Math.max(0, max - ell.length);
@@ -231,7 +309,8 @@ export function truncate(s: string, max: number): string {
 export function formatTime(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  // An unparseable timestamp is echoed back, so it has to be inert.
+  if (Number.isNaN(d.getTime())) return safeText(iso);
   const now = Date.now();
   const diffMs = now - d.getTime();
   const abs = Math.abs(diffMs);
@@ -252,5 +331,5 @@ export function formatTime(iso: string | null): string {
       return diffMs < 0 ? `in ${n}${suffix}` : `${n}${suffix}`;
     }
   }
-  return iso;
+  return safeText(iso);
 }

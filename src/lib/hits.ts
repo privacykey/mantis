@@ -68,6 +68,15 @@ export async function decideHitRecording(
     : { record: false, isDuplicate: true };
 }
 
+function refererOrigin(referer: string | null | undefined): string | null {
+  if (!referer) return null;
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return null;
+  }
+}
+
 /** A primary hit and its delivery jobs commit together, before acknowledging it. */
 export async function recordHitWithNotifications(
   key: Key,
@@ -78,6 +87,12 @@ export async function recordHitWithNotifications(
     // notification in the dedupe window. Recheck lifecycle after taking the lock.
     const [current] = await tx.select().from(keys).where(eq(keys.id, key.id)).for("update");
     if (!current || current.disabledAt || (current.expiresAt && current.expiresAt.getTime() <= Date.now())) return null;
+    // Hits from the operator's own declared site are expected page views, not
+    // detections. Recording them would anchor the dedupe window and use up the
+    // duplicate cap, masking the clone-site hit the key exists to catch. The
+    // Referer is client-supplied, but a match only drops that request's own hit.
+    const origin = refererOrigin(values.referer);
+    if (origin && current.selfOrigins.includes(origin)) return null;
     const decision = await decideHitRecording(current.id, current.dedupeWindowSeconds, tx);
     if (!decision.record) return null;
     const [hit] = await tx.insert(hits).values({

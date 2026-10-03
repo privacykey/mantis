@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { c, emit } from "../lib/out.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { c, emit, safeText } from "../lib/out.js";
+import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
+import { systemExe } from "../lib/system-exe.js";
 
 export type OpenOpts = GlobalOpts & {
   dashboard?: boolean;
@@ -20,14 +21,14 @@ export async function openCmd(
       target = new URL("/keys", client.baseUrl).toString();
       description = "dashboard";
     } else {
-      const fullId = await resolveKeyRef(client, idOrUndefined);
+      const fullId = await resolveKeyRefForAction(client, idOrUndefined);
       const key = await client.getKey(fullId);
       if (opts.trigger) {
         target = key.url;
-        description = `trigger URL for ${key.memo}`;
+        description = `trigger URL for ${safeText(key.memo)}`;
       } else {
         target = new URL(`/keys/${fullId}`, client.baseUrl).toString();
-        description = `dashboard page for ${key.memo}`;
+        description = `dashboard page for ${safeText(key.memo)}`;
       }
     }
 
@@ -36,11 +37,11 @@ export async function openCmd(
       () => {
         if (launched) {
           process.stderr.write(
-            `${c.green("✓")} opened ${description}: ${c.cyan(target)}\n`,
+            `${c.green("✓")} opened ${description}: ${c.cyan(safeText(target))}\n`,
           );
         } else {
           process.stderr.write(
-            `${c.yellow("⚠")} couldn't launch a browser; visit manually:\n  ${c.cyan(target)}\n`,
+            `${c.yellow("⚠")} couldn't launch a browser; visit manually:\n  ${c.cyan(safeText(target))}\n`,
           );
         }
       },
@@ -57,7 +58,8 @@ function launchBrowser(rawUrl: string): boolean {
   // of the argv quoting Node applied. The fix:
   //   1) refuse anything that isn't a parseable http/https URL
   //   2) on Windows, use `rundll32.exe url.dll,FileProtocolHandler` so we
-  //      never go through cmd.exe at all.
+  //      never go through cmd.exe at all — launched by absolute path (see
+  //      systemExe) so a rundll32.exe in the working directory can't stand in.
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -76,7 +78,7 @@ function launchBrowser(rawUrl: string): boolean {
     cmd = "open";
     args = [url];
   } else if (platform === "win32") {
-    cmd = "rundll32.exe";
+    cmd = systemExe("rundll32.exe");
     args = ["url.dll,FileProtocolHandler", url];
   } else {
     cmd = "xdg-open";

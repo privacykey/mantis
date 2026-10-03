@@ -25,7 +25,12 @@ vi.mock("@/lib/rate-limit", async (importOriginal) => ({
 vi.mock("@/lib/log", () => ({ log: { warn: fixtures.warn, error: fixtures.error } }));
 vi.mock("@/lib/monitor", () => ({ computeMonitorState: fixtures.monitor }));
 
-import { requireApiKey, requireApiKeyOrSession, type AuthResult } from "@/lib/auth";
+import {
+  clearAuthFailureCache,
+  requireApiKey,
+  requireApiKeyOrSession,
+  type AuthResult,
+} from "@/lib/auth";
 import { hashApiKey } from "@/lib/api-keys";
 import { GET as monitorStatus } from "@/app/api/keys/[id]/monitor/route";
 
@@ -72,6 +77,7 @@ async function expectUnavailable(response: Response) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  clearAuthFailureCache();
   fixtures.lookup.mockResolvedValue([apiKey]);
   fixtures.touch.mockResolvedValue(undefined);
   fixtures.session.mockResolvedValue(null);
@@ -118,6 +124,17 @@ describe.each(authenticators)("%s dependency recovery", (_name, authenticate) =>
     const response = failedResponse(await authenticate(request()));
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBeTruthy();
+  });
+
+  it("stops writing to the limiter once the failure window is exhausted", async () => {
+    fixtures.lookup.mockResolvedValue([]);
+    fixtures.limiter.mockResolvedValue({ ok: false, remaining: 0, resetAt: Date.now() + 60_000 });
+    for (let i = 0; i < 3; i++) {
+      const response = failedResponse(await authenticate(request()));
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBeTruthy();
+    }
+    expect(fixtures.limiter).toHaveBeenCalledOnce();
   });
 
   it("authenticates valid credentials even if the optional last-used touch fails", async () => {

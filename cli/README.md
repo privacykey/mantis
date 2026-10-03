@@ -46,8 +46,8 @@ Credentials are stored in:
 | `init` | Guided first-time setup: asks server or edge, then runs login / key setup and offers to create a first key |
 | `login [--url URL] [--key-stdin] [--no-switch]` | Prompt + store API key in keychain (under `--profile <name>` if given); `--key-stdin` reads the key from stdin |
 | `logout [--all]` | Remove stored credentials for the current profile (or all profiles) |
-| `backup [-o <file>] [--only <name>]` | Export profiles + plugin manifest into a passphrase-encrypted JSON bundle (scrypt + AES-256-GCM). Safe to commit to a private git-crypt repo. |
-| `restore <file> [--overwrite] [--skip-plugins]` | Decrypt a backup bundle and restore profiles into config + keychain. Re-installs plugins via `mantis plugin add <source>@<ref>`. |
+| `backup [-o <file>] [--only <name>]` | Export profiles + plugin manifest into a passphrase-encrypted JSON bundle (scrypt + AES-256-GCM). It holds full API keys: keep it in a vault or a private repo, never a public one. Warns when written inside a git work tree. |
+| `restore <file> [--overwrite] [--skip-plugins]` | Decrypt a backup bundle and restore profiles into config + keychain. Existing profiles, and credentials already stored for the same server, are kept unless `--overwrite`. Re-installs plugins via `mantis plugin add <source>@<ref>`. |
 | `whoami` | Show current profile: server, key prefix, Cloudflare state, linked edge worker |
 | `doctor [--public-url URL]` | Check CLI config, server health, auth, Cloudflare, and split public/private hosts |
 | `detect [--scope user\|system\|all] [--deep]` | Offline self-audit for Mantis-style installer artifacts on this machine |
@@ -61,12 +61,12 @@ Credentials are stored in:
 | `bulk-create --csv <file> --out <file>` / `import-csv` | Create many keys from a CSV and write an output CSV with generated URLs |
 | `list` / `ls` | List keys (most recent first). Supports `--id-only`, `--url-only`, and `--output wide` |
 | `show <id> [--copy] [--qr-terminal]` | Show one key; optionally copy URL / render QR in terminal. Supports `--id-only`, `--url-only` |
-| `last` | Print the id of the most-recently-created key (also: pass `last` as `<id>` to any command) |
+| `last` | Print the id of the key you created most recently with the API key in use (also: pass `last` as `<id>` to any command) |
 | `open [id] [--dashboard] [--trigger]` | Open the key's dashboard page in the browser (no id → dashboard root) |
 | `hits <id> [-v] [--since DUR] [--ip IP] [--bot-only] [--follow]` | List hits with filters; `--follow` streams live |
 | `watch [id] [-i N]` | Poll and print new hits; omit `id` for all keys (default: all keys, 5s) |
 | `disable <id...>` / `enable <id...>` | Toggle one or more keys without losing history |
-| `rm <id...> [--yes]` | Delete one or more keys + cascade hits (`mantis list --id-only \| xargs mantis rm -y`) |
+| `rm <id...> [--yes]` | Delete one or more keys + cascade hits (`mantis list --id-only \| xargs mantis rm -y`). The prompt lists the exact ids (and memos) that will be deleted |
 | `download <id> [--docx \| --xlsx \| --pptx \| --pdf \| --folder \| --nfc-label \| --apple-wallet \| --svg \| --html \| --md \| --eml \| --ics \| --vcf] <path>` | Download artifacts for an existing key |
 | `install <id> --type <type> [--out <path>]` | Generate a host-event or web-embed installer snippet |
 | `monitor <id> --mode <off\|latch\|window> [--window <s>]` | Configure the Uptime Kuma status endpoint for a key |
@@ -75,7 +75,7 @@ Credentials are stored in:
 | `dest list <id>` | List a key's notification destinations |
 | `dest add <id> <channel> <target>` | Add a notification destination (`dest` aliases `destinations`) |
 | `dest rm <id> <dest-id>` | Remove one destination from a key |
-| `dest test <id> [--yes]` | Fire a synthetic hit and report which destinations succeeded |
+| `dest test <id> [--yes]` | Fire a test hit and report which destinations succeeded. The hit is recorded like a real one: it trips an enabled monitor (latch mode until `mantis reset`) and anchors the key's dedupe window |
 | `dest rotate-secret <id> <dest-id> [--yes]` | Rotate a webhook destination's HMAC signing secret (the new secret is shown once) |
 | `audit log [-n <n>] [--since DUR] [--type TYPE] [--actor ID]` | List append-only audit events, most recent first (admin keys only) |
 | `completion <bash\|zsh\|fish>` | Print shell completion script |
@@ -83,7 +83,7 @@ Credentials are stored in:
 | `cloudflare login [--app URL]` | Auth via Cloudflare Access SSO (opens browser; needs local `cloudflared`) |
 | `cloudflare logout` | Clear cached Cloudflare Access credentials |
 | `cloudflare set-service-auth [--client-id … --client-secret …]` | Configure headless Cloudflare Access Service Auth |
-| `cloudflare status` | Show Cloudflare Access auth state for the current server |
+| `cloudflare status` | Show Cloudflare Access auth state for the profile's server (`--profile <name>` selects the profile for all four `cloudflare` subcommands) |
 | `edge deploy [-- <wrangler args>]` | Deploy the mantis-edge Worker (wraps `wrangler deploy`), capture its `*.workers.dev` URL, and print the next steps; `--set-key` stores the AES key locally afterward, `--dir <path>` points at the worker directory |
 | `edge mint [...opts]` | Mint a stateless edge URL. Run bare on a TTY for the interactive wizard; pass `--install <type>` to chain straight into installer generation |
 | `edge install <url> --type <type>` | Generate an installer snippet (shell, plist, systemd unit, CSS, JS, NFC, Home Assistant, …) for a previously-minted edge URL |
@@ -215,7 +215,7 @@ Every command that takes `<id>` accepts:
 
 - a full UUID (`abc12345-c721-457a-a591-e368e5ebc926`)
 - a hex prefix of ≥4 chars (`abc12345`); resolution errors if ambiguous
-- the literal token `last` — the most-recently-created key
+- the literal token `last` — the key **you** created most recently, i.e. the newest key created with the API key the CLI is using
 
 So once you've run `mantis new "test"` you can immediately:
 
@@ -227,6 +227,10 @@ mantis dest add last webhook https://hooks.example.com/foo
 mantis dest test last --yes
 mantis status last
 ```
+
+`last` never means "the newest key on the server": other credentials (a second API key, fleet enrollment keys, the dashboard) can create keys at any time, and an admin key can see all of them. It is resolved with `GET /api/keys?mine=1`, so keys created in the dashboard or with a different API key don't count — pass their id or prefix instead. (A server that predates `mine=1` ignores it and still answers with the newest key overall; upgrade the server before relying on `last` there.)
+
+`last` and prefixes are looked up again on every run, so commands that change, fire or export a key (`install`, `download`, `dest add/rm/test/rotate-secret`, `disable`/`enable`, `rm`, `monitor`, `reset`, `open`, `show --copy`) first print which key the reference resolved to — id and memo — on stderr (`last → <id> (<memo>)`; a JSON line under `--json`). `rm` resolves every reference once, shows the exact ids in its prompt, and deletes exactly those.
 
 The id prefix path costs one extra `listKeys` call when the input isn't a full UUID; full UUIDs skip the lookup.
 
@@ -368,7 +372,7 @@ Existing pre-profile configs (flat `{baseUrl, keyPrefix, …}`) migrate automati
 
 ## Backup & restore (migrating to a new machine)
 
-The config file is plain JSON and trivially `scp`-able, but the secrets that actually make a CLI install work — API keys, Cloudflare Service-Auth credentials, edge AES keys — live in the OS keychain and can't be copied that way. `mantis backup` and `mantis restore` cover the full set: a passphrase-encrypted JSON bundle containing every profile's secrets plus the plugin manifest, suitable for committing to a private git-crypt repo or stashing in a password manager.
+The config file is plain JSON and trivially `scp`-able, but the secrets that actually make a CLI install work — API keys, Cloudflare Service-Auth credentials, edge AES keys — live in the OS keychain and can't be copied that way. `mantis backup` and `mantis restore` cover the full set: a passphrase-encrypted JSON bundle containing every profile's secrets plus the plugin manifest, meant for a password manager or a private, encrypted repository — never a public one (see **On safety** below).
 
 ```bash
 # On the old machine:
@@ -407,14 +411,16 @@ edge-only setup and keep a separate vaulted copy of any omitted key.
 | `mantis backup --only <name>` | Back up just one profile and its linked edge worker. Independent edge workers are omitted; the command reports this scope. Default includes all profiles and discoverable edge worker keys. |
 | `mantis backup --passphrase-stdin` | Read passphrase from stdin (for scripts piping a vault into the CLI). |
 | `mantis backup --passphrase-env <VAR>` | Read passphrase from the named env var. |
-| `mantis restore <file>` | Decrypt + restore. By default, existing profiles on the target machine are kept; bundle entries with the same name are skipped. |
-| `mantis restore --overwrite` | Replace existing profiles + keychain entries when names collide. |
+| `mantis restore <file>` | Decrypt + restore. By default, what already exists on the target machine is kept: a bundle profile is skipped when a profile of the same name exists, **or** when its server already has a different API key / Service-Auth credential stored here (those keychain entries are keyed by server URL and shared by every profile for that server). Skipped profiles are listed. |
+| `mantis restore --overwrite` | Replace existing profiles and the stored credentials for their servers with the bundle's. |
 | `mantis restore --skip-plugins` | Don't re-install plugins (faster restore; you can run `mantis plugin add` manually later). |
 | `mantis restore --passphrase-stdin` / `--passphrase-env <VAR>` | Same as on backup. |
 
 **Inline `--passphrase <value>` is intentionally not offered** — would leak into shell history and process listings. Use one of the stdin / env-var forms for automation.
 
-**On safety:** the bundle is safe to commit to a private repo or store in a vault provided you can keep the passphrase out of the same blast radius. If the file leaks but the passphrase doesn't, contents stay confidential. If the passphrase leaks, the contents are recoverable. Rotate API keys (`mantis login` re-runs) if you suspect either has been compromised.
+**On safety:** the bundle holds full API keys, and the passphrase is its only protection. Keep it in a vault or a private, access-controlled repository, with the passphrase out of the same blast radius — never in a public or widely shared repo. Anyone who gets a copy of the file can try passphrases against it offline, as often as they like, so a leaked bundle is only as strong as the passphrase you chose: use a long, random one. If the passphrase leaks, the contents are recoverable. Rotate API keys (`mantis login` re-runs) if you suspect either has been compromised.
+
+The default output path is `./mantis-backup.json`, so `mantis backup` warns when the file lands inside a git work tree. Add `mantis-backup.json` to that repository's `.gitignore`, or write the bundle elsewhere with `--out`.
 
 ## Local state reference
 
@@ -573,6 +579,13 @@ mantis list   # CLI injects CF-Access-Client-Id + CF-Access-Client-Secret on eve
 
 All Cloudflare auth state lives on your machine. The mantis server is unaware of Cloudflare — Access validates at the edge before the request ever reaches mantis.
 
+Access settings are stored on a profile, and the credential is then sent with every request to that profile's server. All four `mantis cloudflare` subcommands therefore act on the profile named by the global `--profile <name>` (or `MANTIS_PROFILE`), falling back to the current profile; a named profile that doesn't exist is an error, and `--base-url` is rejected (there is no profile behind it). `login` and `set-service-auth` print the target profile and its server URL before anything is stored:
+
+```bash
+mantis --profile prod cloudflare set-service-auth --client-id <id>.access --client-secret-stdin
+# target: profile prod → https://mantis.example.com
+```
+
 For Tailscale split deployments, use the private Serve hostname for `mantis login`
 and dashboard/API commands. `mantis open` now uses that private base URL for
 dashboard links, while `mantis open --trigger` still opens the public trigger
@@ -611,6 +624,21 @@ line; the "following…/watching…" banner stays on stderr):
 mantis hits last --follow --json | jq -c '{at: .occurred_at, ip}'
 mantis watch --json | jq -c .
 ```
+
+Each hit is emitted once, in the order it became visible — which is not always
+`occurred_at` order. A hit is timestamped when the server starts recording it
+but only shows up once that write commits, so a slightly older hit can arrive
+after a newer one. Both live tails re-read a 60-second window behind the newest
+hit on every poll (dropping repeats by id) so such late arrivals are not
+skipped; sort on `occurred_at` downstream if you need strict time order.
+
+In human/table output, text that comes from the server or from scanned files
+(memos, destination targets, user agents, headers, host context, file names) is
+shown with control characters as visible `\uXXXX` escapes, so nothing a key's
+creator or a caller typed can move the cursor, retitle the terminal or rewrite
+earlier lines. `--json` output is unchanged apart from C1 and bidi control
+characters being written as JSON `\uXXXX` escapes (they parse to the same
+values).
 
 ### Exit codes
 

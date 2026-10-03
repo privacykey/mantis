@@ -48,6 +48,8 @@ import {
   type ColorMode,
   fail,
   isDebug,
+  safeBlock,
+  safeText,
   setColorMode,
   setDebug,
   setJsonMode,
@@ -159,7 +161,7 @@ Then explore: ${c.dim("mantis --help")}
     if (!hasProfile && hasEdge) {
       const workerList = edgeWorkers
         .slice(0, 3)
-        .map((w) => `  ${c.cyan(w)}`)
+        .map((w) => `  ${c.cyan(safeText(w))}`)
         .join("\n");
       const more =
         edgeWorkers.length > 3
@@ -189,11 +191,11 @@ ${c.dim("If you also want a stateful server (dashboard, hit history, multi-desti
     const profileName = stored!.currentProfile;
     const entry = stored!.profiles[profileName];
     process.stdout.write(
-      `${c.dim("Logged in as")} ${c.bold(profileName)} ${c.dim("→")} ${entry?.baseUrl ?? "?"}\n`,
+      `${c.dim("Logged in as")} ${c.bold(safeText(profileName))} ${c.dim("→")} ${safeText(entry?.baseUrl ?? "?")}\n`,
     );
     if (hasEdge) {
       process.stdout.write(
-        `${c.dim("Edge keys:  ")} ${edgeWorkers.length === 1 ? c.cyan(edgeWorkers[0]!) : `${edgeWorkers.length} workers`}\n`,
+        `${c.dim("Edge keys:  ")} ${edgeWorkers.length === 1 ? c.cyan(safeText(edgeWorkers[0]!)) : `${edgeWorkers.length} workers`}\n`,
       );
     }
     process.stdout.write(
@@ -253,7 +255,7 @@ program
 program
   .command("backup")
   .description(
-    "export all profiles + plugin manifest into a passphrase-encrypted JSON file (safe to commit to a private git-crypt repo)",
+    "export all profiles + plugin manifest into a passphrase-encrypted JSON file (it holds full API keys: keep it in a vault or a private repo, never a public one)",
   )
   .option(
     "-o, --out <file>",
@@ -295,12 +297,12 @@ program
 program
   .command("restore")
   .description(
-    "restore profiles + plugins from a `mantis backup` file. Existing profiles are skipped unless --overwrite.",
+    "restore profiles + plugins from a `mantis backup` file. Existing profiles, and credentials already stored for the same server, are kept unless --overwrite.",
   )
   .argument("<file>", "path to a backup bundle produced by `mantis backup`")
   .option(
     "--overwrite",
-    "replace profiles that already exist on this machine (otherwise they're skipped)",
+    "replace profiles and stored server credentials that already exist on this machine (otherwise they're skipped)",
   )
   .option(
     "--skip-plugins",
@@ -423,6 +425,15 @@ const cloudflare = program
   .command("cloudflare")
   .description("manage Cloudflare Access auth for the mantis API");
 
+// Cloudflare Access settings belong to a stored profile, so these subcommands
+// act on the profile named by the global --profile (else MANTIS_PROFILE, else
+// the current one). --base-url has no profile behind it; the commands refuse
+// it rather than quietly configuring a different server.
+function cloudflareTarget(): { profile?: string; baseUrl?: string } {
+  const globals = program.opts<GlobalRaw>();
+  return { profile: globals.profile, baseUrl: globals.baseUrl };
+}
+
 cloudflare
   .command("login")
   .description("authenticate the CLI against Cloudflare Access (opens browser)")
@@ -431,14 +442,14 @@ cloudflare
     "Cloudflare Access application URL (defaults to your mantis base URL)",
   )
   .action(async (opts) => {
-    await cloudflareLoginCmd(opts);
+    await cloudflareLoginCmd({ ...opts, ...cloudflareTarget() });
   });
 
 cloudflare
   .command("logout")
   .description("clear cached Cloudflare Access credentials")
   .action(async () => {
-    await cloudflareLogoutCmd();
+    await cloudflareLogoutCmd(cloudflareTarget());
   });
 
 cloudflare
@@ -453,14 +464,14 @@ cloudflare
     "read the client secret from stdin instead of prompting (leak-free for CI)",
   )
   .action(async (opts) => {
-    await cloudflareSetServiceAuthCmd(opts);
+    await cloudflareSetServiceAuthCmd({ ...opts, ...cloudflareTarget() });
   });
 
 cloudflare
   .command("status")
   .description("show Cloudflare Access auth state")
   .action(async () => {
-    await cloudflareStatusCmd();
+    await cloudflareStatusCmd(cloudflareTarget());
   });
 
 const device = program
@@ -937,7 +948,7 @@ program
 
 program
   .command("last")
-  .description("print the id of the most-recently-created key. Or pass `last` as the <id> argument on any command.")
+  .description("print the id of the key you created most recently with this API key. Or pass `last` as the <id> argument on any command.")
   .action(async (_opts, cmd: Command) => {
     const { lastCmd } = await import("./commands/last.js");
     await lastCmd(withGlobals(cmd.parent!, {}));
@@ -1087,7 +1098,7 @@ destinations
 
 destinations
   .command("test")
-  .description("fire a synthetic hit on the key URL and report which destinations succeeded")
+  .description("fire a test hit on the key URL (recorded as a real hit) and report which destinations succeeded")
   .argument("<key-id>", "key UUID, prefix, or `last`")
   .option("-y, --yes", "skip the confirmation prompt")
   .action(async (keyId: string, opts: { yes?: boolean }, cmd: Command) => {
@@ -1303,7 +1314,7 @@ ${c.bold("Common commands, grouped:")}
     edge keygen, edge set-key, edge mint, edge delete-key
 
 ${c.bold("Tips:")}
-  - Any <id> accepts a prefix (≥4 hex) or the literal ${c.cyan("last")} (most recent key).
+  - Any <id> accepts a prefix (≥4 hex) or the literal ${c.cyan("last")} (the key this API key created most recently).
     Example: ${c.dim("mantis hits last --follow")}
   - Use ${c.cyan("--profile <name>")} (or env ${c.cyan("MANTIS_PROFILE")}) to target a non-current profile.
   - Use ${c.cyan("--output json|table|wide")}, ${c.cyan("--quiet")}, ${c.cyan("--no-headers")}, or id/url-only flags for scripts.
@@ -1319,7 +1330,7 @@ program
 
 program.parseAsync(process.argv).catch((err) => {
   if (isDebug() && err instanceof Error && err.stack) {
-    process.stderr.write(c.dim(err.stack + "\n"));
+    process.stderr.write(c.dim(safeBlock(err.stack) + "\n"));
   }
   fail(err instanceof Error ? err.message : String(err));
 });

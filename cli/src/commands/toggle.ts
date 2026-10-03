@@ -1,5 +1,5 @@
-import { c, emit, isJsonMode } from "../lib/out.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { c, emit, isJsonMode, safeText } from "../lib/out.js";
+import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import type { MutationResult } from "./rm.js";
 
@@ -32,18 +32,18 @@ async function toggle(
     let failed = 0;
     for (const ref of ids) {
       try {
-        const fullId = await resolveKeyRef(client, ref);
+        const fullId = await resolveKeyRefForAction(client, ref);
         const t = await client.patchKey(fullId, { disabled });
         results.push({ ref, id: t.id, ok: true });
         if (!isJsonMode()) {
-          process.stderr.write(`${tick} ${action} ${t.id}\n`);
+          process.stderr.write(`${tick} ${action} ${safeText(t.id)}\n`);
         }
       } catch (err) {
         failed += 1;
         const error = err instanceof Error ? err.message : String(err);
         results.push({ ref, ok: false, error });
         if (!isJsonMode()) {
-          process.stderr.write(`${c.red("✗")} ${ref}: ${error}\n`);
+          process.stderr.write(`${c.red("✗")} ${safeText(ref)}: ${safeText(error)}\n`);
         }
       }
     }

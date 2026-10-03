@@ -1,4 +1,4 @@
-import { type DocOptions } from "./util";
+import { type DocOptions, lineSafeUri } from "./util";
 
 /**
  * vCard 4.0 contact with PHOTO;VALUE=URI pointing at the trigger URL.
@@ -12,10 +12,12 @@ import { type DocOptions } from "./util";
  */
 export function generateVcf(opts: DocOptions): Promise<Buffer> {
   const name = vcfEscape(opts.title);
-  // Line-safe the URL too: a \r/\n or special char in the operator/key URL
-  // would otherwise break out of the PHOTO/URL property value and inject a
-  // property line, the same way an unescaped note could.
-  const url = vcfEscape(opts.url);
+  // Line-safe the URL too: a \r/\n in the operator/key URL would otherwise
+  // break out of the PHOTO/URL property value and inject a property line, the
+  // same way an unescaped note could. URI values are not TEXT, though — TEXT
+  // escaping would put backslashes into a URL containing `;`, `,` or `\` —
+  // hence percent-encoding instead.
+  const url = lineSafeUri(opts.url);
   const note = vcfEscape(opts.body?.join("\\n") ?? opts.title);
 
   const vcf = [

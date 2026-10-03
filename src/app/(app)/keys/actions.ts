@@ -18,6 +18,11 @@ import { clientIpFromHeaders } from "@/lib/request-info";
 import { getSessionApiKey } from "@/lib/session";
 import { validateDestination } from "@/lib/notify/channels";
 import { replaceDestinations, type DestinationInput } from "@/lib/notify/destinations";
+import {
+  hasControlChars,
+  MAX_SELF_ORIGINS,
+  normalizeSelfOrigin,
+} from "@/lib/validators";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -112,17 +117,76 @@ export async function setDestinationsAction(
     const channel = String(formData.get(`channel_${i}`) ?? "");
     const target = String(formData.get(`target_${i}`) ?? "").trim();
     if (!target) return { error: `destination ${i + 1}: target is required` };
+    if (hasControlChars(target)) return { error: `destination ${i + 1}: target must not contain control characters` };
     if (!channels.has(channel)) return { error: `destination ${i + 1}: invalid channel` };
     const checked = validateDestination(channel as DestinationInput["channel"], target);
     if (!checked.ok) return { error: `destination ${i + 1}: ${checked.error}` };
     inputs.push({ channel: channel as DestinationInput["channel"], target });
   }
 
+  let results;
   try {
-    await replaceDestinations(key, inputs);
+    results = await replaceDestinations(key, inputs);
   } catch {
     return { error: "could not save destinations; your changes are still in the form" };
   }
+  await audit({
+    type: "destinations.replaced",
+    actorApiKeyId: session.id,
+    actorLabel: session.name,
+    subjectKind: "key",
+    subjectId: id,
+    metadata: {
+      count: results.length,
+      channels: results.map((r) => r.destination.channel),
+      via: "dashboard",
+    },
+    ip: await actorIp(),
+  });
+  revalidatePath(`/keys/${id}`);
+  return { saved: true };
+}
+
+export type SelfOriginsActionState = { error?: string; saved?: boolean };
+
+export async function setSelfOriginsAction(
+  _prev: SelfOriginsActionState,
+  formData: FormData,
+): Promise<SelfOriginsActionState> {
+  const session = await requireSession();
+  const id = String(formData.get("id") ?? "");
+  const key = await loadOwned(session, id);
+  if (!key) return { error: "key not found" };
+
+  const lines = String(formData.get("self_origins") ?? "")
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  if (lines.length > MAX_SELF_ORIGINS) {
+    return { error: `use at most ${MAX_SELF_ORIGINS} origins` };
+  }
+  const origins: string[] = [];
+  for (const line of lines) {
+    const origin = normalizeSelfOrigin(line);
+    if (!origin) {
+      return { error: `not a site origin (expected something like https://www.example.com): ${line.slice(0, 80)}` };
+    }
+    if (!origins.includes(origin)) origins.push(origin);
+  }
+
+  try {
+    await db.update(keys).set({ selfOrigins: origins }).where(eq(keys.id, id));
+  } catch {
+    return { error: "could not save origins; your changes are still in the form" };
+  }
+  await audit({
+    type: "key.updated",
+    actorApiKeyId: session.id,
+    actorLabel: session.name,
+    subjectKind: "key",
+    subjectId: id,
+    metadata: { fields: ["selfOrigins"], via: "dashboard" },
+    ip: await actorIp(),
+  });
   revalidatePath(`/keys/${id}`);
   return { saved: true };
 }
@@ -169,6 +233,20 @@ export async function setMonitorAction(
   } catch {
     return { error: "could not save monitor settings; your changes are still in the form" };
   }
+
+  await audit({
+    type: "key.updated",
+    actorApiKeyId: session.id,
+    actorLabel: session.name,
+    subjectKind: "key",
+    subjectId: id,
+    metadata: {
+      fields: ["monitorMode", "monitorWindowSeconds"],
+      monitor_mode: modeRaw,
+      via: "dashboard",
+    },
+    ip: await actorIp(),
+  });
 
   revalidatePath(`/keys/${id}`);
   return { saved: true };

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { apiKeys } from "@/db/schema";
@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
       prefix: apiKeys.prefix,
       is_admin: apiKeys.isAdmin,
       scope: apiKeys.scope,
+      owner_api_key_id: apiKeys.ownerApiKeyId,
       created_at: apiKeys.createdAt,
       last_used_at: apiKeys.lastUsedAt,
       revoked_at: apiKeys.revokedAt,
@@ -89,6 +90,37 @@ export async function POST(req: NextRequest) {
 
   const minted = mintApiKey();
   const scope = parsed.data.scope ?? "full";
+
+  // An enroll key enrolls devices for one fleet: its owner's. It defaults to
+  // the minting admin; pass owner_api_key_id to bind it to the (non-admin)
+  // full key that provisions and reads that fleet's canaries.
+  let ownerApiKeyId: string | null = null;
+  if (scope === "enroll") {
+    ownerApiKeyId = parsed.data.owner_api_key_id ?? auth.key.id;
+    if (ownerApiKeyId !== auth.key.id) {
+      const [owner] = await db
+        .select({ id: apiKeys.id })
+        .from(apiKeys)
+        .where(
+          and(
+            eq(apiKeys.id, ownerApiKeyId),
+            eq(apiKeys.scope, "full"),
+            isNull(apiKeys.revokedAt),
+          ),
+        )
+        .limit(1);
+      if (!owner) {
+        return NextResponse.json(
+          {
+            error: "validation_error",
+            message: "owner_api_key_id must be an active full-scope API key",
+          },
+          { status: 422 },
+        );
+      }
+    }
+  }
+
   const [row] = await db
     .insert(apiKeys)
     .values({
@@ -97,6 +129,7 @@ export async function POST(req: NextRequest) {
       hash: minted.hash,
       isAdmin: wantsAdmin,
       scope,
+      ownerApiKeyId,
     })
     .returning({
       id: apiKeys.id,
@@ -104,6 +137,7 @@ export async function POST(req: NextRequest) {
       prefix: apiKeys.prefix,
       is_admin: apiKeys.isAdmin,
       scope: apiKeys.scope,
+      owner_api_key_id: apiKeys.ownerApiKeyId,
       created_at: apiKeys.createdAt,
     });
 
@@ -119,6 +153,7 @@ export async function POST(req: NextRequest) {
         prefix: row.prefix,
         is_admin: wantsAdmin,
         scope,
+        ...(ownerApiKeyId ? { owner_api_key_id: ownerApiKeyId } : {}),
       },
       ip: extractIp(req),
     });

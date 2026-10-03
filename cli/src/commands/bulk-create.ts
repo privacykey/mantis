@@ -8,7 +8,15 @@ import type {
   MantisClient,
   NotificationChannel,
 } from "../lib/api.js";
-import { c, emit, ExitCode, fail, isJsonMode, isQuiet } from "../lib/out.js";
+import {
+  c,
+  emit,
+  ExitCode,
+  fail,
+  isJsonMode,
+  isQuiet,
+  safeBlock,
+} from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import { ALL_CHANNELS } from "../lib/channels.js";
 
@@ -161,7 +169,10 @@ export async function bulkCreateCmd(opts: BulkCreateOpts): Promise<void> {
       if (journalError !== undefined) {
         // If even the recovery destination failed, retain the full completed
         // mappings in the command log as the last available recovery surface.
-        process.stderr.write("Completed mappings (CSV):\n" + writeCsv(loaded.outputHeaders, results.filter((r) => r.created).map((r) => r.row)));
+        // Byte-exact when stderr is captured; on a terminal the cells (which
+        // come from the input CSV) are shown with control characters escaped.
+        const mappings = writeCsv(loaded.outputHeaders, results.filter((r) => r.created).map((r) => r.row));
+        process.stderr.write("Completed mappings (CSV):\n" + (process.stderr.isTTY ? safeBlock(mappings) : mappings));
         throw new Error(`stopped because recovery CSV could not be saved. Confirmed mappings are printed above; do not re-run the original CSV. ${String(journalError)}`);
       }
       try {

@@ -1,5 +1,5 @@
 import type { AuditEvent } from "../lib/api.js";
-import { c, emit, formatTime, table } from "../lib/out.js";
+import { c, emit, formatTime, safeText, table } from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type AuditOpts = GlobalOpts & {
@@ -33,15 +33,18 @@ export async function auditLogCmd(opts: AuditOpts): Promise<void> {
           );
           return;
         }
+        // Actor labels are API-key names chosen by their creators, and the IP
+        // is whatever the request presented.
         const rows = page.data.map((e) => [
           formatTime(e.occurred_at),
-          c.cyan(e.event_type),
-          e.actor_label ??
-            (e.actor_api_key_id
-              ? e.actor_api_key_id.slice(0, 8)
-              : c.dim("system")),
+          c.cyan(safeText(e.event_type)),
+          e.actor_label != null
+            ? safeText(e.actor_label)
+            : e.actor_api_key_id
+              ? safeText(e.actor_api_key_id).slice(0, 8)
+              : c.dim("system"),
           formatSubject(e),
-          e.ip ?? "",
+          safeText(e.ip),
         ]);
         process.stdout.write(
           table(["when", "event", "actor", "subject", "ip"], rows) + "\n",
@@ -61,8 +64,8 @@ export async function auditLogCmd(opts: AuditOpts): Promise<void> {
 
 function formatSubject(e: AuditEvent): string {
   if (!e.subject_kind && !e.subject_id) return "";
-  const id = e.subject_id ? e.subject_id.slice(0, 8) : "";
-  return `${e.subject_kind ?? ""}${id ? " " + id : ""}`;
+  const id = e.subject_id ? safeText(e.subject_id).slice(0, 8) : "";
+  return `${safeText(e.subject_kind)}${id ? " " + id : ""}`;
 }
 
 function parseSince(raw: string | undefined): number | null {

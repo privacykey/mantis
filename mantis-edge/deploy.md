@@ -7,7 +7,9 @@ webhook allowlisting, local dev, and verification.
 ## Cloudflare auth
 
 Wrangler needs to authenticate against a Cloudflare account that has Workers
-enabled (the free tier is fine).
+enabled. The Free plan is enough to try it out; read
+[Request quota, rate limiting and a heartbeat](#request-quota-rate-limiting-and-a-heartbeat)
+before relying on it for real alerts.
 
 - **Interactive (laptop):** run `npx wrangler login` once. The first wrangler
   command opens a browser to authorize; the token is cached locally afterwards.
@@ -51,6 +53,62 @@ npx wrangler deploy   # routes in wrangler.toml take effect on deploy
 Point `mantis edge set-key` (and any minted URLs) at the custom domain once the
 route is live. Editing routes is a `wrangler.toml` change, so it requires a
 redeploy — unlike secrets, which take effect on the next request.
+
+## Request quota, rate limiting and a heartbeat
+
+The worker is reachable by anyone who knows its hostname, and the hostname is
+in every edge URL. Two things follow.
+
+**Workers Free has a daily request cap.** At the time of writing it is 100,000
+requests per day for the whole account, reset at 00:00 UTC (see
+[Cloudflare's limits](https://developers.cloudflare.com/workers/platform/limits/)).
+Every request counts, including junk the worker answers with `404`. When the
+cap is reached Cloudflare stops invoking the worker until the reset, so every
+edge canary on the account goes silent — with no alert and no worker log line.
+Workers Paid has no daily cap: a flood becomes billed requests instead of an
+outage, so enable usage notifications in the Cloudflare dashboard.
+
+**`*.workers.dev` cannot be put behind zone rules.** WAF custom rules and
+rate-limiting rules belong to a zone, and the default hostname is not in one.
+To get them:
+
+1. Add the `[[routes]]` block above for a hostname on a zone you control, and
+   deploy.
+2. In that zone, add a rate-limiting rule for the hostname (Security → WAF →
+   Rate limiting rules) — for example, block an IP that makes more than a few
+   dozen requests in 10 seconds — and a custom rule that blocks any request
+   whose path does not start with `/c/`. Requests blocked there never reach
+   the worker.
+3. Re-point your URLs: the sealed blob does not depend on the hostname, so an
+   existing URL keeps working with the host swapped for the custom domain.
+   Update `mantis edge set-key` and every installed URL.
+4. Then set `workers_dev = false` in `wrangler.toml` and deploy again.
+   Otherwise the unprotected `*.workers.dev` hostname still reaches the same
+   worker (and the same quota). URLs that still use it stop working at this
+   point — which is why step 3 comes first.
+
+A per-IP rule does not stop a distributed flood, and a random `/c/<blob>`
+cannot be told apart from a real URL without the key, so treat this as raising
+the cost, not as a guarantee.
+
+**Monitor it from outside.** Nothing in the worker can report that the worker
+is not running. Mint one edge URL whose webhook is a dead-man's-switch monitor
+(a healthchecks.io check, an Uptime Kuma push monitor, …), and have cron or an
+uptime service request it every few minutes:
+
+```bash
+mantis edge mint \
+  --worker https://mantis-edge.example.com \
+  --webhook https://hc-ping.com/<your-check-uuid> \
+  --response-kind empty \
+  --memo "edge heartbeat"
+# then, from a machine outside Cloudflare:
+#   */5 * * * *  curl -fsS -m 10 -o /dev/null "<the minted URL>"
+```
+
+The monitor alarms when the pings stop arriving — quota exhausted, a broken
+deploy, a rotated `MANTIS_EDGE_KEY`. If you set
+`MANTIS_EDGE_WEBHOOK_ALLOWLIST`, include the monitor's host.
 
 ## Webhook allowlisting
 
