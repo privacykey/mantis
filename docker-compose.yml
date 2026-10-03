@@ -76,6 +76,23 @@ services:
       PUBLIC_ONLY_HOSTS: ${PUBLIC_ONLY_HOSTS:-}
       PUBLIC_ONLY_ALLOW_HEALTH: ${PUBLIC_ONLY_ALLOW_HEALTH:-0}
       PUBLIC_ONLY_ALLOW_INBOX: ${PUBLIC_ONLY_ALLOW_INBOX:-0}
+      # Client-IP attribution stays OFF until you set TRUST_PROXY_HEADERS=1 in
+      # .env (do that only behind one of the tunnel profiles below or your own
+      # reverse proxy). This pins which header is believed once it is on.
+      # Without a pin mantis tries CF-Connecting-IP first, and neither
+      # Tailscale serve/Funnel nor a plain reverse proxy strips an inbound
+      # copy — so any caller could forge its recorded IP (and dodge the per-IP
+      # limiters) with one request header. X-Forwarded-For is the header the
+      # ingress itself writes in both tunnel profiles: tailscaled replaces it
+      # with the connecting address, and Cloudflare appends the visitor as the
+      # rightmost hop, which is the one mantis reads. Override in .env for a
+      # proxy that writes a different header (e.g. TRUSTED_IP_HEADER=x-real-ip,
+      # or cf-connecting-ip behind Cloudflare if you prefer its single value).
+      TRUSTED_IP_HEADER: ${TRUSTED_IP_HEADER:-x-forwarded-for}
+      # env_file above would otherwise copy the tunnel credentials into the app
+      # container, which never uses them. Only the sidecars below receive them.
+      TS_AUTHKEY: ""
+      CLOUDFLARE_TUNNEL_TOKEN: ""
       SMTP_URL: ${SMTP_URL:-}
       SMTP_FROM: ${SMTP_FROM:-}
       BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
@@ -100,7 +117,18 @@ services:
   # Enables: docker compose --profile tailscale up
   # Requires: TS_AUTHKEY env var (from https://login.tailscale.com/admin/settings/keys)
   # Result:   mantis reachable at https://<TS_HOSTNAME>.<your-tailnet>.ts.net
-  #           Funnel (public exposure) opt-in via Tailscale admin → DNS → HTTPS + Funnel
+  # Funnel:   docker/tailscale/serve.json already sets AllowFunnel for this
+  #           node, so the ONLY remaining gate is your tailnet policy. As soon
+  #           as the policy grants this node the `funnel` attribute (and HTTPS
+  #           certificates are on), the WHOLE app — triggers, /login, the
+  #           dashboard and /api/* — is reachable from the internet. That is
+  #           the documented single-host posture (every management route still
+  #           needs an API key or session). To keep the dashboard tailnet-only,
+  #           delete the AllowFunnel block from serve.json, or use the
+  #           tailscale-split profile below.
+  # Client IPs: set TRUST_PROXY_HEADERS=1 in .env; the header is already
+  #           pinned to the X-Forwarded-For that tailscaled writes (see
+  #           TRUSTED_IP_HEADER above).
   tailscale:
     image: tailscale/tailscale:stable@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     profiles: ["tailscale"]
@@ -131,6 +159,25 @@ services:
   #           public triggers/status/wallet at https://<TS_PUBLIC_HOSTNAME>.<tailnet>.ts.net
   # Set PUBLIC_BASE_URL + PUBLIC_ONLY_HOSTS to the public hostname, and
   # DASHBOARD_HOSTS to the private hostname.
+  #
+  # Both sidecars proxy to the same mantis container, and tailscaled forwards
+  # the caller's Host header unchanged — so the Host-based gate cannot, alone,
+  # tell a Funnel caller that sends `Host: <private name>` from a real tailnet
+  # request. The split is therefore enforced at the ingress as well: the
+  # Funnel node's docker/tailscale/serve-public.json proxies ONLY the public
+  # path prefixes (/c, /status, /api/wallet) and tailscaled answers 404 for
+  # everything else, whatever Host is sent. Keep that file in step with the
+  # server (tests/tailscale-serve-config.test.ts checks the defaults):
+  #   - MANTIS_PUBLIC_PATH=/t  → add a handler next to "/c" (keep "/c"):
+  #       "/t": { "Proxy": "http://mantis:3000/t" }
+  #     The path is repeated in the Proxy target on purpose: tailscaled strips
+  #     the mount point before proxying, and the target path puts it back.
+  #   - PUBLIC_ONLY_ALLOW_HEALTH=1 → add "/api/health" the same way.
+  #   - PUBLIC_ONLY_ALLOW_INBOX=1  → add "/inbox" and "/api/inbox".
+  #   Never add a "/" handler to serve-public.json: it re-opens the dashboard.
+  # After editing it, recreate the tailscale-public container, then check from
+  # OUTSIDE the tailnet that https://<public>/c/<id> still answers and
+  # https://<public>/login is a 404.
   tailscale-private:
     image: tailscale/tailscale:stable@sha256:25cde9ad76020b0e29229136d0c38b5962e9a0e1774ffac9b0df68e4a37d6cf0
     profiles: ["tailscale-split"]
@@ -184,6 +231,7 @@ services:
   # Requires: CLOUDFLARE_TUNNEL_TOKEN env var (from Cloudflare Zero Trust → Networks → Tunnels)
   # Tunnel routing (hostname → http://mantis:3000) is configured in the CF dashboard.
   # Dashboard access policies via Cloudflare Access also live in the CF dashboard.
+  # Client IPs: set TRUST_PROXY_HEADERS=1 in .env (see TRUSTED_IP_HEADER above).
   cloudflared:
     image: cloudflare/cloudflared:latest@sha256:ba461b8aa9c042156dbd39c38657fe7431bafa063220eab8d5330a523863da9f
     profiles: ["cloudflared"]
@@ -191,7 +239,13 @@ services:
     depends_on:
       mantis:
         condition: service_started
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    environment:
+      # cloudflared reads the tunnel token from TUNNEL_TOKEN. Do not pass it
+      # with `--token` on the command line: process arguments are readable by
+      # every local account on the host (`ps`, /proc/<pid>/cmdline), while the
+      # container environment is readable only by root and the docker group.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate run
 
 networks:
   # Internal-only network for app <-> database traffic. `internal: true` gives

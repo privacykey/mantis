@@ -56,8 +56,11 @@ if [ "$USE_EXISTING_DB" != "1" ]; then
     -e POSTGRES_USER=mantis -e POSTGRES_PASSWORD=mantis -e POSTGRES_DB=mantis_test \
     -p "${PG_PORT}:5432" "$IMAGE" >/dev/null
   echo "▸ waiting for Postgres to accept connections"
+  # Probe over TCP: during first-boot init the image runs a temporary server
+  # on the unix socket only, and a socket probe would pass before the real
+  # server is up.
   docker exec "$PG_CONTAINER" sh -c \
-    'for i in $(seq 1 60); do pg_isready -U mantis -d mantis_test >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+    'for i in $(seq 1 60); do pg_isready -h 127.0.0.1 -U mantis -d mantis_test >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 fi
 
 # Canonical location first (turbopack.root pins it there); fall back to a

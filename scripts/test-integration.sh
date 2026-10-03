@@ -29,8 +29,11 @@ docker run -d --name "$CONTAINER" \
   -p "${PORT}:5432" "$IMAGE" >/dev/null
 
 echo "▸ waiting for Postgres to accept connections"
+# Probe over TCP: during first-boot init the image runs a temporary server on
+# the unix socket only, and a socket probe would pass before the real server
+# is up.
 docker exec "$CONTAINER" sh -c \
-  'for i in $(seq 1 60); do pg_isready -U mantis -d mantis_test >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+  'for i in $(seq 1 60); do pg_isready -h 127.0.0.1 -U mantis -d mantis_test >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 
 echo "▸ running integration suite"
 vitest run --config vitest.integration.config.ts "$@"
