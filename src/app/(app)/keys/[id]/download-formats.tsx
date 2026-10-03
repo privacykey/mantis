@@ -60,6 +60,12 @@ export function DownloadFormats({
           />
         ))}
       </div>
+      <span className="block text-neutral-600 mt-1">
+        .docx / .xlsx / .pptx beacon through a linked picture, which Office
+        only fetches once it loads external content: a downloaded copy can open
+        in Protected View and stay silent until editing is enabled. .rtf is the
+        more reliable Word bait.
+      </span>
       <span className="block mt-2 mb-1">self-hosted app formats</span>
       <div className="flex flex-wrap gap-3">
         {SELF_HOSTED_FORMATS.map((fmt) => (

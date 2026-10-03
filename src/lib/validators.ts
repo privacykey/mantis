@@ -26,6 +26,21 @@ const httpUrl = z
   .max(2048)
   .refine(isHttpUrl, { message: "must be a http(s) URL" });
 
+// Memos and destination targets are rendered in other principals' terminals,
+// alerts and audit views, and never need control characters (C0, DEL, C1).
+const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f-\u009f]/;
+const controlFree = { message: "must not contain control characters" };
+
+export function hasControlChars(s: string): boolean {
+  return CONTROL_CHARS_RE.test(s);
+}
+
+const memoSchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine((s) => !hasControlChars(s), controlFree);
+
 const responsePayloadSchema = z
   .union([
     z.object({ url: httpUrl }).strict(),
@@ -39,7 +54,11 @@ const responsePayloadSchema = z
 const destinationInputSchema = z
   .object({
     channel: channelSchema,
-    target: z.string().min(1).max(2048),
+    target: z
+      .string()
+      .min(1)
+      .max(2048)
+      .refine((s) => !hasControlChars(s), controlFree),
   })
   .strict()
   .superRefine((d, ctx) => {
@@ -76,23 +95,66 @@ const externalIdSchema = z
       "must start with a letter/digit and contain only letters, digits, . _ : -",
   });
 
+/**
+ * Normalise an operator-supplied site origin to URL.origin form (http/https,
+ * lower-case host, no path, default port dropped). The hit recorder compares
+ * these as exact strings, so storing anything else would silently disable the
+ * exclusion. Returns null when the value is not an http(s) URL.
+ */
+export function normalizeSelfOrigin(value: string): string | null {
+  try {
+    const u = new URL(value.trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+export const MAX_SELF_ORIGINS = 20;
+
+// Own-site origins for web canaries (see keys.selfOrigins).
+const selfOriginsSchema = z
+  .array(
+    z
+      .string()
+      .max(2048)
+      .refine((s) => normalizeSelfOrigin(s) !== null, {
+        message: "must be a http(s) origin such as https://www.example.com",
+      })
+      .transform((s) => normalizeSelfOrigin(s)!),
+  )
+  .max(MAX_SELF_ORIGINS)
+  .transform((origins) => [...new Set(origins)]);
+
 export const createKeySchema = z
   .object({
-    memo: z.string().min(1).max(500),
+    memo: memoSchema,
     external_id: externalIdSchema.optional(),
     response_kind: responseKindSchema.optional(),
     response_payload: responsePayloadSchema,
     destinations: destinationsArraySchema.optional(),
-    expires_at: z.iso.datetime().nullable().optional(),
+    // A key that is already expired never fires. Minting one is only useful
+    // for planting a dead tripwire under someone else's external_id.
+    expires_at: z.iso
+      .datetime()
+      .refine((v) => Date.parse(v) > Date.now(), {
+        message: "expires_at must be in the future",
+      })
+      .nullable()
+      .optional(),
     dedupe_window_seconds: z.number().int().min(0).max(86_400).optional(),
     monitor_mode: monitorModeSchema.optional(),
     monitor_window_seconds: z.number().int().min(30).max(86_400).optional(),
+    self_origins: selfOriginsSchema.optional(),
+    // Admin only: adopt an existing external_id that another fleet created.
+    adopt: z.boolean().optional(),
   })
   .strict();
 
 export const updateKeySchema = z
   .object({
-    memo: z.string().min(1).max(500).optional(),
+    memo: memoSchema.optional(),
     response_kind: responseKindSchema.optional(),
     response_payload: responsePayloadSchema,
     destinations: destinationsArraySchema.optional(),
@@ -100,6 +162,7 @@ export const updateKeySchema = z
     dedupe_window_seconds: z.number().int().min(0).max(86_400).optional(),
     monitor_mode: monitorModeSchema.optional(),
     monitor_window_seconds: z.number().int().min(30).max(86_400).optional(),
+    self_origins: selfOriginsSchema.optional(),
     disabled: z.boolean().optional(),
   })
   .strict();
@@ -113,6 +176,9 @@ export const createApiKeySchema = z
     // "enroll" mints a create-only key for fleet provisioning (see
     // src/db/schema.ts apiKeys.scope). Defaults to "full".
     scope: z.enum(apiKeyScopes).optional(),
+    // Enroll keys only: the full key whose fleet this credential enrolls for
+    // (see apiKeys.ownerApiKeyId). Defaults to the minting admin.
+    owner_api_key_id: z.uuid().optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -121,6 +187,13 @@ export const createApiKeySchema = z
         code: "custom",
         path: ["scope"],
         message: "an enrollment-scoped key cannot also be admin",
+      });
+    }
+    if (v.owner_api_key_id !== undefined && v.scope !== "enroll") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["owner_api_key_id"],
+        message: "owner_api_key_id only applies to enrollment-scoped keys",
       });
     }
   });

@@ -139,6 +139,18 @@ export type RequireApiKeyOpts = {
   allowEnroll?: boolean;
 };
 
+// Once an IP's durable failure window is exhausted, every further reject in
+// that window is a 429 whatever the row says. Remember it in-process so a
+// flood of rejected requests stops costing one write each on a row shared
+// with the pool that trigger capture and alert delivery use.
+const EXHAUSTED_CACHE_MAX = 10_000;
+const exhaustedUntil = new Map<string, number>();
+
+/** Test hook: forget remembered exhausted windows. */
+export function clearAuthFailureCache(): void {
+  exhaustedUntil.clear();
+}
+
 /**
  * Every bearer failure consumes a per-IP token; once the window is exhausted
  * we return 429 instead of 401 to blunt brute force. Valid keys skip this
@@ -150,13 +162,28 @@ async function failBearer(
   message: string,
 ): Promise<AuthResult> {
   const ip = extractIp(req) ?? "unknown";
+  const blockedUntil = exhaustedUntil.get(ip);
+  if (blockedUntil !== undefined) {
+    if (blockedUntil > Date.now()) {
+      return {
+        ok: false,
+        res: tooManyRequests({ ok: false, remaining: 0, resetAt: blockedUntil }),
+      };
+    }
+    exhaustedUntil.delete(ip);
+  }
   const rl = await consumeRateLimit(`auth-fail:${ip}`, {
     limit: AUTH_FAIL_LIMIT,
     windowMs: AUTH_FAIL_WINDOW_MS,
   });
-  if (!rl.ok) return { ok: false, res: tooManyRequests(rl) };
+  if (!rl.ok) {
+    if (exhaustedUntil.size >= EXHAUSTED_CACHE_MAX) exhaustedUntil.clear();
+    exhaustedUntil.set(ip, rl.resetAt);
+    return { ok: false, res: tooManyRequests(rl) };
+  }
   return { ok: false, res: unauthorized(message) };
 }
+
 
 export async function requireApiKey(
   req: NextRequest,

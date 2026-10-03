@@ -8,11 +8,11 @@ import {
   type NotificationChannel,
 } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { env, keyUrl } from "@/lib/env";
+import { env, keyDashboardUrl, keyUrl } from "@/lib/env";
 import { parseHostContext } from "@/lib/installers/headers";
 import { log } from "@/lib/log";
 import { sanitizeHeaderValue } from "@/lib/sanitize";
-import { escapeCode, escapeMarkdown, escapeSlack } from "./escape";
+import { clipEscaped, escapeCode, escapeMarkdown, escapeSlack, truncate } from "./escape";
 import { safePostJson } from "./safe-post";
 import { boundedSmtpUrl } from "./smtp";
 
@@ -109,23 +109,26 @@ export async function sendEmail(ctx: SendContext): Promise<void> {
 
 export async function sendSlack(ctx: SendContext): Promise<void> {
   const { key, hit } = ctx;
-  const url = keyUrl(key.publicId);
   const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
+  const field = (label: string, value: string) =>
+    ({ type: "mrkdwn", text: `*${label}*\n${value}` }) as const;
+  const slack = (s: string, max: number) => clipEscaped(s, max, escapeSlack);
 
+  // The Referer goes before the optional host-context fields so Slack's
+  // 10-field cap can never drop it.
   const fields: Array<{ type: "mrkdwn"; text: string }> = [
-    { type: "mrkdwn", text: `*IP*\n${escapeSlack(hit.ip ?? "—")}` },
-    {
-      type: "mrkdwn",
-      text: `*UA*\n${escapeSlack(truncate(hit.userAgent ?? "—", 80))}`,
-    },
+    field("IP", slack(hit.ip ?? "—", VALUE_MAX)),
+    field("UA", slack(hit.userAgent ?? "—", 80)),
   ];
-  if (hostCtx?.user) fields.push({ type: "mrkdwn", text: `*User*\n${escapeSlack(hostCtx.user)}` });
-  if (hostCtx?.host) fields.push({ type: "mrkdwn", text: `*Host*\n${escapeSlack(hostCtx.host)}` });
+  if (hit.referer) fields.push(field("Referer", slack(hit.referer, REFERER_MAX)));
+  if (hostCtx?.user) fields.push(field("User", slack(hostCtx.user, VALUE_MAX)));
+  if (hostCtx?.host) fields.push(field("Host", slack(hostCtx.host, VALUE_MAX)));
   if (hostCtx?.ssh_client_ip) {
-    fields.push({ type: "mrkdwn", text: `*SSH from*\n${escapeSlack(hostCtx.ssh_client_ip)}` });
+    fields.push(field("SSH from", slack(hostCtx.ssh_client_ip, VALUE_MAX)));
   }
   if (hostCtx?.sudo_cmd) {
-    fields.push({ type: "mrkdwn", text: `*Sudo cmd*\n\`${escapeCode(escapeSlack(hostCtx.sudo_cmd))}\`` });
+    const cmd = clipEscaped(hostCtx.sudo_cmd, SUDO_CMD_MAX, (s) => escapeCode(escapeSlack(s)));
+    fields.push(field("Sudo cmd", `\`${cmd}\``));
   }
 
   await postJson(ctx.target, {
@@ -134,13 +137,15 @@ export async function sendSlack(ctx: SendContext): Promise<void> {
     blocks: [
       {
         type: "header",
-        text: { type: "plain_text", text: `🪤 ${key.memo}`, emoji: true },
+        // Slack rejects a header over 150 characters.
+        text: { type: "plain_text", text: truncate(`🪤 ${key.memo}`, 150), emoji: true },
       },
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `<${url}|Mantis key URL> · ${hit.occurredAt.toISOString()}`,
+          // Links the dashboard, never keyUrl(): following that fires the canary.
+          text: `<${keyDashboardUrl(key.id)}|Open key in dashboard> · key \`${key.publicId}\` · ${hit.occurredAt.toISOString()}`,
         },
       },
       { type: "section", fields: fields.slice(0, 10) },
@@ -154,26 +159,25 @@ export async function sendSlack(ctx: SendContext): Promise<void> {
 
 export async function sendDiscord(ctx: SendContext): Promise<void> {
   const { key, hit } = ctx;
-  const url = keyUrl(key.publicId);
   const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
+  const md = (s: string, max: number) => clipEscaped(s, max, escapeMarkdown);
 
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [
-    { name: "IP", value: escapeMarkdown(hit.ip ?? "—"), inline: true },
-    {
-      name: "UA",
-      value: escapeMarkdown(truncate(hit.userAgent ?? "—", 80)),
-      inline: false,
-    },
+    { name: "IP", value: md(hit.ip ?? "—", VALUE_MAX), inline: true },
+    { name: "UA", value: md(hit.userAgent ?? "—", 80), inline: false },
   ];
-  if (hostCtx?.user) fields.push({ name: "User", value: escapeMarkdown(hostCtx.user), inline: true });
-  if (hostCtx?.host) fields.push({ name: "Host", value: escapeMarkdown(hostCtx.host), inline: true });
+  if (hit.referer) {
+    fields.push({ name: "Referer", value: md(hit.referer, REFERER_MAX), inline: false });
+  }
+  if (hostCtx?.user) fields.push({ name: "User", value: md(hostCtx.user, VALUE_MAX), inline: true });
+  if (hostCtx?.host) fields.push({ name: "Host", value: md(hostCtx.host, VALUE_MAX), inline: true });
   if (hostCtx?.ssh_client_ip) {
-    fields.push({ name: "SSH from", value: escapeMarkdown(hostCtx.ssh_client_ip), inline: true });
+    fields.push({ name: "SSH from", value: md(hostCtx.ssh_client_ip, VALUE_MAX), inline: true });
   }
   if (hostCtx?.sudo_cmd) {
     fields.push({
       name: "Sudo cmd",
-      value: "`" + escapeCode(truncate(hostCtx.sudo_cmd, 120)) + "`",
+      value: "`" + clipEscaped(hostCtx.sudo_cmd, SUDO_CMD_MAX, escapeCode) + "`",
       inline: false,
     });
   }
@@ -182,8 +186,10 @@ export async function sendDiscord(ctx: SendContext): Promise<void> {
     username: "mantis",
     embeds: [
       {
-        title: `Mantis triggered: ${key.memo}`,
-        url,
+        // Discord rejects a title over 256 characters.
+        title: truncate(`Mantis triggered: ${key.memo}`, 256),
+        // The title links the dashboard, never keyUrl(): following that fires the canary.
+        url: keyDashboardUrl(key.id),
         color: 0xef4444, // red-500
         timestamp: hit.occurredAt.toISOString(),
         fields: fields.slice(0, 25),
@@ -198,21 +204,22 @@ export async function sendDiscord(ctx: SendContext): Promise<void> {
 
 export async function sendTeams(ctx: SendContext): Promise<void> {
   const { key, hit } = ctx;
-  const url = keyUrl(key.publicId);
   const hostCtx = parseHostContext(hit.headers as Record<string, string> | null);
+  const md = (s: string, max: number) => clipEscaped(s, max, escapeMarkdown);
 
   const facts: Array<{ title: string; value: string }> = [
-    { title: "IP", value: escapeMarkdown(hit.ip ?? "—") },
+    { title: "IP", value: md(hit.ip ?? "—", VALUE_MAX) },
     { title: "Occurred", value: hit.occurredAt.toISOString() },
-    { title: "UA", value: escapeMarkdown(truncate(hit.userAgent ?? "—", 120)) },
+    { title: "UA", value: md(hit.userAgent ?? "—", 120) },
   ];
-  if (hostCtx?.user) facts.push({ title: "User", value: escapeMarkdown(hostCtx.user) });
-  if (hostCtx?.host) facts.push({ title: "Host", value: escapeMarkdown(hostCtx.host) });
+  if (hit.referer) facts.push({ title: "Referer", value: md(hit.referer, REFERER_MAX) });
+  if (hostCtx?.user) facts.push({ title: "User", value: md(hostCtx.user, VALUE_MAX) });
+  if (hostCtx?.host) facts.push({ title: "Host", value: md(hostCtx.host, VALUE_MAX) });
   if (hostCtx?.ssh_client_ip) {
-    facts.push({ title: "SSH from", value: escapeMarkdown(hostCtx.ssh_client_ip) });
+    facts.push({ title: "SSH from", value: md(hostCtx.ssh_client_ip, VALUE_MAX) });
   }
   if (hostCtx?.sudo_cmd) {
-    facts.push({ title: "Sudo cmd", value: escapeMarkdown(hostCtx.sudo_cmd) });
+    facts.push({ title: "Sudo cmd", value: md(hostCtx.sudo_cmd, VALUE_MAX) });
   }
 
   await postJson(ctx.target, {
@@ -234,7 +241,8 @@ export async function sendTeams(ctx: SendContext): Promise<void> {
             },
             {
               type: "TextBlock",
-              text: `[Open key in dashboard](${url})`,
+              // The dashboard page, never keyUrl(): following that fires the canary.
+              text: `[Open key in dashboard](${keyDashboardUrl(key.id)})`,
               wrap: true,
               isSubtle: true,
               spacing: "Small",
@@ -262,11 +270,15 @@ export async function sendHomeAssistant(ctx: SendContext): Promise<void> {
     {
       type: "mantis.hit",
       memo: key.memo,
+      // Machine data: key_url is the TRIGGER URL (fetching it fires the
+      // canary). Link dashboard_url in anything a person may follow.
       key_url: keyUrl(key.publicId),
+      dashboard_url: keyDashboardUrl(key.id),
       key_public_id: key.publicId,
       occurred_at: hit.occurredAt,
       ip: hit.ip,
       user_agent: hit.userAgent,
+      referer: hit.referer,
       ua_browser: hit.uaBrowser,
       ua_os: hit.uaOs,
       ua_device: hit.uaDevice,
@@ -295,10 +307,15 @@ async function postJson(
   });
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + "…";
-}
+// Post-escape budgets for anonymous-controlled values in the chat formatters
+// (IP, User-Agent, Referer, X-Mantis-* host context). Anyone who can reach the
+// trigger URL chooses these, up to 16 KiB each, and Slack (2000 characters per
+// field) and Discord (1024 per field value, 6000 per embed) reject the WHOLE
+// alert over one oversized field. The budgets sit far below those limits; the
+// full values stay on the hit in the dashboard.
+const VALUE_MAX = 256;
+const REFERER_MAX = 120;
+const SUDO_CMD_MAX = 120;
 
 function buildPayload({ key, hit, deliveryId }: SendContext) {
   return {
@@ -308,7 +325,10 @@ function buildPayload({ key, hit, deliveryId }: SendContext) {
       id: key.id,
       public_id: key.publicId,
       memo: key.memo,
+      // Machine data: `url` is the TRIGGER URL (fetching it fires the canary).
+      // Link `dashboard_url` in anything a person may follow.
       url: keyUrl(key.publicId),
+      dashboard_url: keyDashboardUrl(key.id),
     },
     hit: {
       id: hit.id,
@@ -330,12 +350,14 @@ function buildPayload({ key, hit, deliveryId }: SendContext) {
 }
 
 function buildEmailText({ key, hit }: SendContext): string {
-  const url = keyUrl(key.publicId);
   const ctx = parseHostContext(hit.headers as Record<string, string> | null);
   const lines = [
     `Mantis triggered: ${key.memo}`,
     "",
-    `Key URL: ${url}`,
+    // Mail clients auto-link (and scanners pre-fetch) any URL in the body, so
+    // the trigger URL is never printed: only the dashboard link and the id.
+    `Dashboard: ${keyDashboardUrl(key.id)}`,
+    `Key:       ${key.publicId} (trigger URL not shown: opening it fires the canary)`,
     `Occurred:  ${hit.occurredAt.toISOString()}`,
     `IP:        ${hit.ip ?? "-"}`,
   ];

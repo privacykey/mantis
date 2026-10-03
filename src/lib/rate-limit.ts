@@ -12,8 +12,19 @@ import { log } from "@/lib/log";
 
 type Bucket = { count: number; resetAt: number };
 
+// Expired buckets are swept once the map reaches PRUNE_AT, but at most once per
+// PRUNE_INTERVAL_MS: under a sustained stream of new keys (e.g. one per client
+// IP) almost nothing has expired yet, so sweeping on every insert would be an
+// O(live buckets) scan per request that deletes nothing.
 const PRUNE_AT = 5_000;
+const PRUNE_INTERVAL_MS = 1_000;
+// Hard ceiling on live buckets, so memory and the periodic sweep stay bounded
+// however many distinct keys a flood presents. Past it the oldest windows are
+// evicted; an evicted key simply starts a fresh window on its next request,
+// which a speed-bump limiter can afford (it is what expiry does anyway).
+const MAX_BUCKETS = 50_000;
 const buckets = new Map<string, Bucket>();
+let lastPruneAt = 0;
 
 export type RateLimitResult = {
   ok: boolean;
@@ -30,6 +41,9 @@ export function rateLimit(
 
   if (!existing || existing.resetAt <= now) {
     const fresh: Bucket = { count: 1, resetAt: now + opts.windowMs };
+    // Re-insert (not overwrite) an expired key so the Map's insertion order
+    // stays "oldest window first" — pruneIfNeeded evicts from the front.
+    if (existing) buckets.delete(key);
     buckets.set(key, fresh);
     pruneIfNeeded(now);
     return { ok: true, remaining: opts.limit - 1, resetAt: fresh.resetAt };
@@ -49,9 +63,24 @@ export function rateLimit(
 
 function pruneIfNeeded(now: number): void {
   if (buckets.size < PRUNE_AT) return;
-  for (const [k, b] of buckets) {
-    if (b.resetAt <= now) buckets.delete(k);
+  // `now < lastPruneAt` covers a wall clock that stepped backwards.
+  if (now - lastPruneAt >= PRUNE_INTERVAL_MS || now < lastPruneAt) {
+    lastPruneAt = now;
+    for (const [k, b] of buckets) {
+      if (b.resetAt <= now) buckets.delete(k);
+    }
   }
+  // O(1) per insert: at the cap each new key displaces the oldest window.
+  while (buckets.size > MAX_BUCKETS) {
+    const oldest = buckets.keys().next();
+    if (oldest.done) break;
+    buckets.delete(oldest.value);
+  }
+}
+
+/** Number of live in-memory buckets (diagnostics and tests). */
+export function rateLimitBucketCount(): number {
+  return buckets.size;
 }
 
 export function rateLimitHeaders(r: RateLimitResult): Record<string, string> {

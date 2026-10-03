@@ -1,7 +1,10 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { keys, type NotificationChannel, type ResponseKind } from "@/db/schema";
+import { audit } from "@/lib/audit";
+import { clientIpFromHeaders } from "@/lib/request-info";
 import { getSessionApiKey } from "@/lib/session";
 import { newPublicId } from "@/lib/keys";
 import { validateDestination } from "@/lib/notify/channels";
@@ -10,6 +13,7 @@ import {
   type DestinationInput,
 } from "@/lib/notify/destinations";
 import { getPreset, isPresetId } from "@/lib/presets";
+import { hasControlChars } from "@/lib/validators";
 
 export type CreateState = {
   error?: string;
@@ -38,6 +42,7 @@ export async function createKeyAction(
   const memo = String(formData.get("memo") ?? "").trim();
   if (!memo) return { error: "memo is required" };
   if (memo.length > 500) return { error: "memo too long (max 500)" };
+  if (hasControlChars(memo)) return { error: "memo must not contain control characters" };
 
   const presetRaw = String(formData.get("preset") ?? "");
   const preset = getPreset(isPresetId(presetRaw) ? presetRaw : null);
@@ -89,6 +94,9 @@ export async function createKeyAction(
     const channelRaw = String(formData.get(`destinations[${idx}][channel]`) ?? "");
     const target = String(formData.get(`destinations[${idx}][target]`) ?? "").trim();
     if (!target) continue; // skip blank rows
+    if (hasControlChars(target)) {
+      return { error: `destination ${idx + 1}: target must not contain control characters` };
+    }
     if (!(VALID_CHANNELS as string[]).includes(channelRaw)) {
       return { error: `destination ${idx + 1}: invalid channel` };
     }
@@ -106,7 +114,7 @@ export async function createKeyAction(
     return { error: "dedupe window must be 0–86400 seconds" };
   }
 
-  const { key: row } = await createKeyWithDestinations(
+  const { key: row, results } = await createKeyWithDestinations(
     {
       publicId: newPublicId(),
       memo,
@@ -118,8 +126,25 @@ export async function createKeyAction(
     destinations,
   );
 
+  const h = await headers();
+  await audit({
+    type: "key.created",
+    actorApiKeyId: session.id,
+    actorLabel: session.name,
+    subjectKind: "key",
+    subjectId: row.id,
+    metadata: {
+      memo: row.memo,
+      response_kind: row.responseKind,
+      destination_count: results.length,
+      destination_channels: results.map((r) => r.destination.channel),
+      via: "dashboard",
+    },
+    ip: clientIpFromHeaders((n) => h.get(n)),
+  });
+
   // Carry the preset through so the key page can surface the matching
-  // download format and deployment hint instead of a generic format list.
+  // download format instead of a generic format list.
   const presetQuery = isPresetId(presetRaw) ? `?preset=${presetRaw}` : "";
   redirect(`/keys/${row.id}${presetQuery}`);
 }

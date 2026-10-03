@@ -57,6 +57,13 @@
       "when": 1790829167855,
       "tag": "0007_notification_delivery_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791001602282,
+      "tag": "0008_fleet_lineage_self_origins",
+      "breakpoints": true
     }
   ]
 }

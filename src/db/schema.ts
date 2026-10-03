@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -45,6 +46,18 @@ export const apiKeys = pgTable("api_keys", {
    * disable the rest of the fleet's tripwires.
    */
   scope: apiKeyScopeEnum("scope").notNull().default("full"),
+  /**
+   * Fleet lineage for "enroll" keys: the full key this enrollment credential
+   * provisions for (set when it is minted). An enroll key may only re-claim
+   * an existing external_id inside its owner's fleet, so an unrelated key
+   * that pre-creates a device's external_id cannot get it adopted. NULL on
+   * full keys and on enroll keys minted before the column existed, which are
+   * treated as operator (admin) lineage because minting is admin-only.
+   */
+  ownerApiKeyId: uuid("owner_api_key_id").references(
+    (): AnyPgColumn => apiKeys.id,
+    { onDelete: "cascade" },
+  ),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -113,6 +126,16 @@ export const keys = pgTable(
     // each hit traces back to a single planted file. null = not yet downloaded
     // as a document; the `folder` bundle and wallet/NFC vectors never set it.
     firstDownloadFormat: text("first_download_format"),
+    /**
+     * Origins of the operator's own site(s) for web canaries (css-background,
+     * web pixel), in URL.origin form. A hit whose Referer origin is listed
+     * here is not recorded, so own-site page views cannot anchor the dedupe
+     * window or use up the duplicate cap ahead of a clone-site hit.
+     */
+    selfOrigins: text("self_origins")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

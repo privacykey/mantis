@@ -27,8 +27,38 @@ export type SerializedHitNotification = {
   max_attempts: number;
   next_attempt_at: Date;
   succeeded_at: Date | null;
+  /**
+   * The delivery diagnostic. Follows the same rule as `target`: a caller who
+   * may not see the target gets the HTTP status (or Mantis's own lifecycle
+   * reason) and nothing the destination or the network said — see
+   * ownerSafeError().
+   */
   last_error: string | null;
 };
+
+// Reasons Mantis writes itself (worker.ts, destinations.ts). They describe the
+// queue, not the destination, so every caller may read them.
+const OWN_REASONS = new Set([
+  "hit no longer exists",
+  "key disabled before delivery",
+  "destination removed before delivery",
+  "delivery lease expired after final attempt",
+]);
+
+/**
+ * last_error is destination-derived text: a redirect Location, an SMTP
+ * rejection naming the recipient, a resolver error naming the host. For a
+ * caller who may not see the target, keep only what says THAT delivery failed
+ * and how badly — the HTTP status code — and drop everything else.
+ */
+function ownerSafeError(lastError: string | null): string | null {
+  if (lastError === null) return null;
+  if (OWN_REASONS.has(lastError)) return lastError;
+  const status = /^HTTP \d{3}\b/.exec(lastError);
+  return status
+    ? `${status[0]} (details visible to admins)`
+    : "delivery failed (details visible to admins)";
+}
 
 /**
  * Builds a serializer for the notification rows of a hit listing, resolving
@@ -75,7 +105,7 @@ export async function hitNotificationSerializer(
       max_attempts: n.maxAttempts,
       next_attempt_at: n.nextAttemptAt,
       succeeded_at: n.succeededAt,
-      last_error: n.lastError,
+      last_error: visible ? n.lastError : ownerSafeError(n.lastError),
     };
   };
 }

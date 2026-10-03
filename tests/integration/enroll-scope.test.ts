@@ -40,6 +40,7 @@ afterAll(() => {
 });
 
 afterEach(async () => {
+  delete process.env.MANTIS_ENROLL_DESTINATIONS;
   if (sink) {
     await sink.close();
     sink = null;
@@ -64,6 +65,8 @@ describe("enrollment-scoped API keys", () => {
   it("creates keys and receives the reduced enroll shape (no secrets, no config surface)", async () => {
     sink = await startSink();
     const enroll = await seedApiKey({ scope: "enroll", name: "kandji" });
+    // An enroll key may only attach destinations an admin pre-approved.
+    process.env.MANTIS_ENROLL_DESTINATIONS = `webhook:${sink.url}`;
 
     const res = await post(enroll.plaintext, {
       memo: "Terminal opened — mac-01 (C02TEST01)",
@@ -90,6 +93,9 @@ describe("enrollment-scoped API keys", () => {
     expect(dest.target).toBe(sink.url);
     expect(dest.signing_secret).toBeNull();
     expect(dest.signing_secret_fingerprint).toBeTruthy();
+    // …and never the server's transport error text.
+    expect(dest.last_activation_error).toBeNull();
+    expect(dest.activation).toEqual({ ok: true });
 
     // Row is real and owned by the enroll key.
     const [row] = await db
@@ -273,11 +279,12 @@ describe("idempotent enrollment via external_id", () => {
     expect(claimsAudit[0]!.subjectId).toBe(created.id);
   });
 
-  it("cross-key enroll claims get the URL only; unrelated full keys 409; admins get the full shape", async () => {
+  it("cross-key enroll claims get the URL only; unrelated full keys 409; admins adopt explicitly", async () => {
     sink = await startSink();
     const owner = await seedApiKey({ name: "provisioner" });
     const stranger = await seedApiKey({ name: "other-full-key" });
-    const enroll = await seedApiKey({ scope: "enroll" });
+    // The fleet's enroll key is bound to the full key that provisions for it.
+    const enroll = await seedApiKey({ scope: "enroll", ownerId: owner.row.id });
     const admin = await seedApiKey({ admin: true });
 
     const first = await post(owner.plaintext, {
@@ -297,6 +304,7 @@ describe("idempotent enrollment via external_id", () => {
     const enrollBody = (await enrollClaim.json()) as KeyResponse;
     expect(enrollBody.id).toBe(created.id);
     expect(enrollBody.reused).toBe(true);
+    expect(enrollBody.created_by_caller).toBe(false);
     expect(enrollBody.url).toBe(created.url);
     // …but nothing about alert routing leaks to it, and neither does the
     // creator's memo (it did not write it).
@@ -315,14 +323,25 @@ describe("idempotent enrollment via external_id", () => {
     expect(strangerText).not.toContain(created.url);
     expect(strangerText).not.toContain("mac-7");
 
-    // Admin claim sees the whole thing (it could GET the key anyway).
+    // An admin does not silently adopt another fleet's key either: a
+    // preprovision run must not arm devices with a key someone else made.
     const adminClaim = await post(admin.plaintext, {
       memo: "ignored",
       external_id: "SERIAL7",
     });
-    expect(adminClaim.status).toBe(200);
-    const adminBody = (await adminClaim.json()) as KeyResponse;
+    expect(adminClaim.status).toBe(409);
+
+    // With an explicit adopt it sees the whole thing (it could GET the key
+    // anyway), flagged as not its own.
+    const adminAdopt = await post(admin.plaintext, {
+      memo: "ignored",
+      external_id: "SERIAL7",
+      adopt: true,
+    });
+    expect(adminAdopt.status).toBe(200);
+    const adminBody = (await adminAdopt.json()) as KeyResponse;
     expect(adminBody.id).toBe(created.id);
+    expect(adminBody.created_by_caller).toBe(false);
     expect(adminBody.destinations).toHaveLength(1);
     expect(adminBody.destinations![0]!.target).toBe(sink.url);
   });

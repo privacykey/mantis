@@ -25,6 +25,19 @@ export function xmlEscape(s: string): string {
 }
 
 /**
+ * A URL made safe for a URI-valued property in a line-oriented format (ICS
+ * URL/ATTACH, vCard PHOTO/URL). Those take the URI verbatim, so the only thing
+ * to neutralise is a control character — a CR/LF would end the property line —
+ * and percent-encoding does that without altering what the URL points at.
+ */
+export function lineSafeUri(url: string): string {
+  return url.replace(
+    /[\x00-\x1F\x7F]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
+  );
+}
+
+/**
  * Break the trigger URL into the parts the credential-store formats need.
  *
  * A cookie jar records domain and path as separate columns, a .netrc keys on
@@ -130,9 +143,11 @@ export type FileFormat =
  * actually *uses* the URL — as opposed to the document formats, which beacon
  * the moment the file is rendered.
  *
- * Worth being honest about the difference: a .docx fires on open, a .netrc
- * fires when something authenticates to the host in it. Both are useful; only
- * one is automatic, and the dashboard says so per preset.
+ * Worth being honest about the difference: a .docx beacons when Word loads its
+ * linked picture, an aws profile fires when a tool resolves against its
+ * endpoint_url, and a .netrc fires only when someone requests the URL noted in
+ * it (its entries match on host alone). All are useful; they are not equally
+ * automatic, and the dashboard says so per preset.
  */
 export const CREDENTIAL_FORMATS = [
   "cookies",
@@ -210,6 +225,8 @@ export const FILE_MIME: Record<FileFormat, string> = {
   rtf: "application/rtf",
   // Served as plain text so a browser shows them rather than trying to run or
   // render them — these are meant to be inspected before being planted.
+  // (bookmarks.html keeps its real type; rendering it fetches nothing, the
+  // bait there is a link to follow.)
   cookies: "text/plain; charset=utf-8",
   bookmarks: "text/html; charset=utf-8",
   env: "text/plain; charset=utf-8",

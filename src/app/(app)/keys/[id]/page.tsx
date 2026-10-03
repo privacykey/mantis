@@ -22,6 +22,7 @@ import { HitsFeed } from "./hits-feed";
 import { InstallersCard } from "./installers";
 import { MonitorCard } from "./monitor-card";
 import { SecretReveal } from "./secret-reveal";
+import { SelfOriginsEditor } from "./self-origins-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -105,7 +106,7 @@ export default async function KeyDetailPage({ params }: Props) {
               ↓ folder.zip
             </a>
             <span className="block text-neutral-600 mt-1">
-              bundle of pre-baited Office docs + PDF + fake-credentials .txt + Win/.url + macOS/.webloc shortcuts. Drop on a shared drive; any file fires this key.
+              bundle of pre-baited Office docs + PDF + fake-credentials .txt + Win/.url + macOS/.webloc shortcuts. Drop on a shared drive; opening a document or following a link or URL inside fires this key (browsing the folder alone does not).
             </span>
             {applePassEnabled && (
               <>
@@ -200,6 +201,31 @@ export default async function KeyDetailPage({ params }: Props) {
           <p className="text-xs text-neutral-600 mt-1">
             Repeat hits within this window are recorded but don't notify.
           </p>
+        </Card>
+        <Card title="your own site">
+          {key.selfOrigins.length === 0 ? (
+            <p className="text-sm text-neutral-600">none declared</p>
+          ) : (
+            <ul className="space-y-1">
+              {key.selfOrigins.map((origin) => (
+                <li key={origin} className="text-neutral-300 break-all font-mono text-xs">
+                  {origin}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-neutral-600 mt-1">
+            For web canaries (CSS background, tracking pixel) planted on your
+            own pages. Hits whose Referer comes from these origins are ignored,
+            so your visitors don't hide a cloned site's hit.
+          </p>
+          <div className="mt-3 pt-3 border-t border-neutral-900">
+            <SelfOriginsEditor
+              key={key.selfOrigins.join("|")}
+              keyId={key.id}
+              initial={key.selfOrigins}
+            />
+          </div>
         </Card>
       </section>
 

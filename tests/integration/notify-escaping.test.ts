@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 
-// E2E-13 — Attacker-controlled hit fields (User-Agent, X-Mantis-* host context)
-// are escaped in the emitted Slack/Discord/Teams payloads (commit 418d59c7), so
-// tripping a canary can't inject mentions or masked markdown links into the
-// operator's alert.
+// E2E-13 — Attacker-controlled hit fields (User-Agent, Referer, X-Mantis-* host
+// context) are escaped in the emitted Slack/Discord/Teams payloads (commit
+// 418d59c7), so tripping a canary can't inject mentions or masked markdown
+// links into the operator's alert.
 
 import { sendSlack, sendDiscord, sendTeams } from "@/lib/notify/senders";
 import type { Hit, Key } from "@/db/schema";
@@ -13,6 +13,8 @@ import { startSink, type Sink } from "./_sink";
 // Slack mention `<!here>` + markdown link `[x](y)` + host-context link `[u](v)`.
 const ATTACK_UA = "INJ<!here>[x](y)INJ";
 const ATTACK_USER = "USR[u](v)USR";
+// The Referer is shown on every chat channel and is just as anonymous.
+const ATTACK_REFERER = "https://clone.attacker.test/REF<!channel>[r](s)REF";
 
 let sink: Sink | null = null;
 beforeEach(() => {
@@ -40,6 +42,7 @@ function fakeKey(): Key {
     monitorWindowSeconds: 300,
     monitorResetAt: null,
     firstDownloadFormat: null,
+    selfOrigins: [],
     createdAt: new Date(),
     disabledAt: null,
     expiresAt: null,
@@ -54,7 +57,7 @@ function fakeHit(keyId: string): Hit {
     occurredAt: new Date(),
     ip: "203.0.113.20",
     userAgent: ATTACK_UA,
-    referer: null,
+    referer: ATTACK_REFERER,
     headers: { "x-mantis-source": "shell", "x-mantis-user": ATTACK_USER },
     uaBrowser: null,
     uaBrowserVersion: null,
@@ -83,6 +86,13 @@ describe("E2E-13 chat-channel payload escaping", () => {
     expect(body).toContain("INJ"); // content preserved, just inert
   });
 
+  it("Slack shows the Referer with its mention neutralized", async () => {
+    const body = await capture(sendSlack);
+    expect(body).not.toContain("<!channel>");
+    expect(body).toContain("&lt;!channel&gt;");
+    expect(body).toContain("clone.attacker.test/REF");
+  });
+
   it("Discord neutralizes masked markdown links in UA and host context", async () => {
     const body = await capture(sendDiscord);
     expect(body).not.toContain("[x](y)");
@@ -95,5 +105,14 @@ describe("E2E-13 chat-channel payload escaping", () => {
     expect(body).not.toContain("[x](y)");
     expect(body).not.toContain("[u](v)");
     expect(body).toContain("INJ");
+  });
+
+  it.each([
+    ["Discord", sendDiscord],
+    ["Teams", sendTeams],
+  ] as const)("%s shows the Referer with its masked link neutralized", async (_name, send) => {
+    const body = await capture(send);
+    expect(body).not.toContain("[r](s)");
+    expect(body).toContain("clone.attacker.test/REF");
   });
 });

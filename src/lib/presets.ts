@@ -51,7 +51,11 @@ export type Preset = {
   downloadFormat: FileFormat | null;
   /** Placeholder memo, also the default name stem in bulk mode. */
   memoExample: string;
-  /** Shown on the key page after minting — how to actually deploy it. */
+  /**
+   * How to actually deploy it. Reference copy only for now: nothing renders
+   * this yet (the key page does not read the preset), so anything the operator
+   * must know before planting belongs in `blurb`.
+   */
   deployHint: string;
 };
 
@@ -70,33 +74,43 @@ export const PRESETS: Preset[] = [
   {
     id: "doc-docx",
     label: "Word document",
-    blurb: "Fires when the .docx is opened in Word.",
+    // The three Office presets beacon through ONE mechanism: a linked (not
+    // embedded) remote picture. Office only fetches it once it loads external
+    // content, which Protected View — what a copy downloaded from a browser,
+    // mail or a share opens in — and the external-content prompt can hold back.
+    // So the blurbs must not promise "fires on open".
+    blurb:
+      "Fires when Word loads its linked picture — Protected View can hold that back on a downloaded copy. RTF is the more reliable Word bait.",
     responseKind: "gif",
     dedupeWindowSeconds: 300,
     downloadFormat: "docx",
     memoExample: "Salaries 2026 (honeypot docx)",
     deployHint:
-      "Place it in a folder that only an intruder would browse. Word loads the beacon on open.",
+      "Place it in a folder that only an intruder would browse. Word fetches the beacon when it loads the document's external content; a copy that carries Mark-of-the-Web opens in Protected View first and does not beacon until Enable Editing.",
   },
   {
     id: "doc-xlsx",
     label: "Excel spreadsheet",
-    blurb: "Fires when the .xlsx is opened in Excel.",
+    blurb:
+      "Fires when Excel loads its linked picture — Protected View can hold that back on a downloaded copy.",
     responseKind: "gif",
     dedupeWindowSeconds: 300,
     downloadFormat: "xlsx",
     memoExample: "Payroll export (honeypot xlsx)",
-    deployHint: "Excel loads the beacon on open, before any macro prompt.",
+    deployHint:
+      "Excel fetches the beacon when it loads the sheet's external content, with no macro involved. Protected View and the external-content prompt can delay or block that fetch.",
   },
   {
     id: "doc-pptx",
     label: "PowerPoint deck",
-    blurb: "Fires when the .pptx is opened.",
+    blurb:
+      "Fires when PowerPoint loads its linked picture — Protected View can hold that back on a downloaded copy.",
     responseKind: "gif",
     dedupeWindowSeconds: 300,
     downloadFormat: "pptx",
     memoExample: "Board deck (honeypot pptx)",
-    deployHint: "Opens the beacon on first slide render.",
+    deployHint:
+      "PowerPoint fetches the beacon when it renders the first slide's external content. Protected View and the external-content prompt can delay or block that fetch.",
   },
   {
     id: "doc-rtf",
@@ -112,13 +126,14 @@ export const PRESETS: Preset[] = [
   {
     id: "folder-zip",
     label: "Honey folder (zip)",
-    blurb: "A zip of bait files that beacons when the folder is browsed.",
+    blurb:
+      "Bait documents, credential notes and shortcuts on one key. Fires when one is opened or its link followed — not when the folder is merely listed.",
     responseKind: "gif",
     dedupeWindowSeconds: 300,
     downloadFormat: "folder",
     memoExample: "backups (honey folder)",
     deployHint:
-      "Unzip it where a browsing intruder would land. Explorer/Finder trip the beacon on preview.",
+      "Unzip it where a browsing intruder would land. Nothing in the bundle fires on a directory listing: the Office files and the PDF beacon when opened (subject to the reader's remote-content rules), the shortcuts when double-clicked, and the .txt files only if someone follows the URL written in them.",
   },
   // Credential and config stores. These fire when the URL inside them is USED,
   // not when the file is opened — an intruder who greps for secrets finds the
@@ -127,7 +142,8 @@ export const PRESETS: Preset[] = [
   {
     id: "creds-env",
     label: ".env file",
-    blurb: "Fires when something uses the endpoint or key inside it.",
+    blurb:
+      "Fires when something calls the API_BASE_URL endpoint inside it, with or without a path appended.",
     responseKind: "json",
     dedupeWindowSeconds: 0,
     // Was "md", which handed you a Markdown file when you asked for a .env —
@@ -135,7 +151,7 @@ export const PRESETS: Preset[] = [
     downloadFormat: "env",
     memoExample: "prod .env (bait creds)",
     deployHint:
-      "Drop in a repo root, a deploy directory, or a home directory. Anything that reads it and calls the endpoint trips it.",
+      "Drop in a repo root, a deploy directory, or a home directory. Anything that reads it and calls the endpoint trips it — an app that joins its own API path onto API_BASE_URL included.",
   },
   {
     id: "creds-aws",
@@ -146,18 +162,19 @@ export const PRESETS: Preset[] = [
     downloadFormat: "aws-credentials",
     memoExample: "aws credentials — build box",
     deployHint:
-      "Save as ~/.aws/credentials. The bait profile sets endpoint_url, so an SDK or CLI pointed at it resolves to the canary instead of AWS. The keys are AWS's own documented examples — live nowhere.",
+      "Save as ~/.aws/credentials. The bait profile sets endpoint_url, so an SDK or CLI pointed at it resolves to the canary instead of AWS — whatever bucket, object or operation path it appends. The keys are AWS's own documented examples — live nowhere.",
   },
   {
     id: "creds-netrc",
     label: ".netrc",
-    blurb: "Auto-read by curl, wget and git — no one has to open it.",
+    blurb:
+      "Discovery bait — fires when someone requests the restore URL noted inside it.",
     responseKind: "empty",
     dedupeWindowSeconds: 0,
     downloadFormat: "netrc",
     memoExample: "netrc — jump host",
     deployHint:
-      "Save as ~/.netrc with mode 600. curl, wget, git and ftp consume it without being asked, so a request to the host authenticates straight from this file.",
+      "Save as ~/.netrc with mode 600. Does NOT beacon on its own: .netrc entries match on host only, so a tool that reads it sends the bait login to the canary host but not to this key's path. The hit comes when someone requests the restore URL in the file's header comment.",
   },
   {
     id: "creds-kubeconfig",
@@ -168,29 +185,30 @@ export const PRESETS: Preset[] = [
     downloadFormat: "kubeconfig",
     memoExample: "kubeconfig — prod (bait)",
     deployHint:
-      "Save as ~/.kube/config. Note kubectl appends its own API paths and will 404 — what this catches is the operator who finds the file and curls the server URL to see what cluster it is.",
+      "Save as ~/.kube/config. Any request under the server URL registers: someone who curls it to see what cluster it is, or kubectl itself, which appends its own API paths (and then fails on the non-Kubernetes reply).",
   },
   {
     id: "browser-cookies",
     label: "Browser cookies",
-    blurb: "cookies.txt session jar. Fires when a stolen cookie is replayed.",
+    blurb:
+      "cookies.txt session jar. Discovery bait — fires when someone requests the URL its bait cookie is scoped to.",
     responseKind: "gif",
     dedupeWindowSeconds: 0,
     downloadFormat: "cookies",
     memoExample: "chrome cookies — laptop",
     deployHint:
-      "Session cookies are what infostealers are actually after, because a stolen cookie skips MFA. The bait entry is scoped to this key's exact path, so a replayed jar registers as a hit.",
+      "Session cookies are what infostealers are actually after, because a stolen cookie skips MFA. Does NOT beacon on its own: loading the jar issues no request. The bait entry is scoped to this key's host and exact path, which is where someone trying the stolen session will send it.",
   },
   {
     id: "browser-bookmarks",
     label: "Browser bookmarks",
-    blurb: "bookmarks.html. Fires on click, or on render if opened in a browser.",
+    blurb: "bookmarks.html. Fires when someone follows the bait bookmark.",
     responseKind: "gif",
     dedupeWindowSeconds: 60,
     downloadFormat: "bookmarks",
     memoExample: "bookmarks — reception PC",
     deployHint:
-      "The bait sits among real-looking internal links, where an intruder browsing for the VPN portal or admin console will find it. Its icon URL fires too if the file is opened in a browser.",
+      "The bait sits among real-looking internal links, where an intruder browsing for the VPN portal or admin console will find it. Viewing the file fetches nothing; the same URL also sits in the bookmark's icon slot, which a browser may request if the file is imported.",
   },
   {
     id: "vpn-ovpn",

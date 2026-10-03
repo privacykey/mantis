@@ -1,4 +1,8 @@
+import { publicOnlyDecision } from "./public-only-hosts";
 import { normalizePublicPath } from "./public-path";
+import { statusTag } from "./status-tag";
+
+export { statusPublicId, statusTag } from "./status-tag";
 
 function required(name: string): string {
   const v = process.env[name];
@@ -10,12 +14,67 @@ function optional(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
 
+/**
+ * Origin of the authenticated dashboard, for the links Mantis puts in alerts.
+ * DASHBOARD_BASE_URL wins. Otherwise PUBLIC_BASE_URL is used — unless the host
+ * split (PUBLIC_ONLY_HOSTS / DASHBOARD_HOSTS) makes that host public-only,
+ * where /keys is a 404: then the first DASHBOARD_HOSTS entry is used, on
+ * PUBLIC_BASE_URL's scheme and port unless the entry carries its own.
+ */
+export function resolveDashboardBaseUrl(input: {
+  dashboardBaseUrl?: string | null;
+  publicBaseUrl: string;
+  publicOnlyHosts?: string | null;
+  dashboardHosts?: string | null;
+}): string {
+  const explicit = input.dashboardBaseUrl?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+
+  let publicUrl: URL;
+  try {
+    publicUrl = new URL(input.publicBaseUrl);
+  } catch {
+    return input.publicBaseUrl;
+  }
+  const decision = publicOnlyDecision({
+    host: publicUrl.host,
+    pathname: "/keys",
+    configuredHosts: input.publicOnlyHosts,
+    configuredDashboardHosts: input.dashboardHosts,
+  });
+  if (decision.allowed && !decision.publicOnly) return input.publicBaseUrl;
+
+  for (const part of (input.dashboardHosts ?? "").split(/[\s,]+/)) {
+    const entry = part.trim();
+    if (!entry) continue;
+    try {
+      if (/^https?:\/\//i.test(entry)) return new URL(entry).origin;
+      const u = new URL(`${publicUrl.protocol}//${entry}`);
+      if (!u.port) u.port = publicUrl.port;
+      return u.origin;
+    } catch {
+      continue;
+    }
+  }
+  return input.publicBaseUrl;
+}
+
+const publicBaseUrl = optional("PUBLIC_BASE_URL", "http://localhost:3000").replace(
+  /\/$/,
+  "",
+);
+
 export const env = {
   databaseUrl: required("DATABASE_URL"),
-  publicBaseUrl: optional("PUBLIC_BASE_URL", "http://localhost:3000").replace(
-    /\/$/,
-    "",
-  ),
+  publicBaseUrl,
+  // Where alert links to the dashboard point. Set DASHBOARD_BASE_URL when the
+  // dashboard is not on PUBLIC_BASE_URL and the default above guesses wrong.
+  dashboardBaseUrl: resolveDashboardBaseUrl({
+    dashboardBaseUrl: process.env.DASHBOARD_BASE_URL,
+    publicBaseUrl,
+    publicOnlyHosts: process.env.PUBLIC_ONLY_HOSTS,
+    dashboardHosts: process.env.DASHBOARD_HOSTS,
+  }),
   publicPath: normalizePublicPath(process.env.MANTIS_PUBLIC_PATH),
   smtpUrl: process.env.SMTP_URL,
   smtpFrom: process.env.SMTP_FROM ?? "Mantis <mantis@localhost>",
@@ -79,10 +138,16 @@ export function walletWebServiceUrl(): string {
   return `${env.publicBaseUrl}/api/wallet`;
 }
 
+/** The trigger URL. Fetching it FIRES the canary — never render it as a link to follow. */
 export function keyUrl(publicId: string): string {
   return `${env.publicBaseUrl}${env.publicPath}/${publicId}`;
 }
 
+/** Non-firing link to a key's dashboard page — the one alerts may link. */
+export function keyDashboardUrl(keyId: string): string {
+  return `${env.dashboardBaseUrl}/keys/${encodeURIComponent(keyId)}`;
+}
+
 export function statusUrl(publicId: string): string {
-  return `${env.publicBaseUrl}/status/${publicId}`;
+  return `${env.publicBaseUrl}/status/${publicId}.${statusTag(publicId)}`;
 }

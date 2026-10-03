@@ -16,7 +16,8 @@ vi.mock("next/headers", () => ({
 }));
 
 import { GET as inboxGet, DELETE as inboxDelete } from "@/app/api/inbox/route";
-import { pushCapture, clearCaptures } from "@/lib/inbox";
+import { GET as captureGet, POST as capturePost } from "@/app/inbox/[...slug]/route";
+import { pushCapture, clearCaptures, type Capture } from "@/lib/inbox";
 import { seedApiKey, buildJsonRequest } from "./_harness";
 
 const SECRET = "supersecret-captured-webhook-body-42";
@@ -26,11 +27,13 @@ function capture(): void {
     method: "POST",
     slug: "demo",
     url: "http://localhost:3000/inbox/demo",
-    headers: { "x-secret": SECRET },
+    headers: { "x-webhook-id": SECRET },
     body: JSON.stringify({ token: SECRET }),
     body_truncated: false,
   });
 }
+
+const slugCtx = (slug: string[]) => ({ params: Promise.resolve({ slug }) });
 
 beforeEach(() => {
   clearCaptures();
@@ -78,6 +81,62 @@ describe("E2E-06 dev inbox auth gate", () => {
     );
     const afterBody = (await after.json()) as { data: unknown[] };
     expect(afterBody.data.length).toBe(0);
+  });
+
+  it("never stores ambient credentials: cookie/authorization are captured as [redacted]", async () => {
+    // /inbox/* shares the dashboard origin, so a browser navigation there (a
+    // link, a redirect-kind canary) carries the operator's session cookie; an
+    // access proxy adds its own assertions. None of it may reach the buffer,
+    // which every full-scope principal — admin or not — can read back.
+    const SESSION = "mantis_sess_ADMIN-SESSION-TOKEN-do-not-store";
+    const nav = await captureGet(
+      buildJsonRequest("/inbox/lure", {
+        headers: {
+          cookie: `theme=dark; mantis_session=${SESSION}`,
+          "sec-fetch-mode": "navigate",
+          "cf-access-jwt-assertion": `jwt.${SESSION}`,
+        },
+      }),
+      slugCtx(["lure"]),
+    );
+    expect(nav.status).toBe(200);
+
+    const hook = await capturePost(
+      buildJsonRequest("/inbox/hook", {
+        method: "POST",
+        bearer: SESSION,
+        body: { event: "mantis.hit" },
+        headers: {
+          "proxy-authorization": `Basic ${SESSION}`,
+          "x-api-key": SESSION,
+          "x-mantis-signature": "t=1,v1=abcdef",
+        },
+      }),
+      slugCtx(["hook"]),
+    );
+    expect(hook.status).toBe(200);
+
+    const reader = await seedApiKey(); // non-admin, full scope
+    const res = await inboxGet(
+      buildJsonRequest("/api/inbox", { bearer: reader.plaintext }),
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(SESSION);
+
+    const { data } = JSON.parse(text) as { data: Capture[] };
+    const byslug = Object.fromEntries(data.map((c) => [c.slug, c]));
+    // The header NAMES survive, so the operator can see what was sent…
+    expect(byslug.lure!.headers.cookie).toBe("[redacted]");
+    expect(byslug.lure!.headers["cf-access-jwt-assertion"]).toBe("[redacted]");
+    expect(byslug.hook!.headers.authorization).toBe("[redacted]");
+    expect(byslug.hook!.headers["proxy-authorization"]).toBe("[redacted]");
+    expect(byslug.hook!.headers["x-api-key"]).toBe("[redacted]");
+    // …and everything a webhook debugger needs is untouched.
+    expect(byslug.lure!.headers["sec-fetch-mode"]).toBe("navigate");
+    expect(byslug.hook!.headers["x-mantis-signature"]).toBe("t=1,v1=abcdef");
+    expect(byslug.hook!.headers["content-type"]).toBe("application/json");
+    expect(byslug.hook!.body).toBe(JSON.stringify({ event: "mantis.hit" }));
   });
 
   it("all inbox surfaces 404 when the feature flag is off — even with a valid key", async () => {

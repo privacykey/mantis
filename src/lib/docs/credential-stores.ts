@@ -16,10 +16,15 @@ import { type DocOptions, splitUrl } from "./util";
  * URL inside them is *used* — by a human who curls it, or by a tool pointed at
  * the endpoint. The dashboard says so per preset rather than implying a file
  * that fires on sight.
+ *
+ * Several of these put the trigger URL in a BASE-URL field (API_BASE_URL, the
+ * aws profile's endpoint_url, the kubeconfig server). Tools consuming those
+ * append their own path — a bucket and object, a REST operation, /api/v1/… —
+ * and the trigger route records `<trigger URL>/<anything>` for exactly that
+ * reason (src/app/c/[publicId]/[...rest]).
  */
 
 export function generateEnv(opts: DocOptions): Promise<Buffer> {
-  const { origin } = splitUrl(opts.url);
   const body = [
     "# Production environment — DO NOT COMMIT",
     "# Synced from Vault at deploy time; this copy is for local debugging only.",
@@ -40,7 +45,8 @@ export function generateEnv(opts: DocOptions): Promise<Buffer> {
     "",
     "# Internal service endpoints",
     `API_BASE_URL=${opts.url}`,
-    `DEPLOY_WEBHOOK_URL=${origin}/hooks/deploy`,
+    // Under the trigger URL, not the bare origin, so calling it registers too.
+    `DEPLOY_WEBHOOK_URL=${opts.url}/hooks/deploy`,
     "SESSION_SECRET=ohB7eim8aen2yaiP4thaeg6aighai7Ai",
     "",
   ].join("\n");
@@ -62,7 +68,9 @@ export function generateAwsCredentials(opts: DocOptions): Promise<Buffer> {
     "aws_secret_access_key = je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY",
     "region = us-east-1",
     // The AWS CLI and SDKs honour endpoint_url in a profile, so a tool pointed
-    // at this profile resolves against the canary rather than AWS.
+    // at this profile resolves against the canary rather than AWS. Root-URI
+    // operations (sts, iam, ec2, s3 ls) hit the URL as is; path-bearing ones
+    // (a bucket or object, lambda, apigateway) append to it.
     `endpoint_url = ${opts.url}`,
     "",
     "[terraform-state]",
@@ -75,16 +83,22 @@ export function generateAwsCredentials(opts: DocOptions): Promise<Buffer> {
 }
 
 /**
- * `.netrc` is auto-consumed: curl, wget, git and ftp read it without being
- * asked, and authenticate to any host listed in it. So an intruder who runs
- * `curl https://<host>/...` against the canary host authenticates from this
- * file without ever opening it.
+ * `.netrc`. Discovery bait, like the VPN/RDP profiles: entries match on HOST
+ * only, so a tool that consumes the file (git, wget, ftp, curl with --netrc)
+ * sends the bait login to the canary host but never asks for this key's path —
+ * that alone records nothing. The hit comes when someone requests the restore
+ * URL in the header comment.
+ *
+ * That comment has to sit ABOVE the first `machine` line: Python's stdlib
+ * netrc parser (and anything built on it) rejects a comment that follows an
+ * entry, and a .netrc that does not parse is a tell.
  */
 export function generateNetrc(opts: DocOptions): Promise<Buffer> {
   const { host } = splitUrl(opts.url);
   const body = [
     "# ~/.netrc — used by curl, wget, git and ftp",
     "# chmod 600. Do not sync to shared storage.",
+    `# Restore endpoint: ${opts.url}`,
     "",
     "machine github.com",
     "  login svc-deploy",
@@ -98,17 +112,16 @@ export function generateNetrc(opts: DocOptions): Promise<Buffer> {
     "  login backup-agent",
     "  password Choj9eshohs5shoo9oosh3eichi3aiCh",
     "",
-    `# Restore endpoint: ${opts.url}`,
-    "",
   ].join("\n");
   return Promise.resolve(Buffer.from(body, "utf8"));
 }
 
 /**
- * kubeconfig. Note the `server:` value is the bare trigger URL: kubectl appends
- * its own API paths, so an actual `kubectl get pods` will 404 rather than
- * register. What this catches is the read — someone who finds the file and
- * curls the endpoint to see what cluster it is.
+ * kubeconfig. The `server:` value is the bare trigger URL. Someone who finds
+ * the file and curls the endpoint to see what cluster it is registers, and so
+ * does kubectl itself: it appends its own API paths to the server URL, which
+ * the trigger route records like any other request under the trigger URL
+ * (kubectl then fails on the non-Kubernetes reply).
  */
 export function generateKubeconfig(opts: DocOptions): Promise<Buffer> {
   const body = [

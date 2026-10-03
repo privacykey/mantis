@@ -7,10 +7,18 @@ import { type DocOptions } from "./util";
 
 /**
  * "Honey directory" — a zip of pre-baited mantis files all wired to the same URL.
- * Drop the unzipped folder on a shared drive; any file opened/clicked fires the mantis.
+ * Drop the unzipped folder on a shared drive. What fires, and when:
+ *   - the Office files and the PDF beacon when OPENED (under the same
+ *     Protected View / remote-content caveats as the single-file formats);
+ *   - the .url / .webloc shortcuts fire when double-clicked;
+ *   - the .txt files only carry the URL as text — they fire if someone follows it.
+ * Nothing here fires on a directory LISTING: there is no desktop.ini, icon
+ * resource or thumbnail that would make a file manager fetch anything, so
+ * browsing the folder without opening a file is silent.
  */
 export async function generateFolder(opts: DocOptions): Promise<Buffer> {
-  const folderName = sanitizeFolderName(opts.title) || "Mantis";
+  // The fallback is what an intruder sees as the folder name — keep it bland.
+  const folderName = sanitizeFolderName(opts.title) || "Documents";
   const zip = new JSZip();
   const root = zip.folder(folderName);
   if (!root) throw new Error("failed to create root folder in zip");

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seedCanaryKey } from "../integration/_harness";
+import { statusTag } from "@/lib/status-tag";
 import { DASHBOARD_HOST, PUBLIC_HOST, rawRequest } from "./_client";
 
 // Tier-2: proves the proxy host-split (src/proxy.ts) is actually APPLIED by
@@ -82,6 +83,35 @@ describe("proxy host-split (runtime-applied)", () => {
     const dashRes = await rawRequest("/api/health", { host: DASHBOARD_HOST });
     expect(dashRes.status).toBe(200);
     expect(dashRes.body).toContain('"db":"ok"');
+  });
+
+  it("answers a status URL without its tag exactly like a blocked path", async () => {
+    const key = await seedCanaryKey(null, { monitorMode: "latch" });
+    const comparable = (res: { headers: NodeJS.Dict<string | string[]> }) => {
+      const { date: _date, ...rest } = res.headers;
+      return rest;
+    };
+
+    const blocked = await rawRequest("/keys", { host: PUBLIC_HOST });
+    for (const path of [
+      `/status/${key.publicId}`,
+      `/status/${key.publicId}.${statusTag("someOtherKey1")}`,
+      "/status/nosuchkey1",
+    ]) {
+      const res = await rawRequest(path, { host: PUBLIC_HOST });
+      expect(res.status, path).toBe(404);
+      expect(res.body, path).toBe("");
+      // Same headers on the wire: nothing marks /status as a live route.
+      expect(comparable(res), path).toEqual(comparable(blocked));
+    }
+
+    // The full capability URL reads the monitor.
+    const ok = await rawRequest(
+      `/status/${key.publicId}.${statusTag(key.publicId)}`,
+      { host: PUBLIC_HOST },
+    );
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(ok.body)).toEqual({ status: "ok" });
   });
 
   it("serves the dashboard normally on the dashboard host", async () => {

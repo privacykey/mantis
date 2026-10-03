@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { hits, type Key } from "@/db/schema";
 
@@ -34,11 +34,15 @@ export async function computeMonitorState(key: Key): Promise<MonitorState> {
     );
   }
 
+  // NULLS LAST is spelled out to match hits_key_occurred_idx (key_id,
+  // occurred_at DESC NULLS LAST): a bare DESC means NULLS FIRST in Postgres,
+  // which that index cannot serve, so the newest hit would be found by
+  // sorting every matching row instead of reading one index entry.
   const [row] = await db
     .select({ occurredAt: hits.occurredAt })
     .from(hits)
     .where(and(...conditions))
-    .orderBy(desc(hits.occurredAt))
+    .orderBy(sql`${hits.occurredAt} desc nulls last`)
     .limit(1);
 
   return row ? { kind: "tripped", trippedAt: row.occurredAt } : { kind: "ok" };

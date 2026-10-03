@@ -12,7 +12,7 @@ vi.mock("@/lib/log", () => ({
 import { processBatch } from "@/lib/notify";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { hits, notifications } from "@/db/schema";
+import { hits, notificationDestinations, notifications } from "@/db/schema";
 import { seedApiKey, seedCanaryKey } from "./_harness";
 import { startSink, type Sink } from "./_sink";
 
@@ -37,9 +37,20 @@ async function seedHit(): Promise<string> {
 
 async function enqueueOne(hitId: string, target: string): Promise<string> {
   const [keyRow] = await db.select().from(hits).where(eq(hits.id, hitId)).limit(1);
+  // A queued row always names the destination it was enqueued for.
+  const [dest] = await db
+    .insert(notificationDestinations)
+    .values({ keyId: keyRow!.keyId, channel: "webhook", target })
+    .returning();
   const [n] = await db
     .insert(notifications)
-    .values({ hitId, keyId: keyRow!.keyId, channel: "webhook", target })
+    .values({
+      hitId,
+      keyId: keyRow!.keyId,
+      destinationId: dest!.id,
+      channel: "webhook",
+      target,
+    })
     .returning();
   return n!.id;
 }
