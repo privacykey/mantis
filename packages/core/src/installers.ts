@@ -39,6 +39,11 @@ export type Installer = {
   install: string[];
   uninstall: string[];
   notes?: string;
+  /**
+   * homeassistant-receiver only: the webhook id this render embedded. Pass it
+   * back as `InstallerInput.webhookId` to render the same file again.
+   */
+  webhookId?: string;
 };
 
 export type InstallerInput = {
@@ -47,6 +52,13 @@ export type InstallerInput = {
   memo: string;
   /** Required for js-clone-detector; ignored elsewhere. */
   hostname?: string;
+  /**
+   * homeassistant-receiver only: the webhook id to embed (must satisfy
+   * `isHomeAssistantWebhookId`). It is the only credential between Mantis and
+   * Home Assistant, so when absent a random one is generated per call rather
+   * than derived from anything the key discloses.
+   */
+  webhookId?: string;
 };
 
 export const ALL_INSTALL_TYPES: InstallType[] = [
@@ -149,7 +161,7 @@ export const INSTALLER_META: Record<
   "css-background": {
     name: "Web — CSS background canary",
     description:
-      "CSS snippet that loads a 1×1 background image from the mantis URL. When someone copies your CSS to another site, the URL loads and fires the canary. Distinguish your own site from a clone by the Referer header on the captured hit.",
+      "CSS snippet that loads a 1×1 background image from the mantis URL. When someone copies your CSS to another site, the URL loads and fires the canary. Your own site loads it too, so declare your site's origin in the key's self_origins to have those hits ignored.",
     os: "web",
   },
   "js-clone-detector": {
@@ -186,6 +198,26 @@ export const INSTALLER_META: Record<
 
 function shortId(keyId: string): string {
   return keyId.slice(0, 8);
+}
+
+/**
+ * Boot and wake alarms get one chance per event, and that event tends to
+ * outrun the network or land on the trigger route's retryable 503. A single
+ * request that fails fast (DNS, no route) is then a boot or resume nobody
+ * hears about. Wrap the fire command in a bounded retry: five attempts,
+ * backing off 5/10/15/20s — about a minute of waiting in total.
+ *
+ * Unrolled into an `||` chain rather than a loop: there is no counter to get
+ * wrong, nothing that can spin forever, and no `$variable` for systemd's
+ * ExecStart substitution to rewrite.
+ */
+const FIRE_RETRY_DELAYS = [5, 10, 15, 20];
+
+function shRetry(fire: string): string {
+  return [
+    fire,
+    ...FIRE_RETRY_DELAYS.map((s) => `{ sleep ${s}; ${fire}; }`),
+  ].join(" || ");
 }
 
 function buildShell({ url }: InstallerInput): Installer {
@@ -272,10 +304,10 @@ function buildMacosLogin(input: InstallerInput): Installer {
 
 function buildMacosBoot(input: InstallerInput): Installer {
   const label = `com.mantis.boot.${shortId(input.keyId)}`;
-  const shCmd = `/usr/bin/curl -fsS -m 10 -o /dev/null \
+  const shCmd = `mantis_fire() { /usr/bin/curl -fsS -m 10 -o /dev/null \
 -H "X-Mantis-Source: macos-boot" \
 -H "X-Mantis-Host: $(hostname)" \
-"${input.url}"`;
+"${input.url}"; }; ${shRetry("mantis_fire")}`;
   const content = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -311,22 +343,42 @@ function buildMacosBoot(input: InstallerInput): Installer {
       `sudo rm /Library/LaunchDaemons/${label}.plist`,
     ],
     notes:
-      "Boots before any user logs in (no $USER yet). 10s curl timeout absorbs the network-coming-up gap. Captures hostname only.",
+      "Boots before any user logs in (no $USER yet). The network is often not up yet at that point, so the ping retries up to 5 times over about a minute. Captures hostname only.",
   };
+}
+
+/**
+ * The unit runs as root, so it must not stay owned by whoever downloaded it:
+ * `mv` keeps the file's owner and mode, and that account could then rewrite a
+ * root-run ExecStart without sudo. `install` writes a fresh root-owned copy.
+ */
+function systemdUnitInstallSteps(unitName: string): string[] {
+  return [
+    `sudo install -o root -g root -m 0644 ${unitName} /etc/systemd/system/${unitName}`,
+    `rm ${unitName}`,
+    `sudo systemctl daemon-reload`,
+    `sudo systemctl enable ${unitName}`,
+  ];
 }
 
 function buildLinuxBoot(input: InstallerInput): Installer {
   const unitName = `mantis-${shortId(input.keyId)}.service`;
   // systemd ExecStart with sh -c so we can interpolate $(hostname).
   // Single quote the whole sh -c arg; use double quotes inside for header values.
+  //
+  // Type=simple, not oneshot. multi-user.target is ordered after every unit it
+  // wants, and a oneshot only counts as started once it has exited, so the
+  // retry chain (up to ~100s against an unreachable server) would hold the
+  // boot at that target. A simple service counts as started as soon as it is
+  // forked; the retries then run alongside the rest of the boot.
   const content = `[Unit]
 Description=Mantis boot ping for key ${input.keyId}
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-ExecStart=/bin/sh -c '/usr/bin/curl -fsS -m 10 -o /dev/null -H "X-Mantis-Source: linux-boot" -H "X-Mantis-Host: $(hostname)" "${input.url}"'
+Type=simple
+ExecStart=/bin/sh -c 'mantis_fire() { /usr/bin/curl -fsS -m 10 -o /dev/null -H "X-Mantis-Source: linux-boot" -H "X-Mantis-Host: $(hostname)" "${input.url}"; }; ${shRetry("mantis_fire")}'
 
 [Install]
 WantedBy=multi-user.target
@@ -339,18 +391,97 @@ WantedBy=multi-user.target
     filename: unitName,
     mime: "text/plain; charset=utf-8",
     content,
-    install: [
-      `sudo mv ${unitName} /etc/systemd/system/`,
-      `sudo systemctl daemon-reload`,
-      `sudo systemctl enable ${unitName}`,
-    ],
+    install: systemdUnitInstallSteps(unitName),
     uninstall: [
       `sudo systemctl disable ${unitName}`,
       `sudo rm /etc/systemd/system/${unitName}`,
       `sudo systemctl daemon-reload`,
     ],
-    notes: "Captures hostname (no $USER at boot time).",
+    notes:
+      "Captures hostname (no $USER at boot time). Retries up to 5 times over about a minute if the request fails; the retries run in the background, so an unreachable server does not hold up the boot.",
   };
+}
+
+/**
+ * BUILTIN\Users. With a group principal Task Scheduler runs the action in the
+ * session of the group member the trigger is for — here, whichever account
+ * just logged on — as that account and with no added privilege.
+ */
+const WINDOWS_PRINCIPAL_USERS = "<GroupId>S-1-5-32-545</GroupId>";
+
+/**
+ * NT AUTHORITY\LOCAL SERVICE. Wake and network-attach belong to the machine,
+ * not to a session, so these run whether or not anyone is logged on. LOCAL
+ * SERVICE is the least-privileged built-in account that can still make an
+ * outbound request; nothing here needs SYSTEM.
+ */
+const WINDOWS_PRINCIPAL_LOCAL_SERVICE = "<UserId>S-1-5-19</UserId>";
+
+type WindowsTask = {
+  description: string;
+  /** The single child of <Triggers>, indented to match. */
+  trigger: string;
+  /** One of the WINDOWS_PRINCIPAL_* elements. */
+  principal: string;
+  /**
+   * Start a new instance even while an earlier one is still running (the
+   * schema default, IgnoreNew, drops that trigger).
+   */
+  parallel?: boolean;
+  /** xs:duration; has to outlast the action, retries included. */
+  executionTimeLimit: string;
+  psCommand: string;
+};
+
+/**
+ * Task Scheduler task definition (schema 1.2) shared by the Windows alarms.
+ *
+ * - The XML declaration names no encoding. Every writer — CLI, zip, HTTP
+ *   download — emits this string as BOM-less UTF-8, and a declaration that
+ *   says otherwise makes a conformant parser reject the file. Without one the
+ *   bytes speak for themselves: UTF-8, or UTF-16 if a tool re-saves the file
+ *   with a BOM.
+ * - Element names are the task schema's, not the New-ScheduledTaskSettingsSet
+ *   switches: the battery settings are DisallowStartIfOnBatteries and
+ *   StopIfGoingOnBatteries, both false so a laptop on battery still fires.
+ * - The principal is always explicit. Left out, Task Scheduler binds the task
+ *   to whoever registered it, and the alarm then only fires inside that one
+ *   admin's session.
+ * - Children are in the order Task Scheduler itself exports them.
+ */
+function windowsTaskXml(task: WindowsTask): string {
+  const multipleInstances = task.parallel
+    ? "    <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>\n"
+    : "";
+  return `<?xml version="1.0"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>mantis</Author>
+    <Description>${escapeXml(task.description)}</Description>
+  </RegistrationInfo>
+  <Triggers>
+${task.trigger}
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      ${task.principal}
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+${multipleInstances}    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <Hidden>true</Hidden>
+    <ExecutionTimeLimit>${task.executionTimeLimit}</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-WindowStyle Hidden -NoProfile -Command "${escapeXml(task.psCommand)}"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+`;
 }
 
 function buildWindowsLogon(input: InstallerInput): Installer {
@@ -358,36 +489,17 @@ function buildWindowsLogon(input: InstallerInput): Installer {
   const psUrl = input.url.replace(/'/g, "''");
   // PowerShell hashtable for headers; @{key='val';...} syntax.
   const psCommand = `try { $h = @{'X-Mantis-Source'='windows-logon'; 'X-Mantis-User'=$env:USERNAME; 'X-Mantis-Host'=$env:COMPUTERNAME}; Invoke-WebRequest -Uri '${psUrl}' -Headers $h -UseBasicParsing -TimeoutSec 5 | Out-Null } catch {}`;
-  const content = `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Author>mantis</Author>
-    <Description>Mantis logon ping (${id})</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <LogonTrigger>
+  const content = windowsTaskXml({
+    description: `Mantis logon ping (${id})`,
+    trigger: `    <LogonTrigger>
       <Enabled>true</Enabled>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <ExecutionTimeLimit>PT30S</ExecutionTimeLimit>
-    <AllowStartIfOnBatteries>true</AllowStartIfOnBatteries>
-    <DontStopIfGoingOnBatteries>true</DontStopIfGoingOnBatteries>
-    <Hidden>true</Hidden>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-WindowStyle Hidden -NoProfile -Command "${escapeXml(psCommand)}"</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-`;
+    </LogonTrigger>`,
+    principal: WINDOWS_PRINCIPAL_USERS,
+    // Two accounts logging on within seconds of each other are two events.
+    parallel: true,
+    executionTimeLimit: "PT30S",
+    psCommand,
+  });
   return {
     type: "windows-logon",
     name: INSTALLER_META["windows-logon"].name,
@@ -401,7 +513,8 @@ function buildWindowsLogon(input: InstallerInput): Installer {
       `schtasks /create /tn "Mantis Logon ${id}" /xml mantis-logon-${id}.xml`,
     ],
     uninstall: [`schtasks /delete /tn "Mantis Logon ${id}" /f`],
-    notes: "Captures $env:USERNAME and $env:COMPUTERNAME.",
+    notes:
+      "Runs as the BUILTIN\\Users group, so it fires in the session of whichever account logs on (not only the admin who registered it). Captures that account's $env:USERNAME and $env:COMPUTERNAME.",
   };
 }
 
@@ -447,12 +560,17 @@ sudo() {
 function buildMacosWake({ url }: InstallerInput): Installer {
   const content = `#!/bin/sh
 # mantis: ~/.wakeup hook for sleepwatcher
-# Fires when the Mac wakes from sleep.
-/usr/bin/curl -fsS -m 5 -o /dev/null \\
-  -H "X-Mantis-Source: macos-wake" \\
-  -H "X-Mantis-User: $USER" \\
-  -H "X-Mantis-Host: $(hostname)" \\
-  "${url}"
+# Fires when the Mac wakes from sleep. The network is rarely back the instant
+# the machine resumes, so the ping retries (5 attempts, about a minute) in the
+# background rather than holding sleepwatcher up while it waits.
+mantis_fire() {
+  /usr/bin/curl -fsS -m 5 -o /dev/null \\
+    -H "X-Mantis-Source: macos-wake" \\
+    -H "X-Mantis-User: $USER" \\
+    -H "X-Mantis-Host: $(hostname)" \\
+    "${url}"
+}
+(${shRetry("mantis_fire")}) >/dev/null 2>&1 &
 `;
   return {
     type: "macos-wake",
@@ -473,7 +591,7 @@ function buildMacosWake({ url }: InstallerInput): Installer {
     ],
     uninstall: ["rm ~/.wakeup"],
     notes:
-      "Requires sleepwatcher (Homebrew). macOS has no built-in user-space wake hook; sleepwatcher fills that gap with ~/.sleep and ~/.wakeup scripts.",
+      "Requires sleepwatcher (Homebrew). macOS has no built-in user-space wake hook; sleepwatcher fills that gap with ~/.sleep and ~/.wakeup scripts. Retries up to 5 times over about a minute while the network comes back.",
   };
 }
 
@@ -528,13 +646,17 @@ function buildMacosNetwork(input: InstallerInput): Installer {
 
 function buildLinuxWake(input: InstallerInput): Installer {
   const unitName = `mantis-wake-${shortId(input.keyId)}.service`;
+  // Stays Type=oneshot, unlike the boot unit: this one is ordered After= the
+  // sleep targets that want it, so systemd adds no ordering the other way and
+  // nothing waits for the retry chain to finish.
   const content = `[Unit]
 Description=Mantis wake ping for key ${input.keyId}
-After=suspend.target hibernate.target hybrid-sleep.target
+After=suspend.target hibernate.target hybrid-sleep.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c '/usr/bin/curl -fsS -m 10 -o /dev/null -H "X-Mantis-Source: linux-wake" -H "X-Mantis-Host: $(hostname)" "${input.url}"'
+ExecStart=/bin/sh -c 'mantis_fire() { /usr/bin/curl -fsS -m 10 -o /dev/null -H "X-Mantis-Source: linux-wake" -H "X-Mantis-Host: $(hostname)" "${input.url}"; }; ${shRetry("mantis_fire")}'
 
 [Install]
 WantedBy=suspend.target hibernate.target hybrid-sleep.target
@@ -547,18 +669,14 @@ WantedBy=suspend.target hibernate.target hybrid-sleep.target
     filename: unitName,
     mime: "text/plain; charset=utf-8",
     content,
-    install: [
-      `sudo mv ${unitName} /etc/systemd/system/`,
-      `sudo systemctl daemon-reload`,
-      `sudo systemctl enable ${unitName}`,
-    ],
+    install: systemdUnitInstallSteps(unitName),
     uninstall: [
       `sudo systemctl disable ${unitName}`,
       `sudo rm /etc/systemd/system/${unitName}`,
       `sudo systemctl daemon-reload`,
     ],
     notes:
-      "WantedBy the sleep targets means systemd starts this unit when the system *resumes* from those states.",
+      "WantedBy the sleep targets means systemd starts this unit when the system *resumes* from those states. The network is rarely back at that instant, so the ping retries up to 5 times over about a minute.",
   };
 }
 
@@ -601,38 +719,26 @@ fi
 function buildWindowsWake(input: InstallerInput): Installer {
   const id = shortId(input.keyId);
   const psUrl = input.url.replace(/'/g, "''");
-  const psCommand = `try { $h = @{'X-Mantis-Source'='windows-wake'; 'X-Mantis-User'=$env:USERNAME; 'X-Mantis-Host'=$env:COMPUTERNAME}; Invoke-WebRequest -Uri '${psUrl}' -Headers $h -UseBasicParsing -TimeoutSec 5 | Out-Null } catch {}`;
-  const content = `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Author>mantis</Author>
-    <Description>Mantis wake ping (${id})</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <EventTrigger>
+  // One resume, one chance: the network is rarely back the instant the machine
+  // wakes, so try up to 5 times, waiting 5/10/15/20s between attempts (the
+  // same schedule as shRetry) and stopping at the first success. No
+  // X-Mantis-User: the task runs as LOCAL SERVICE, which is not a person.
+  const retryWaits = [0, ...FIRE_RETRY_DELAYS].join(",");
+  const psCommand = `$h = @{'X-Mantis-Source'='windows-wake'; 'X-Mantis-Host'=$env:COMPUTERNAME}; foreach ($wait in ${retryWaits}) { Start-Sleep -Seconds $wait; try { Invoke-WebRequest -Uri '${psUrl}' -Headers $h -UseBasicParsing -TimeoutSec 5 | Out-Null; break } catch {} }`;
+  const content = windowsTaskXml({
+    description: `Mantis wake ping (${id})`,
+    trigger: `    <EventTrigger>
       <Enabled>true</Enabled>
       <Subscription>${escapeXml(`<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and (EventID=1)]]</Select></Query></QueryList>`)}</Subscription>
-    </EventTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <ExecutionTimeLimit>PT30S</ExecutionTimeLimit>
-    <AllowStartIfOnBatteries>true</AllowStartIfOnBatteries>
-    <DontStopIfGoingOnBatteries>true</DontStopIfGoingOnBatteries>
-    <Hidden>true</Hidden>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-WindowStyle Hidden -NoProfile -Command "${escapeXml(psCommand)}"</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-`;
+    </EventTrigger>`,
+    principal: WINDOWS_PRINCIPAL_LOCAL_SERVICE,
+    // A resume that arrives while an earlier one is still retrying is its own
+    // event, not one to drop.
+    parallel: true,
+    // 50s of waits plus five 5s attempts, with room for PowerShell to start.
+    executionTimeLimit: "PT3M",
+    psCommand,
+  });
   return {
     type: "windows-wake",
     name: INSTALLER_META["windows-wake"].name,
@@ -647,45 +753,25 @@ function buildWindowsWake(input: InstallerInput): Installer {
     ],
     uninstall: [`schtasks /delete /tn "Mantis Wake ${id}" /f`],
     notes:
-      "Triggers on System log event 1 from Microsoft-Windows-Power-Troubleshooter, which fires whenever the system resumes from sleep/hibernate.",
+      "Triggers on System log event 1 from Microsoft-Windows-Power-Troubleshooter, which fires whenever the system resumes from sleep/hibernate. Runs as LOCAL SERVICE, so it fires whether or not anyone is logged on, and retries up to 5 times over about a minute while the network comes back. Captures $env:COMPUTERNAME only.",
   };
 }
 
 function buildWindowsNetwork(input: InstallerInput): Installer {
   const id = shortId(input.keyId);
   const psUrl = input.url.replace(/'/g, "''");
-  const psCommand = `try { $h = @{'X-Mantis-Source'='windows-network'; 'X-Mantis-User'=$env:USERNAME; 'X-Mantis-Host'=$env:COMPUTERNAME}; Invoke-WebRequest -Uri '${psUrl}' -Headers $h -UseBasicParsing -TimeoutSec 5 | Out-Null } catch {}`;
-  const content = `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Author>mantis</Author>
-    <Description>Mantis network-attach ping (${id})</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <EventTrigger>
+  // No X-Mantis-User: the task runs as LOCAL SERVICE, which is not a person.
+  const psCommand = `try { $h = @{'X-Mantis-Source'='windows-network'; 'X-Mantis-Host'=$env:COMPUTERNAME}; Invoke-WebRequest -Uri '${psUrl}' -Headers $h -UseBasicParsing -TimeoutSec 5 | Out-Null } catch {}`;
+  const content = windowsTaskXml({
+    description: `Mantis network-attach ping (${id})`,
+    trigger: `    <EventTrigger>
       <Enabled>true</Enabled>
       <Subscription>${escapeXml(`<QueryList><Query Id="0" Path="Microsoft-Windows-NetworkProfile/Operational"><Select Path="Microsoft-Windows-NetworkProfile/Operational">*[System[(EventID=10000)]]</Select></Query></QueryList>`)}</Subscription>
-    </EventTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <ExecutionTimeLimit>PT30S</ExecutionTimeLimit>
-    <AllowStartIfOnBatteries>true</AllowStartIfOnBatteries>
-    <DontStopIfGoingOnBatteries>true</DontStopIfGoingOnBatteries>
-    <Hidden>true</Hidden>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-WindowStyle Hidden -NoProfile -Command "${escapeXml(psCommand)}"</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-`;
+    </EventTrigger>`,
+    principal: WINDOWS_PRINCIPAL_LOCAL_SERVICE,
+    executionTimeLimit: "PT30S",
+    psCommand,
+  });
   return {
     type: "windows-network",
     name: INSTALLER_META["windows-network"].name,
@@ -700,21 +786,25 @@ function buildWindowsNetwork(input: InstallerInput): Installer {
     ],
     uninstall: [`schtasks /delete /tn "Mantis Network ${id}" /f`],
     notes:
-      "Triggers on Microsoft-Windows-NetworkProfile/Operational event 10000, which fires when a network profile is connected (Wi-Fi join, Ethernet plug-in, VPN up).",
+      "Triggers on Microsoft-Windows-NetworkProfile/Operational event 10000, which fires when a network profile is connected (Wi-Fi join, Ethernet plug-in, VPN up). Runs as LOCAL SERVICE, so it fires whether or not anyone is logged on. Captures $env:COMPUTERNAME only.",
   };
 }
 
 function buildCssBackground({ url, memo }: InstallerInput): Installer {
-  // Use CSS string-escape sequences on the hostname to obscure casual reading
-  // (the way canarytokens.org does). The escapes are equivalent — browsers
-  // parse them the same as plain ASCII — but they make the URL less obvious
-  // when someone glances at the stylesheet.
-  const obfuscated = url.replace(/[a-z]/g, (ch) => {
-    // Only escape lowercase letters in the hostname part, leave the path
-    // alone so it stays a valid URL after CSS parsing. Keep this rough —
-    // the goal is "harder to read", not "impossible to read".
+  // Replace a random third of the URL's lowercase letters (scheme, host and
+  // path alike) with CSS hex escapes, the way canarytokens.org does, so the
+  // URL is less obvious to someone glancing at the stylesheet. Keep this rough
+  // — the goal is "harder to read", not "impossible to read".
+  //
+  // The escape must decode to exactly the letter it replaced. A CSS hex escape
+  // takes up to six hex digits and then swallows one following whitespace
+  // (CSS Syntax 3 §4.3.7), so a short one such as \6d followed by "a" reads as
+  // U+06DA and the url() points somewhere else. Padding every escape to six
+  // digits leaves nothing for the next character to be absorbed into, and a
+  // letter that is followed by whitespace is left unescaped.
+  const obfuscated = url.replace(/[a-z](?!\s)/g, (ch) => {
     return Math.random() < 0.35
-      ? "\\" + ch.charCodeAt(0).toString(16)
+      ? "\\" + ch.charCodeAt(0).toString(16).padStart(6, "0")
       : ch;
   });
   const content = `/*
@@ -723,8 +813,9 @@ function buildCssBackground({ url, memo }: InstallerInput): Installer {
  *
  * Paste into your site's stylesheet (or a <style> block). When someone
  * copies your CSS to another site, the URL loads and fires the canary.
- * Both your site and the cloned site will fire hits — distinguish them
- * by the Referer header on each captured hit.
+ * Your own site loads it too: declare your site's origin (for example
+ * https://www.example.com) in this key's self_origins so those hits are
+ * ignored and only other sites alert.
  */
 body {
   background-image: url('${obfuscated}') !important;
@@ -744,12 +835,31 @@ body {
     ],
     uninstall: ["# Remove the CSS rule from your stylesheet."],
     notes:
-      "URL is partially obfuscated with CSS escape sequences (\\6c, \\72, etc.) — browsers parse it identically. The canary returns a 1×1 transparent GIF so the background is visually invisible. Filter notifications by Referer header to ignore hits from your own site.",
+      "URL is partially obfuscated with six-digit CSS escape sequences (\\00006c, \\000072, etc.), which decode back to the trigger URL. The canary returns a 1×1 transparent GIF so the background is visually invisible. Your own site fires this key on every page view, so declare your site's origin (for example https://www.example.com) in the key's self_origins — the `self_origins` API field, or the key's settings in the dashboard — and hits whose Referer is that origin are ignored. Without it, own-site traffic fills the dedupe window and most clone hits never alert. The exclusion needs your pages to send at least an origin Referer: the browser default does; `Referrer-Policy: no-referrer` or `same-origin` does not. A clone that hot-links your stylesheet instead of copying it reports your origin as its Referer and is not detected.",
   };
 }
 
+/**
+ * Reduce whatever the operator typed for "expected hostname" to the form
+ * `window.location.hostname` takes: lowercase, no scheme, userinfo, port,
+ * path or trailing dot. The generated snippet compares strings, so an
+ * un-normalised value ("Own-Site.test", "https://own-site.test/") would never
+ * match and the detector would fire on the operator's own site.
+ */
+function normalizeExpectedHostname(raw: string | undefined): string {
+  let h = (raw ?? "").trim().toLowerCase();
+  h = h.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^\/\//, "");
+  h = h.replace(/[/?#].*$/, "");
+  h = h.replace(/^.*@/, "");
+  // A bracketed IPv6 literal keeps its brackets, as location.hostname does.
+  h = h.startsWith("[")
+    ? h.replace(/\]:\d*$/, "]")
+    : h.replace(/^([^:]*):\d*$/, "$1");
+  return h.replace(/\.+$/, "").trim();
+}
+
 function buildJsCloneDetector({ url, memo, hostname }: InstallerInput): Installer {
-  const expected = hostname && hostname.trim().length > 0 ? hostname.trim() : "";
+  const expected = normalizeExpectedHostname(hostname);
   const expectedJs = JSON.stringify(expected);
   const urlJs = JSON.stringify(url);
   const content = `/*
@@ -763,7 +873,7 @@ function buildJsCloneDetector({ url, memo, hostname }: InstallerInput): Installe
  */
 (function () {
   var expected = ${expectedJs};
-  var h = (window.location.hostname || "").toLowerCase();
+  var h = (window.location.hostname || "").toLowerCase().replace(/\\.$/, "");
   if (expected && (h === expected || h.endsWith("." + expected))) return;
   var img = new Image();
   var canary = ${urlJs};
@@ -883,9 +993,21 @@ automation:
 
   - alias: "Mantis - automation triggered"
     mode: queued
+    max: 10
     triggers:
       - trigger: event
         event_type: automation_triggered
+    conditions:
+      # Never bridge a Mantis automation's own run: not this automation, not
+      # the examples in this file, and not the "Mantis hit" receiver that
+      # Mantis itself calls. Each of those already is, or was caused by, a
+      # Mantis request; bridging it would turn every POST into another one.
+      # If you rename one, keep its "Mantis" prefix or extend this condition.
+      - condition: template
+        value_template: >-
+          {{ trigger.event.data.entity_id != this.entity_id
+          and not (trigger.event.data.name | default('', true) | string | lower).startswith('mantis')
+          and not (trigger.event.data.entity_id | default('', true) | string).startswith('automation.mantis_') }}
     actions:
       - action: rest_command.mantis_iot_event
         data:
@@ -950,7 +1072,7 @@ automation:
       "# Reload YAML or restart Home Assistant.",
     ],
     notes:
-      "Works with any Home Assistant entity: contact sensors, locks, alarm panels, device_tracker, Scrypted smart motion sensors, and bridged HomeKit devices. Use your private HA network to call the public mantis trigger URL.",
+      "Works with any Home Assistant entity: contact sensors, locks, alarm panels, device_tracker, Scrypted smart motion sensors, and bridged HomeKit devices. Use your private HA network to call the public mantis trigger URL. The \"automation triggered\" example skips every automation whose name starts with \"Mantis\" (itself, the other examples and the Mantis receiver), so its own requests cannot re-trigger it — keep that prefix if you rename them.",
   };
 }
 
@@ -995,7 +1117,7 @@ async function fireMantis(item, eventData) {
     at: new Date().toISOString(),
   };
 
-  await fetch(MANTIS_URL, {
+  const res = await fetch(MANTIS_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1007,6 +1129,9 @@ async function fireMantis(item, eventData) {
     },
     body: JSON.stringify(body),
   });
+  // fetch only rejects on network errors; an HTTP error (e.g. a 503 while
+  // mantis is restarting) means nothing was recorded.
+  if (!res.ok) throw new Error("HTTP " + res.status);
 }
 
 for (const item of WATCH) {
@@ -1060,9 +1185,64 @@ function appendSrc(url: string, src: string): string {
   return `${url}${sep}src=${encodeURIComponent(src)}`;
 }
 
-function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer {
+/**
+ * A Home Assistant webhook id is a URL path segment and lands inside a quoted
+ * YAML scalar, so only URL-unreserved characters are accepted.
+ */
+export function isHomeAssistantWebhookId(s: string): boolean {
+  return /^[A-Za-z0-9._~-]{1,128}$/.test(s);
+}
+
+/**
+ * The webhook id is the only thing that authenticates Mantis to Home
+ * Assistant, so it has to be unguessable and independent of the key: the key
+ * UUID (and its 8-character prefix) is handed to enroll keys and webhook
+ * receivers and is written into file and task names on monitored hosts.
+ * 256 random bits, like Home Assistant's own generated ids. Web Crypto is
+ * global in Node, browsers and Workers, which keeps this module import-free.
+ */
+function randomWebhookId(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
+  return (
+    "mantis-" +
+    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+  );
+}
+
+function buildHomeAssistantReceiver(input: InstallerInput): Installer {
+  const { keyId, memo } = input;
   const short = shortId(keyId);
-  const webhookId = `mantis-${short}`;
+  if (
+    input.webhookId !== undefined &&
+    !isHomeAssistantWebhookId(input.webhookId)
+  ) {
+    throw new Error(
+      "webhookId must be 1-128 characters from A-Z a-z 0-9 . _ ~ -",
+    );
+  }
+  // One id per call, used for both the automation and the registration
+  // command, so the two always agree.
+  const webhookId = input.webhookId ?? randomWebhookId();
+  // A caller that supplies the id (the Mantis server derives one per key)
+  // renders the same file every time; without one each render differs.
+  const idOrigin =
+    input.webhookId !== undefined
+      ? {
+          comment: [
+            "The webhook_id below is this key's own. Treat it like a secret: it",
+            "is the only credential between Mantis and HA.",
+          ],
+          note: "The webhook_id is unguessable and is the only credential between Mantis and HA; treat it like a secret.",
+        }
+      : {
+          comment: [
+            "The webhook_id below was generated at random for this file. Treat it",
+            "like a secret: it is the only credential between Mantis and HA. A new",
+            "one is generated every time this installer is rendered, so take the",
+            "YAML and the command in step 3 from the same render.",
+          ],
+          note: "The webhook_id is random and is the only credential between Mantis and HA; a new one is generated on every render, so use the YAML and the `mantis dest add` command from the same render.",
+        };
   const content = `# Mantis Home Assistant receiver — ${memo}
 #
 # This automation listens for Mantis hits delivered via the
@@ -1070,19 +1250,22 @@ function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer 
 # flip a switch, run a script, send a phone notification, etc.
 #
 # Setup:
-#   1. Pick a unique webhook_id below (treat it like a secret; it is the
-#      only credential between Mantis and HA).
+#   1. ${idOrigin.comment.join("\n#      ")}
 #   2. Paste this YAML into automations.yaml or the HA YAML editor and
 #      reload automations.
 #   3. Register the destination in Mantis:
 #        mantis dest add ${short} home_assistant \\
 #          https://<your-ha-host>/api/webhook/${webhookId}
-#      Mantis fires an activation ping immediately on create, so you
-#      should see this automation run once with type "mantis.activation".
+#      Mantis fires an activation ping immediately on create. It triggers
+#      this automation but stops at the condition below (type
+#      "mantis.activation"), so look for it in the automation's traces: no
+#      action runs.
 #
 # Tailscale note: if Mantis reaches HA over the tailnet (100.64.0.0/10
 # CGNAT range) the SSRF guard refuses the private address and the activation
-# ping fails with "resolves to a private address".
+# ping fails with "destination refused: it does not resolve to a public
+# address". Every refused destination gets that same message; the Mantis
+# server log records the actual reason.
 # WARNING: ALLOW_PRIVATE_WEBHOOKS=1 lifts that block, but it is a GLOBAL switch
 # — it disables SSRF protection for EVERY destination and channel instance-wide,
 # not just this HA webhook. Prefer restricting egress to the HA host at the
@@ -1091,20 +1274,19 @@ function buildHomeAssistantReceiver({ keyId, memo }: InstallerInput): Installer 
 automation:
   - alias: ${JSON.stringify(`Mantis hit — ${memo}`)}
     mode: queued        # serialize rapid hits
+    max: 10
     triggers:
       - trigger: webhook
         webhook_id: "${webhookId}"
         allowed_methods:
           - POST
         local_only: false  # set true to reject WAN-sourced requests
+    conditions:
+      # Activation ping — the first-time test payload stops here, before any
+      # action runs.
+      - condition: template
+        value_template: "{{ trigger.json.type != 'mantis.activation' }}"
     actions:
-      # Activation ping — quietly ignore the first-time test payload.
-      - if:
-          - condition: template
-            value_template: "{{ trigger.json.type == 'mantis.activation' }}"
-        then:
-          - stop: "Mantis activation ping"
-
       # Example A: cut internet on a VLAN via the OPNsense integration.
       - action: switch.turn_off
         target:
@@ -1140,7 +1322,8 @@ automation:
       "# 2. Reload automations or restart Home Assistant.",
       `# 3. Register the Mantis destination:`,
       `#      mantis dest add ${short} home_assistant https://<your-ha-host>/api/webhook/${webhookId}`,
-      "# 4. The activation ping should fire this automation once on create.",
+      "# 4. The activation ping triggers this automation once on create and stops",
+      "#    at its condition (see the automation's traces); no action runs.",
       "# 5. Trigger the mantis URL — the hit payload runs your action chain.",
     ],
     uninstall: [
@@ -1148,7 +1331,9 @@ automation:
       "# Reload automations or restart Home Assistant.",
     ],
     notes:
-      "If Mantis reaches HA over Tailscale (100.64.0.0/10) or any RFC1918 network, the SSRF guard blocks the private address. ALLOW_PRIVATE_WEBHOOKS=1 lifts it, but it is GLOBAL — it disables SSRF protection for every destination and channel instance-wide, so prefer restricting egress to the HA host at the network layer. The activation ping surfaces unreachable-URL errors immediately via `mantis dest add`.",
+      idOrigin.note +
+      " If Mantis reaches HA over Tailscale (100.64.0.0/10) or any RFC1918 network, the SSRF guard blocks the private address. ALLOW_PRIVATE_WEBHOOKS=1 lifts it, but it is GLOBAL — it disables SSRF protection for every destination and channel instance-wide, so prefer restricting egress to the HA host at the network layer. The activation ping surfaces unreachable-URL errors immediately via `mantis dest add`; every refused destination reports \"destination refused: it does not resolve to a public address\", and the Mantis server log has the reason.",
+    webhookId,
   };
 }
 
@@ -1180,10 +1365,15 @@ const BUILDERS: Record<InstallType, (input: InstallerInput) => Installer> = {
  * become live JavaScript/CSS wherever the snippet is pasted, and a newline
  * breaks out of a `#` comment. Values that sit inside quoted strings are
  * additionally quoted at the use site (JSON.stringify).
+ *
+ * "Newline" is whatever the consumer of the generated file says it is: YAML
+ * 1.1 loaders (PyYAML, libyaml — Home Assistant) also end a line at NEL
+ * (U+0085), LS (U+2028) and PS (U+2029), so the C1 controls and both Unicode
+ * separators are collapsed along with the ASCII ones.
  */
 export function templateSafeText(s: string): string {
   return s
-    .replace(/[\r\n\t\x00-\x1f\x7f]+/g, " ")
+    .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ")
     .replace(/\*\//g, "* /")
     .replace(/<\//g, "< /")
     .trim();

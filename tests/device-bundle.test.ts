@@ -234,7 +234,9 @@ describe("device bundle", () => {
     expect(install).toContain("grep -qF");
     // And the uninstaller must actually strip it.
     expect(uninstall).toMatch(/sed -i.*mantis:shell/);
-    expect(uninstall).toContain('rm -f "$HOME/.mantis.sh"');
+    expect(uninstall).toContain('rm -f "$USER_HOME/.mantis.sh"');
+    // The rc line itself is read by the user's shell later, so it says $HOME.
+    expect(install).toContain(`'[ -f "$HOME/.mantis.sh" ] && . "$HOME/.mantis.sh"'`);
   });
 
   it("re-running install is safe for launchd and scheduled tasks", async () => {
@@ -256,9 +258,66 @@ describe("device bundle", () => {
         vectors: vectorsFor("windows", ["logon"]),
       }),
     );
+    // The registration helper deletes any earlier copy of the task first.
     expect(win[`${bundleRootName("pc01", "windows")}/install.ps1`]).toContain(
-      "schtasks /delete",
+      "Invoke-Schtasks /delete /tn $Task /f",
     );
+  });
+
+  it("installs systemd units root-owned, by hand and from the bootstrap", async () => {
+    // The units run as root. `mv` would keep the downloading user's ownership
+    // on the file, letting that account rewrite a root-run ExecStart.
+    const vectors = vectorsFor("linux", ["boot", "wake"]);
+    for (const bv of vectors) {
+      const unit = bv.installer.filename;
+      expect(bv.installer.install).toEqual([
+        `sudo install -o root -g root -m 0644 ${unit} /etc/systemd/system/${unit}`,
+        `rm ${unit}`,
+        "sudo systemctl daemon-reload",
+        `sudo systemctl enable ${unit}`,
+      ]);
+      expect(bv.installer.install.join("\n")).not.toMatch(/\bmv\b/);
+    }
+    const files = await unzip(
+      await buildDeviceBundle({ deviceName: "web01", os: "linux", vectors }),
+    );
+    const root = bundleRootName("web01", "linux");
+    for (const bv of vectors) {
+      const unit = bv.installer.filename;
+      expect(files[`${root}/install.sh`]).toContain(
+        `$SUDO install -m 644 -o root -g root "$BUNDLE/vectors/${bv.vector.slug}/${unit}" "/etc/systemd/system/${unit}"`,
+      );
+      // README carries the same manual steps.
+      expect(files[`${root}/README.txt`]).toContain(bv.installer.install[0]);
+    }
+  });
+
+  it("tells the operator who gets the per-user alarms on a root run", async () => {
+    const files = await unzip(
+      await buildDeviceBundle({
+        deviceName: "mac01",
+        os: "macos",
+        vectors: vectorsFor("macos"),
+      }),
+    );
+    const readme = files[`${bundleRootName("mac01", "macos")}/README.txt`]!;
+    expect(readme).toContain("MANTIS_TARGET_USER=<name>");
+    expect(readme).toContain("exits non-zero");
+
+    // Linux differs: a direct root login is a root-only host, so root is the
+    // account that gets them.
+    const linux = await unzip(
+      await buildDeviceBundle({
+        deviceName: "web01",
+        os: "linux",
+        vectors: vectorsFor("linux"),
+      }),
+    );
+    const linuxReadme = linux[`${bundleRootName("web01", "linux")}/README.txt`]!;
+    expect(linuxReadme).toContain("or for root itself when root is logged in directly");
+    expect(linuxReadme).toContain("MANTIS_TARGET_USER=<name>");
+    expect(linuxReadme).not.toContain("exits non-zero");
+    expect(linuxReadme).not.toContain("LaunchAgents");
   });
 
   it("asks before changing the machine, and can be driven non-interactively", async () => {
