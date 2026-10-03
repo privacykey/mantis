@@ -1,4 +1,4 @@
-import { c } from "../../lib/out.js";
+import { c, jsonText, safeText } from "../../lib/out.js";
 import type { Finding, ScanSummary } from "./types.js";
 
 export function renderHuman(
@@ -36,17 +36,21 @@ export function renderHuman(
       f.severity === "confirmed"
         ? c.red("✗ ") + c.dim("confirmed")
         : c.yellow("? ") + c.dim("suspicious");
-    lines.push(`  ${sev}  ${c.bold(f.kind)}`);
-    lines.push(`    ${c.dim("path:    ")} ${formatPath(f.path)}${f.line ? `:${f.line}` : ""}`);
-    lines.push(`    ${c.dim("summary: ")} ${f.summary}`);
-    if (f.vendor) lines.push(`    ${c.dim("vendor:  ")} ${f.vendor}`);
-    if (f.url) lines.push(`    ${c.dim("matched: ")} ${c.cyan(f.url)}`);
-    if (f.source) lines.push(`    ${c.dim("source:  ")} ${f.source}`);
+    // Every field below can carry bytes from the scanned machine's files: a
+    // path, a matched line, a URL lifted out of one. None of it is ours.
+    lines.push(`  ${sev}  ${c.bold(safeText(f.kind))}`);
+    lines.push(`    ${c.dim("path:    ")} ${formatPath(f.path)}${f.line ? `:${safeText(f.line)}` : ""}`);
+    lines.push(`    ${c.dim("summary: ")} ${safeText(f.summary)}`);
+    if (f.vendor) lines.push(`    ${c.dim("vendor:  ")} ${safeText(f.vendor)}`);
+    if (f.url) lines.push(`    ${c.dim("matched: ")} ${c.cyan(safeText(f.url))}`);
+    if (f.source) lines.push(`    ${c.dim("source:  ")} ${safeText(f.source)}`);
     if (opts.verbose && f.match) {
-      lines.push(`    ${c.dim("match:   ")} ${f.match}`);
+      lines.push(`    ${c.dim("match:   ")} ${safeText(f.match)}`);
     }
-    lines.push(`    ${c.dim("remove:  ")} ${f.removeHint.split("\n").join(`\n               `)}`);
-    if (f.note) lines.push(`    ${c.dim("note:    ")} ${f.note}`);
+    // A hint's line breaks are the detector's own (detectors escape any path
+    // they embed), so split first and escape each line.
+    lines.push(`    ${c.dim("remove:  ")} ${f.removeHint.split("\n").map(safeText).join(`\n               `)}`);
+    if (f.note) lines.push(`    ${c.dim("note:    ")} ${safeText(f.note)}`);
     lines.push("");
   }
 
@@ -67,7 +71,7 @@ export function renderJson(
   summary: ScanSummary,
   opts: { verbose: boolean } = { verbose: false },
 ): string {
-  return JSON.stringify(
+  return jsonText(
     {
       scope: summary.scope,
       scanned: summary.scanned,
@@ -75,7 +79,6 @@ export function renderJson(
       errors: summary.errors,
       findings: summary.findings.map((f) => serialize(f, opts.verbose)),
     },
-    null,
     2,
   );
 }
@@ -107,7 +110,7 @@ function appendNonFindings(lines: string[], summary: ScanSummary): void {
       } — re-run with sudo to scan system locations.`,
     );
     for (const p of summary.permissionDenied.slice(0, 5)) {
-      lines.push(`    ${c.dim("•")} ${p}`);
+      lines.push(`    ${c.dim("•")} ${safeText(p)}`);
     }
     if (summary.permissionDenied.length > 5) {
       lines.push(`    ${c.dim(`… and ${summary.permissionDenied.length - 5} more`)}`);
@@ -116,11 +119,11 @@ function appendNonFindings(lines: string[], summary: ScanSummary): void {
   if (summary.errors.length > 0) {
     lines.push("");
     for (const e of summary.errors) {
-      lines.push(`  ${c.red("error:")} ${e.detector}: ${e.error}`);
+      lines.push(`  ${c.red("error:")} ${safeText(e.detector)}: ${safeText(e.error)}`);
     }
   }
 }
 
 function formatPath(p: string): string {
-  return p;
+  return safeText(p);
 }

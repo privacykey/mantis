@@ -5,7 +5,7 @@ import {
   removeProfile,
   useProfile,
 } from "../lib/config.js";
-import { c, emit, fail } from "../lib/out.js";
+import { c, emit, fail, safeText } from "../lib/out.js";
 
 export async function profileListCmd(): Promise<void> {
   const { current, profiles } = await listProfiles();
@@ -20,21 +20,21 @@ export async function profileListCmd(): Promise<void> {
       const w = process.stdout.write.bind(process.stdout);
       for (const { name, entry } of profiles) {
         const marker = name === current ? c.green("* ") : "  ";
-        w(`${marker}${c.bold(name.padEnd(16))} ${c.cyan(entry.baseUrl)}\n`);
+        w(`${marker}${c.bold(safeText(name).padEnd(16))} ${c.cyan(safeText(entry.baseUrl))}\n`);
         if (entry.keyPrefix) {
-          w(`    ${c.dim("key:  ")} ${entry.keyPrefix}…\n`);
+          w(`    ${c.dim("key:  ")} ${safeText(entry.keyPrefix)}…\n`);
         }
         if (entry.cloudflareAccessMode) {
           w(
-            `    ${c.dim("cf:   ")} ${entry.cloudflareAccessMode}${
+            `    ${c.dim("cf:   ")} ${safeText(entry.cloudflareAccessMode)}${
               entry.cloudflareAccessAppUrl
-                ? c.dim(` (${entry.cloudflareAccessAppUrl})`)
+                ? c.dim(` (${safeText(entry.cloudflareAccessAppUrl)})`)
                 : ""
             }\n`,
           );
         }
         if (entry.edgeWorkerUrl) {
-          w(`    ${c.dim("edge: ")} ${entry.edgeWorkerUrl}\n`);
+          w(`    ${c.dim("edge: ")} ${safeText(entry.edgeWorkerUrl)}\n`);
         }
       }
     },
@@ -58,7 +58,7 @@ export async function profileCurrentCmd(): Promise<void> {
   if (!current) return fail("no profiles configured");
   emit(
     () => {
-      process.stdout.write(`${current}\n`);
+      process.stdout.write(`${safeText(current)}\n`);
     },
     { current },
   );
@@ -70,7 +70,7 @@ export async function profileUseCmd(name: string): Promise<void> {
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
-  process.stderr.write(`${c.green("✓")} switched to profile ${c.bold(name)}\n`);
+  process.stderr.write(`${c.green("✓")} switched to profile ${c.bold(safeText(name))}\n`);
 }
 
 export async function profileRmCmd(
@@ -89,11 +89,11 @@ export async function profileRmCmd(
   }
   const tail = result.wasCurrent
     ? result.newCurrent
-      ? c.dim(` (current → ${result.newCurrent})`)
+      ? c.dim(` (current → ${safeText(result.newCurrent)})`)
       : c.dim(" (was current; no profiles remain)")
     : "";
   process.stderr.write(
-    `${c.green("✓")} removed profile ${c.bold(name)}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
+    `${c.green("✓")} removed profile ${c.bold(safeText(name))}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
   );
 }
 
@@ -105,7 +105,7 @@ export async function profileSetEdgeCmd(
     try {
       const updated = await patchProfile(name, { edgeWorkerUrl: undefined });
       process.stderr.write(
-        `${c.green("✓")} cleared default edge worker for ${c.bold(name)} ${c.dim(`(was: ${updated.edgeWorkerUrl ?? "—"})`)}\n`,
+        `${c.green("✓")} cleared default edge worker for ${c.bold(safeText(name))} ${c.dim(`(was: ${safeText(updated.edgeWorkerUrl ?? "—")})`)}\n`,
       );
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
@@ -124,7 +124,7 @@ export async function profileSetEdgeCmd(
     return fail(err instanceof Error ? err.message : String(err));
   }
   process.stderr.write(
-    `${c.green("✓")} profile ${c.bold(name)} default edge worker → ${c.cyan(worker)}\n`,
+    `${c.green("✓")} profile ${c.bold(safeText(name))} default edge worker → ${c.cyan(safeText(worker))}\n`,
   );
 }
 
@@ -134,35 +134,42 @@ export async function profileShowCmd(name?: string): Promise<void> {
   if (!target) return fail("no profile selected");
   const found = profiles.find((p) => p.name === target);
   if (!found) return fail(`profile '${target}' not found`);
-  const hasKey = !!getKey(found.entry.baseUrl);
+  const key = getKey(found.entry.baseUrl);
+  const hasKey = !!key;
+  // Same check as whoami: the stored key is shared per server URL, so the
+  // prefix recorded on this profile may no longer describe it.
+  const recorded = found.entry.keyPrefix;
+  const stalePrefix = Boolean(key && recorded && !key.startsWith(recorded));
+  const keyPrefix = stalePrefix ? key!.slice(0, 18) : (recorded ?? null);
   emit(
     () => {
       const w = process.stdout.write.bind(process.stdout);
-      w(`${c.bold(found.name)}${found.name === current ? c.dim(" (current)") : ""}\n`);
-      w(`  ${c.dim("server:")} ${found.entry.baseUrl}\n`);
+      w(`${c.bold(safeText(found.name))}${found.name === current ? c.dim(" (current)") : ""}\n`);
+      w(`  ${c.dim("server:")} ${safeText(found.entry.baseUrl)}\n`);
       w(
-        `  ${c.dim("key:   ")} ${found.entry.keyPrefix ?? "—"}${
+        `  ${c.dim("key:   ")} ${safeText(keyPrefix ?? "—")}${
           hasKey ? "" : c.red(" (no keychain entry)")
-        }\n`,
+        }${stalePrefix ? c.yellow(` (this profile recorded ${safeText(recorded)}; the key stored for this server has been replaced since)`) : ""}\n`,
       );
       if (found.entry.cloudflareAccessMode) {
         w(
-          `  ${c.dim("cf:    ")} ${found.entry.cloudflareAccessMode}${
+          `  ${c.dim("cf:    ")} ${safeText(found.entry.cloudflareAccessMode)}${
             found.entry.cloudflareAccessAppUrl
-              ? c.dim(` (${found.entry.cloudflareAccessAppUrl})`)
+              ? c.dim(` (${safeText(found.entry.cloudflareAccessAppUrl)})`)
               : ""
           }\n`,
         );
       }
       if (found.entry.edgeWorkerUrl) {
-        w(`  ${c.dim("edge:  ")} ${found.entry.edgeWorkerUrl}\n`);
+        w(`  ${c.dim("edge:  ")} ${safeText(found.entry.edgeWorkerUrl)}\n`);
       }
     },
     {
       name: found.name,
       is_current: found.name === current,
       base_url: found.entry.baseUrl,
-      key_prefix: found.entry.keyPrefix ?? null,
+      key_prefix: keyPrefix,
+      key_prefix_stale: stalePrefix,
       has_key: hasKey,
       cloudflare_mode: found.entry.cloudflareAccessMode ?? null,
       cloudflare_app_url: found.entry.cloudflareAccessAppUrl ?? null,

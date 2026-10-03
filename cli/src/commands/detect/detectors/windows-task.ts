@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { systemExe } from "../../../lib/system-exe.js";
 import type { Detector, Finding } from "../types.js";
 
 const TASK_NAME_RE = /^\\(?:Mantis|Canary) (Logon|Wake|Network) /i;
@@ -13,7 +14,7 @@ export const windowsTaskDetector: Detector = {
 
     // `/fo csv /v` gives a verbose CSV. The task names show up in column 0
     // (TaskName) as backslash-prefixed paths like `\Mantis Logon abc12345`.
-    const res = spawnSync("schtasks", ["/query", "/fo", "csv", "/v"], {
+    const res = spawnSync(systemExe("schtasks"), ["/query", "/fo", "csv", "/v"], {
       encoding: "utf8",
     });
     if (res.error || res.status !== 0) {

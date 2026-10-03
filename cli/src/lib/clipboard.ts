@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { systemExe } from "./system-exe.js";
 
 type ClipboardCommand = {
   cmd: string;
@@ -19,7 +20,7 @@ function candidates(): ClipboardCommand[] {
   if (process.platform === "win32") {
     return [
       {
-        cmd: "powershell.exe",
+        cmd: systemExe("powershell.exe"),
         args: ["-NoProfile", "-Command", "Set-Clipboard"],
       },
     ];

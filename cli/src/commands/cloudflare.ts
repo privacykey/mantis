@@ -14,18 +14,43 @@ import {
   patchProfile,
   setCloudflareServiceAuth,
 } from "../lib/config.js";
-import { c, emit, fail, isJsonMode } from "../lib/out.js";
+import { c, emit, ExitCode, fail, isJsonMode, safeText } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 
-async function requireCurrentProfile(): Promise<{
+/**
+ * Which profile a `mantis cloudflare …` command applies to. Access settings
+ * live on a stored profile and its keychain entry, and the credentials stored
+ * here are then sent with every request to that profile's server — so the
+ * target has to be the profile the operator named, not whichever is current.
+ */
+export type CfTargetOpts = {
+  /** The global `--profile <name>`. */
+  profile?: string;
+  /** The global `--base-url <url>`. Refused: there is no profile behind it. */
+  baseUrl?: string;
+};
+
+type TargetProfile = {
   name: string;
   baseUrl: string;
   cloudflareAccessAppUrl?: string;
   cloudflareAccessMode?: "sso" | "service-auth";
-}> {
-  const name = await getCurrentProfileName();
+};
+
+/**
+ * Resolve the target profile: `--profile`, else MANTIS_PROFILE, else the
+ * current one. A named profile that does not exist is an error — never a
+ * silent fall-back to the current profile.
+ */
+async function requireProfile(opts: CfTargetOpts): Promise<TargetProfile> {
+  if (opts.baseUrl) {
+    throw new BaseUrlRefused(
+      "--base-url cannot be used with `mantis cloudflare`: Cloudflare Access settings are stored on a profile. Pass --profile <name> to choose which one.",
+    );
+  }
+  const name = await getCurrentProfileName(opts.profile);
   if (!name) {
-    throw new ProfileMissing("not logged in to mantis. Run `mantis login` first.");
+    throw new NotLoggedIn("not logged in to mantis. Run `mantis login` first.");
   }
   const entry = await getProfile(name);
   if (!entry) {
@@ -42,16 +67,33 @@ async function requireCurrentProfile(): Promise<{
 }
 
 class ProfileMissing extends Error {}
+class NotLoggedIn extends ProfileMissing {}
+class BaseUrlRefused extends Error {}
 
-export type CfLoginOpts = { app?: string };
+function failTarget(err: unknown): never {
+  return fail(
+    err instanceof Error ? err.message : String(err),
+    err instanceof BaseUrlRefused ? ExitCode.Usage : ExitCode.Generic,
+  );
+}
+
+/** Name the profile and server a credential is about to be bound to. */
+function announceTarget(cfg: TargetProfile): void {
+  process.stderr.write(
+    `${c.dim("target:")} profile ${c.bold(safeText(cfg.name))} ${c.dim("→")} ${c.cyan(safeText(cfg.baseUrl))}\n`,
+  );
+}
+
+export type CfLoginOpts = CfTargetOpts & { app?: string };
 
 export async function cloudflareLoginCmd(opts: CfLoginOpts): Promise<void> {
-  let cfg: Awaited<ReturnType<typeof requireCurrentProfile>>;
+  let cfg: TargetProfile;
   try {
-    cfg = await requireCurrentProfile();
+    cfg = await requireProfile(opts);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err));
+    return failTarget(err);
   }
+  announceTarget(cfg);
 
   const appUrl = (opts.app ?? cfg.baseUrl).replace(/\/$/, "");
 
@@ -62,7 +104,7 @@ export async function cloudflareLoginCmd(opts: CfLoginOpts): Promise<void> {
   }
 
   process.stderr.write(
-    `${c.dim("opening browser to Cloudflare Access for")} ${c.cyan(appUrl)}\n`,
+    `${c.dim("opening browser to Cloudflare Access for")} ${c.cyan(safeText(appUrl))}\n`,
   );
   try {
     cloudflareInteractiveLogin(appUrl);
@@ -84,16 +126,19 @@ export async function cloudflareLoginCmd(opts: CfLoginOpts): Promise<void> {
   });
 
   process.stderr.write(
-    `${c.green("✓")} cloudflare access SSO configured for profile ${c.bold(cfg.name)} (mode: sso, app: ${appUrl})\n`,
+    `${c.green("✓")} cloudflare access SSO configured for profile ${c.bold(safeText(cfg.name))} (mode: sso, app: ${safeText(appUrl)})\n`,
   );
 }
 
-export async function cloudflareLogoutCmd(): Promise<void> {
-  let cfg: Awaited<ReturnType<typeof requireCurrentProfile>>;
+export async function cloudflareLogoutCmd(opts: CfTargetOpts = {}): Promise<void> {
+  let cfg: TargetProfile;
   try {
-    cfg = await requireCurrentProfile();
-  } catch {
-    return;
+    cfg = await requireProfile(opts);
+  } catch (err) {
+    // Not logged in at all: nothing to clear. A profile that was named but
+    // does not exist (or --base-url) is still an error.
+    if (err instanceof NotLoggedIn) return;
+    return failTarget(err);
   }
 
   if (cfg.cloudflareAccessAppUrl && cloudflaredInstalled()) {
@@ -106,11 +151,11 @@ export async function cloudflareLogoutCmd(): Promise<void> {
   });
 
   process.stderr.write(
-    `${c.green("✓")} cleared cloudflare access config for profile ${c.bold(cfg.name)}\n`,
+    `${c.green("✓")} cleared cloudflare access config for profile ${c.bold(safeText(cfg.name))} (${safeText(cfg.baseUrl)})\n`,
   );
 }
 
-export type CfServiceAuthOpts = {
+export type CfServiceAuthOpts = CfTargetOpts & {
   clientId?: string;
   clientSecret?: string;
   /** Read the client secret from stdin instead of prompting (leak-free for CI). */
@@ -120,12 +165,15 @@ export type CfServiceAuthOpts = {
 export async function cloudflareSetServiceAuthCmd(
   opts: CfServiceAuthOpts,
 ): Promise<void> {
-  let cfg: Awaited<ReturnType<typeof requireCurrentProfile>>;
+  let cfg: TargetProfile;
   try {
-    cfg = await requireCurrentProfile();
+    cfg = await requireProfile(opts);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err));
+    return failTarget(err);
   }
+  // Shown before the secret is read or stored: from here on it is sent with
+  // every request to this server.
+  announceTarget(cfg);
 
   let clientId = opts.clientId;
   let clientSecret = opts.clientSecret;
@@ -184,21 +232,22 @@ export async function cloudflareSetServiceAuthCmd(
   });
 
   process.stderr.write(
-    `${c.green("✓")} cloudflare access service-auth configured for profile ${c.bold(cfg.name)}\n`,
+    `${c.green("✓")} cloudflare access service-auth configured for profile ${c.bold(safeText(cfg.name))} (${safeText(cfg.baseUrl)})\n`,
   );
 }
 
-export async function cloudflareStatusCmd(): Promise<void> {
-  let cfg: Awaited<ReturnType<typeof requireCurrentProfile>>;
+export async function cloudflareStatusCmd(opts: CfTargetOpts = {}): Promise<void> {
+  let cfg: TargetProfile;
   try {
-    cfg = await requireCurrentProfile();
+    cfg = await requireProfile(opts);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err));
+    return failTarget(err);
   }
   const mode = cfg.cloudflareAccessMode;
 
   type StatusPayload = {
     profile: string;
+    base_url: string;
     mode: "off" | "sso" | "service-auth";
     app_url: string | null;
     cloudflared_installed: boolean;
@@ -212,7 +261,8 @@ export async function cloudflareStatusCmd(): Promise<void> {
   if (!mode) {
     emit(
       () => {
-        process.stdout.write(`${c.dim("profile:")} ${cfg.name}\n`);
+        process.stdout.write(`${c.dim("profile:")} ${safeText(cfg.name)}\n`);
+        process.stdout.write(`${c.dim("server: ")} ${safeText(cfg.baseUrl)}\n`);
         process.stdout.write(`${c.dim("mode:   ")} off\n`);
         process.stdout.write(
           `${c.dim("hint:   ")} run \`mantis cloudflare login --app=https://<your-mantis>\` or \`mantis cloudflare set-service-auth\`\n`,
@@ -220,6 +270,7 @@ export async function cloudflareStatusCmd(): Promise<void> {
       },
       {
         profile: cfg.name,
+        base_url: cfg.baseUrl,
         mode: "off",
         app_url: null,
         cloudflared_installed: installed,
@@ -232,14 +283,16 @@ export async function cloudflareStatusCmd(): Promise<void> {
     const sa = getCloudflareServiceAuth(cfg.baseUrl);
     emit(
       () => {
-        process.stdout.write(`${c.dim("profile: ")} ${cfg.name}\n`);
+        process.stdout.write(`${c.dim("profile: ")} ${safeText(cfg.name)}\n`);
+        process.stdout.write(`${c.dim("server:  ")} ${safeText(cfg.baseUrl)}\n`);
         process.stdout.write(`${c.dim("mode:    ")} ${c.cyan("service-auth")}\n`);
         process.stdout.write(
-          `${c.dim("client:  ")} ${sa ? sa.client_id.slice(0, 12) + "…" + sa.client_id.slice(-7) : c.red("(missing — keychain entry gone)")}\n`,
+          `${c.dim("client:  ")} ${sa ? safeText(sa.client_id.slice(0, 12) + "…" + sa.client_id.slice(-7)) : c.red("(missing — keychain entry gone)")}\n`,
         );
       },
       {
         profile: cfg.name,
+        base_url: cfg.baseUrl,
         mode: "service-auth",
         app_url: cfg.cloudflareAccessAppUrl ?? cfg.baseUrl,
         cloudflared_installed: installed,
@@ -267,9 +320,10 @@ export async function cloudflareStatusCmd(): Promise<void> {
 
   emit(
     () => {
-      process.stdout.write(`${c.dim("profile:     ")} ${cfg.name}\n`);
+      process.stdout.write(`${c.dim("profile:     ")} ${safeText(cfg.name)}\n`);
+      process.stdout.write(`${c.dim("server:      ")} ${safeText(cfg.baseUrl)}\n`);
       process.stdout.write(`${c.dim("mode:        ")} ${c.cyan("sso")}\n`);
-      process.stdout.write(`${c.dim("app URL:     ")} ${appUrl}\n`);
+      process.stdout.write(`${c.dim("app URL:     ")} ${safeText(appUrl)}\n`);
       process.stdout.write(
         `${c.dim("cloudflared:")} ${installed ? c.green("installed") : c.red("not installed")}\n`,
       );
@@ -281,7 +335,7 @@ export async function cloudflareStatusCmd(): Promise<void> {
         }\n`,
       );
       if (tokenError) {
-        process.stdout.write(`${c.dim("error:       ")} ${tokenError}\n`);
+        process.stdout.write(`${c.dim("error:       ")} ${safeText(tokenError)}\n`);
       }
       if (tokenStatus !== "ok") {
         process.stdout.write(
@@ -291,6 +345,7 @@ export async function cloudflareStatusCmd(): Promise<void> {
     },
     {
       profile: cfg.name,
+      base_url: cfg.baseUrl,
       mode: "sso",
       app_url: appUrl,
       cloudflared_installed: installed,

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -377,4 +377,174 @@ describe("mantis backup → mantis restore round-trip", () => {
     delete process.env.MANTIS_BACKUP_TEST_PASS_RIGHT;
     delete process.env.MANTIS_BACKUP_TEST_PASS_WRONG;
   });
+});
+
+// ---------------------------------------------------------------------------
+// Keychain credentials are stored per server URL and shared by every profile
+// for that URL. "Existing things are kept unless --overwrite" therefore has to
+// cover the credential, not only the profile name.
+// ---------------------------------------------------------------------------
+
+describe("mantis restore never replaces a server's stored credentials without --overwrite", () => {
+  const URL_ = "https://shared.example.com";
+  const K1 = "mantis_live_OPERATOR_key_on_this_machine";
+  const K2 = "mantis_live_BUNDLE_key_from_elsewhere";
+  const CF1 = { client_id: "machine.access", client_secret: "machine-secret" };
+  const CF2 = { client_id: "bundle.access", client_secret: "bundle-secret" };
+  const PASS = "restore-credential-passphrase";
+
+  /** Write a bundle holding the given profiles and return its path. */
+  async function bundleWith(
+    profiles: Array<Record<string, unknown>>,
+  ): Promise<string> {
+    const { sealBundle } = await import("../src/lib/backup.js");
+    const envelope = await sealBundle(
+      {
+        $schema: "mantis-backup-v1",
+        exportedAt: new Date().toISOString(),
+        profiles: profiles as never,
+        plugins: [],
+      },
+      PASS,
+    );
+    const path = join(tmpHome, "crafted.json");
+    await writeFile(path, JSON.stringify(envelope));
+    process.env.MANTIS_BACKUP_TEST_PASS = PASS;
+    return path;
+  }
+
+  /** This machine: profile `prod` for URL_, with its own key and CF token. */
+  async function machineWithProd() {
+    const config = await import("../src/lib/config.js");
+    config.setKey(URL_, K1);
+    config.setCloudflareServiceAuth(URL_, CF1);
+    await config.setProfile("prod", {
+      baseUrl: URL_,
+      keyPrefix: K1.slice(0, 18),
+      cloudflareAccessMode: "service-auth",
+    });
+    return config;
+  }
+
+  afterEach(() => {
+    delete process.env.MANTIS_BACKUP_TEST_PASS;
+  });
+
+  it("skips a new-named bundle profile whose server already has different credentials", async () => {
+    const config = await machineWithProd();
+    const path = await bundleWith([
+      { name: "other", baseUrl: URL_, keyPrefix: K2.slice(0, 18), apiKey: K2, cloudflareAccessMode: "service-auth", cloudflareServiceAuth: CF2 },
+    ]);
+    const { restoreCmd } = await import("../src/commands/backup.js");
+
+    vi.mocked(process.stderr.write).mockClear();
+    await restoreCmd(path, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", skipPlugins: true });
+
+    expect(config.getKey(URL_)).toBe(K1);
+    expect(config.getCloudflareServiceAuth(URL_)).toEqual(CF1);
+    expect(await config.getProfile("other")).toBeNull();
+    const said = vi.mocked(process.stderr.write).mock.calls.join(" ");
+    expect(said).toContain("skipped 1 profile(s) whose server already has different credentials");
+    expect(said).toContain("other");
+    expect(said).toContain("--overwrite");
+
+    // --overwrite is the explicit way to take the bundle's credentials.
+    await restoreCmd(path, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", skipPlugins: true, overwrite: true });
+    expect(config.getKey(URL_)).toBe(K2);
+    expect(config.getCloudflareServiceAuth(URL_)).toEqual(CF2);
+    expect((await config.getProfile("other"))?.baseUrl).toBe(URL_);
+
+    // `prod` still records the old prefix; whoami now says the key changed.
+    const { whoamiCmd } = await import("../src/commands/whoami.js");
+    vi.mocked(process.stdout.write).mockClear();
+    await whoamiCmd({ profile: "prod" });
+    const shown = vi.mocked(process.stdout.write).mock.calls.join(" ");
+    expect(shown).toContain(K2.slice(0, 18));
+    expect(shown).toContain("has been replaced since");
+  }, 20_000);
+
+  it("reports the skip in --json output", async () => {
+    await machineWithProd();
+    const path = await bundleWith([{ name: "other", baseUrl: URL_, apiKey: K2 }]);
+    const { restoreCmd } = await import("../src/commands/backup.js");
+    const { setJsonMode } = await import("../src/lib/out.js");
+
+    vi.mocked(process.stdout.write).mockClear();
+    setJsonMode(true);
+    try {
+      await restoreCmd(path, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", skipPlugins: true });
+    } finally {
+      setJsonMode(false);
+    }
+    const result = JSON.parse(String(vi.mocked(process.stdout.write).mock.calls[0]![0]));
+    expect(result).toMatchObject({ restored: [], skipped: ["other"], skipped_credentials: ["other"] });
+  }, 20_000);
+
+  it("still restores a new profile name when the stored credential is the same one", async () => {
+    const config = await machineWithProd();
+    const path = await bundleWith([{ name: "alias", baseUrl: URL_, keyPrefix: K1.slice(0, 18), apiKey: K1 }]);
+    const { restoreCmd } = await import("../src/commands/backup.js");
+
+    await restoreCmd(path, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", skipPlugins: true });
+
+    expect((await config.getProfile("alias"))?.baseUrl).toBe(URL_);
+    expect(config.getKey(URL_)).toBe(K1);
+    expect(config.getCloudflareServiceAuth(URL_)).toEqual(CF1);
+  }, 20_000);
+
+  it("still restores bundle profiles that share one server onto a clean machine", async () => {
+    const path = await bundleWith([
+      { name: "one", baseUrl: URL_, apiKey: K2 },
+      { name: "two", baseUrl: URL_, apiKey: K2 },
+    ]);
+    const { restoreCmd } = await import("../src/commands/backup.js");
+    await restoreCmd(path, { passphraseEnv: "MANTIS_BACKUP_TEST_PASS", skipPlugins: true });
+
+    const config = await import("../src/lib/config.js");
+    expect(Object.keys((await config.readConfig())!.profiles).sort()).toEqual(["one", "two"]);
+    expect(config.getKey(URL_)).toBe(K2);
+  }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// The bundle holds full API keys behind nothing but a passphrase; the command
+// must not call it "safe to commit", and says so when it lands in a checkout.
+// ---------------------------------------------------------------------------
+
+describe("mantis backup output-path guidance", () => {
+  async function runBackup(outPath: string): Promise<string> {
+    process.env.MANTIS_BACKUP_TEST_PASS = "guidance-passphrase";
+    await populateState();
+    const { backupCmd } = await import("../src/commands/backup.js");
+    vi.mocked(process.stderr.write).mockClear();
+    try {
+      await backupCmd({ out: outPath, passphraseEnv: "MANTIS_BACKUP_TEST_PASS" });
+    } finally {
+      delete process.env.MANTIS_BACKUP_TEST_PASS;
+    }
+    return vi.mocked(process.stderr.write).mock.calls.join(" ");
+  }
+
+  it("never prints an unqualified 'safe to commit'", async () => {
+    const said = await runBackup(join(tmpHome, "plain", "mantis-backup.json"));
+    expect(said).not.toMatch(/safe to commit/i);
+    expect(said).toContain("keep it private");
+    expect(said).toContain("offline");
+    expect(said).not.toContain("git work tree");
+  }, 20_000);
+
+  it("warns when the bundle is written inside a git work tree", async () => {
+    const repo = join(tmpHome, "checkout");
+    await mkdir(join(repo, ".git"), { recursive: true });
+    const said = await runBackup(join(repo, "cli", "mantis-backup.json"));
+    expect(said).toContain("is inside a git work tree");
+    expect(said).toContain(".gitignore");
+  }, 20_000);
+
+  it("recognizes a worktree or submodule, where .git is a file", async () => {
+    const repo = join(tmpHome, "linked");
+    await mkdir(repo, { recursive: true });
+    await writeFile(join(repo, ".git"), "gitdir: /somewhere/else\n");
+    expect(await runBackup(join(repo, "mantis-backup.json"))).toContain("is inside a git work tree");
+  }, 20_000);
 });

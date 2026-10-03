@@ -1,6 +1,6 @@
 import type { Destination, NotificationChannel } from "../lib/api.js";
-import { c, emit, fail, table, truncate } from "../lib/out.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { c, emit, fail, safeText, table, truncate } from "../lib/out.js";
+import { resolveKeyRef, resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import { ALL_CHANNELS } from "../lib/channels.js";
 
@@ -25,10 +25,11 @@ export async function listDestinationsCmd(
           );
           return;
         }
+        // Targets are set by whoever configured the key; escape before cutting.
         const rows = key.destinations.map((d) => [
-          d.id.slice(0, 8),
-          d.channel,
-          truncate(d.target, 60),
+          safeText(d.id).slice(0, 8),
+          safeText(d.channel),
+          truncate(safeText(d.target), 60),
           statusIcon(d.last_activation_status),
         ]);
         process.stdout.write(
@@ -59,7 +60,7 @@ export async function addDestinationCmd(
     );
   }
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, keyId);
+    const fullId = await resolveKeyRefForAction(client, keyId);
     const key = await client.getKey(fullId);
     const next: Array<{ channel: NotificationChannel; target: string }> = [
       ...key.destinations.map((d) => ({ channel: d.channel, target: d.target })),
@@ -75,16 +76,16 @@ export async function addDestinationCmd(
         }
         const ok = added.last_activation_status === "ok";
         process.stdout.write(
-          `${ok ? c.green("✓") : c.yellow("⚠")} added ${added.channel}: ${added.target}\n`,
+          `${ok ? c.green("✓") : c.yellow("⚠")} added ${safeText(added.channel)}: ${safeText(added.target)}\n`,
         );
         if (!ok && added.last_activation_error) {
           process.stdout.write(
-            `  ${c.dim("activation failed:")} ${added.last_activation_error}\n`,
+            `  ${c.dim("activation failed:")} ${safeText(added.last_activation_error)}\n`,
           );
         }
         if (added.signing_secret) {
           process.stdout.write(
-            `  ${c.dim("signing secret:")} ${added.signing_secret}\n` +
+            `  ${c.dim("signing secret:")} ${safeText(added.signing_secret)}\n` +
               `  ${c.dim("(receiver verifies X-Mantis-Signature: sha256=hex of HMAC-SHA256(`{ts}.{body}`, secret))")}\n`,
           );
         }
@@ -100,7 +101,7 @@ export async function rmDestinationCmd(
   opts: GlobalOpts,
 ): Promise<void> {
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, keyId);
+    const fullId = await resolveKeyRefForAction(client, keyId);
     const key = await client.getKey(fullId);
     const matches = key.destinations.filter(
       (d) => d.id === destinationIdOrPrefix || d.id.startsWith(destinationIdOrPrefix),
@@ -121,7 +122,7 @@ export async function rmDestinationCmd(
     emit(
       () => {
         process.stdout.write(
-          `${c.green("✓")} removed ${target.channel}: ${truncate(target.target, 60)}\n`,
+          `${c.green("✓")} removed ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}\n`,
         );
       },
       { removed: target },
@@ -134,7 +135,11 @@ export async function testDestinationCmd(
   opts: GlobalOpts & { yes?: boolean },
 ): Promise<void> {
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, keyId);
+    // Without --yes this only previews (and names the key itself); with it,
+    // the key is fired, so say which key a symbolic ref picked first.
+    const fullId = opts.yes
+      ? await resolveKeyRefForAction(client, keyId)
+      : await resolveKeyRef(client, keyId);
     const key = await client.getKey(fullId);
 
     if (key.destinations.length === 0) {
@@ -146,17 +151,25 @@ export async function testDestinationCmd(
     if (!opts.yes) {
       process.stderr.write(
         c.yellow(
-          `⚠ this will trigger the key URL (recording a real hit) and fire all ${key.destinations.length} configured destination(s).\n`,
+          `⚠ this will trigger the key URL and fire all ${key.destinations.length} configured destination(s).\n`,
+        ),
+      );
+      // The test is indistinguishable from a real fire on the server side.
+      process.stderr.write(
+        c.yellow(
+          `   it records a REAL hit: the hit stays in this key's history, trips the key's monitor if one is enabled (latch mode stays tripped until \`mantis reset\`), and anchors the key's dedupe window — a genuine hit inside that window is recorded as a duplicate and sends no notification.\n`,
         ),
       );
       process.stderr.write(
-        c.dim(`   key:  ${fullId.slice(0, 8)} — ${key.memo}\n`),
+        c.dim(`   key:  ${safeText(fullId).slice(0, 8)} — ${safeText(key.memo)}\n`),
       );
       process.stderr.write(
-        c.dim(`   url:  ${key.url}\n`),
+        c.dim(`   url:  ${safeText(key.url)}\n`),
       );
       for (const d of key.destinations) {
-        process.stderr.write(c.dim(`     → ${d.channel}: ${d.target}\n`));
+        process.stderr.write(
+          c.dim(`     → ${safeText(d.channel)}: ${safeText(d.target)}\n`),
+        );
       }
       process.stderr.write(c.dim(`\n   re-run with --yes to confirm.\n`));
       return;
@@ -173,7 +186,7 @@ export async function testDestinationCmd(
       headers: { "User-Agent": "mantis-cli-test/1.0" },
     });
     process.stderr.write(
-      `${c.dim("trigger:")} ${triggerRes.status} ${triggerRes.statusText}\n`,
+      `${c.dim("trigger:")} ${triggerRes.status} ${safeText(triggerRes.statusText)}\n`,
     );
 
     // Poll for the new hit and its notification statuses (up to ~10s).
@@ -198,7 +211,7 @@ export async function testDestinationCmd(
     emit(
       () => {
         const w = process.stdout.write.bind(process.stdout);
-        w(`${c.green("✓")} test triggered hit ${newHit.id.slice(0, 8)} ${c.dim(`(${formatRelative(newHit.occurred_at)})`)}\n`);
+        w(`${c.green("✓")} test triggered hit ${safeText(newHit.id).slice(0, 8)} ${c.dim(`(${formatRelative(newHit.occurred_at)})`)}\n`);
         if (newHit.notifications.length === 0) {
           w(c.dim("  (notifications still pending — re-run `mantis hits " + fullId.slice(0, 8) + " -v` to follow up)\n"));
           return;
@@ -210,16 +223,17 @@ export async function testDestinationCmd(
             status === "failed" ? c.red :
             c.yellow;
           w(
-            `  ${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(
+            `  ${color(safeText(status).padEnd(10))} ${safeText(n.channel).padEnd(8)} ${c.dim(
               truncate(
-                n.target ??
-                  (n.destination_scope === "global"
+                n.target != null
+                  ? safeText(n.target)
+                  : n.destination_scope === "global"
                     ? "(global destination)"
-                    : "(destination removed)"),
+                    : "(destination removed)",
                 60,
               ),
             )}` +
-              (n.last_error ? `\n      ${c.red(n.last_error.slice(0, 80))}` : "") +
+              (n.last_error ? `\n      ${c.red(safeText(n.last_error).slice(0, 80))}` : "") +
               "\n",
           );
         }
@@ -246,7 +260,9 @@ export async function rotateDestinationSecretCmd(
   opts: GlobalOpts & { yes?: boolean },
 ): Promise<void> {
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, keyId);
+    const fullId = opts.yes
+      ? await resolveKeyRefForAction(client, keyId)
+      : await resolveKeyRef(client, keyId);
     const key = await client.getKey(fullId);
     const matches = key.destinations.filter(
       (d) =>
@@ -271,7 +287,7 @@ export async function rotateDestinationSecretCmd(
     if (!opts.yes) {
       process.stderr.write(
         c.yellow(
-          `⚠ this rotates the HMAC signing secret on ${target.channel}: ${truncate(target.target, 60)}.\n`,
+          `⚠ this rotates the HMAC signing secret on ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}.\n`,
         ),
       );
       process.stderr.write(
@@ -286,11 +302,11 @@ export async function rotateDestinationSecretCmd(
     emit(
       () => {
         process.stdout.write(
-          `${c.green("✓")} rotated signing secret for ${target.channel}: ${target.target}\n`,
+          `${c.green("✓")} rotated signing secret for ${safeText(target.channel)}: ${safeText(target.target)}\n`,
         );
         if (updated.signing_secret) {
           process.stdout.write(`\n${c.bold("new signing secret (save it now):")}\n`);
-          process.stdout.write(`  ${c.cyan(updated.signing_secret)}\n\n`);
+          process.stdout.write(`  ${c.cyan(safeText(updated.signing_secret))}\n\n`);
           process.stdout.write(
             c.dim(
               `Update your receiver to verify HMAC-SHA256(\`{ts}.{body}\`, secret) → X-Mantis-Signature.\n`,

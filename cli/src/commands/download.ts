@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { c } from "../lib/out.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type DownloadOpts = GlobalOpts & {
@@ -83,7 +83,7 @@ export async function downloadCmd(
   opts: DownloadOpts,
 ): Promise<void> {
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, id);
+    const fullId = await resolveKeyRefForAction(client, id);
     const targets: Array<{ fmt: FileFmt; path: string }> = [];
     for (const flag of Object.keys(FLAG_TO_FMT) as Array<keyof typeof FLAG_TO_FMT>) {
       const p = opts[flag as keyof DownloadOpts] as string | undefined;

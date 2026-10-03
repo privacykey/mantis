@@ -1,11 +1,18 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { c, emit, isJsonMode } from "../lib/out.js";
+import {
+  c,
+  emit,
+  isJsonMode,
+  safeBlock,
+  safeText,
+  stdoutPayload,
+} from "../lib/out.js";
 import type { InstallerMeta, MantisClient } from "../lib/api.js";
 import { applySshOnlyGuard } from "@mantis/core/installers";
 import { BUILTIN_INSTALLER_TYPES } from "../lib/plugins/builtins.js";
 import { loadRegistry } from "../lib/plugins/registry.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type InstallOpts = GlobalOpts & {
@@ -37,7 +44,7 @@ export async function installCmd(id: string, opts: InstallOpts): Promise<void> {
   }
 
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, id);
+    const fullId = await resolveKeyRefForAction(client, id);
     await runInstaller(client, fullId, {
       type: opts.type!,
       out: opts.out,
@@ -133,38 +140,41 @@ export async function runInstaller(
   if (opts.silent) {
     if (writtenTo && !isJsonMode()) {
       process.stderr.write(
-        `${c.green("✓")} wrote ${c.bold(meta.type)} installer to ${c.cyan(writtenTo)}\n`,
+        `${c.green("✓")} wrote ${c.bold(safeText(meta.type))} installer to ${c.cyan(writtenTo)}\n`,
       );
       for (const step of meta.install) {
-        process.stderr.write(`  ${c.dim(step)}\n`);
+        process.stderr.write(`  ${c.dim(safeText(step))}\n`);
       }
     }
     return { filename: meta.filename, writtenTo, content: meta.content };
   }
 
+  // The installer comes from the server (or a plugin) and quotes the key's
+  // memo and URL back, so everything shown here is escaped. The snippet itself
+  // stays byte-exact unless stdout is a terminal.
   emit(
     () => {
       if (writtenTo) {
         process.stderr.write(
-          `${c.green("✓")} wrote ${meta.filename} → ${writtenTo}\n`,
+          `${c.green("✓")} wrote ${safeText(meta.filename)} → ${writtenTo}\n`,
         );
       } else {
-        process.stdout.write(meta.content);
+        process.stdout.write(stdoutPayload(meta.content));
       }
       process.stderr.write(
-        `\n${c.bold(meta.name)}${pluginName ? c.dim(` (plugin: ${pluginName})`) : ""}\n`,
+        `\n${c.bold(safeText(meta.name))}${pluginName ? c.dim(` (plugin: ${safeText(pluginName)})`) : ""}\n`,
       );
-      process.stderr.write(c.dim(meta.description + "\n"));
+      process.stderr.write(c.dim(safeBlock(meta.description) + "\n"));
       if (meta.notes) {
-        process.stderr.write(c.dim("note: " + meta.notes + "\n"));
+        process.stderr.write(c.dim("note: " + safeBlock(meta.notes) + "\n"));
       }
       process.stderr.write(`\n${c.dim("install:")}\n`);
       for (const step of meta.install) {
-        process.stderr.write(`  ${step}\n`);
+        process.stderr.write(`  ${safeText(step)}\n`);
       }
       process.stderr.write(`\n${c.dim("uninstall:")}\n`);
       for (const step of meta.uninstall) {
-        process.stderr.write(`  ${step}\n`);
+        process.stderr.write(`  ${safeText(step)}\n`);
       }
     },
     meta,

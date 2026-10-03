@@ -4,6 +4,7 @@ import {
   fail,
   formatTime,
   isWideMode,
+  safeText,
   table,
   truncate,
 } from "../lib/out.js";
@@ -35,18 +36,20 @@ export async function listCmd(opts: ListOpts): Promise<void> {
           return;
         }
         if (opts.idOnly) {
-          process.stdout.write(items.map((t) => t.id).join("\n") + "\n");
+          process.stdout.write(items.map((t) => safeText(t.id)).join("\n") + "\n");
           return;
         }
         if (opts.urlOnly) {
-          process.stdout.write(items.map((t) => t.url).join("\n") + "\n");
+          process.stdout.write(items.map((t) => safeText(t.url)).join("\n") + "\n");
           return;
         }
+        // The memo is whatever the key's creator typed — on an admin listing
+        // that includes other API keys' holders — so escape it before cutting.
         if (isWideMode()) {
           const rows = items.map((t) => [
-            t.id,
-            truncate(t.memo, 80),
-            t.url,
+            safeText(t.id),
+            truncate(safeText(t.memo), 80),
+            safeText(t.url),
             formatTime(t.created_at),
             t.disabled ? c.red("disabled") : c.green("active"),
             t.destinations.length > 0
@@ -59,8 +62,8 @@ export async function listCmd(opts: ListOpts): Promise<void> {
           return;
         }
         const rows = items.map((t) => [
-          t.id.slice(0, 8),
-          truncate(t.memo, 40),
+          safeText(t.id).slice(0, 8),
+          truncate(safeText(t.memo), 40),
           formatTime(t.created_at),
           t.disabled ? c.red("disabled") : c.green("active"),
           t.destinations.length > 0

@@ -4,6 +4,7 @@ import {
   emit,
   formatTime,
   isJsonMode,
+  safeText,
   table,
   truncate,
 } from "../lib/out.js";
@@ -21,12 +22,14 @@ export type StatusOpts = GlobalOpts & {
 type ServerStatus = { status: "ok" | "tripped"; tripped_at?: string };
 type ResolvedStatus = ServerStatus | { status: "off" } | { status: "error"; error: string };
 
+// Monitor state comes from the owner-gated API, addressed by key id — never
+// from the public status URL, whose capability the CLI does not hold.
 async function fetchStatusSafe(
   client: MantisClient,
-  publicId: string,
+  keyId: string,
 ): Promise<ResolvedStatus> {
   try {
-    return await client.fetchStatus(publicId);
+    return await client.fetchStatus(keyId);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return { status: "off" };
     return {
@@ -81,7 +84,7 @@ async function watchLoop(
       else await listAll(client, opts);
     } catch (err) {
       process.stderr.write(
-        c.red(`watch error: ${err instanceof Error ? err.message : String(err)}\n`),
+        c.red(`watch error: ${safeText(err instanceof Error ? err.message : String(err))}\n`),
       );
     }
     if (stop) break;
@@ -95,7 +98,7 @@ async function detail(
   opts: StatusOpts,
 ): Promise<void> {
   const key = await client.getKey(id);
-  const status = await fetchStatusSafe(client, key.public_id);
+  const status = await fetchStatusSafe(client, key.id);
   if (status.status === "error") process.exitCode = 1;
 
   // Pull the hit slice we need to explain the trip.
@@ -110,7 +113,7 @@ async function detail(
   emit(
     () => {
       const w = process.stdout.write.bind(process.stdout);
-      w(`${c.bold(key.memo)} ${c.dim(`(${key.id})`)}\n`);
+      w(`${c.bold(safeText(key.memo))} ${c.dim(`(${safeText(key.id)})`)}\n`);
       w(`  ${c.dim("mode:       ")} ${formatMode(key)}\n`);
       w(`  ${c.dim("state:      ")} ${formatState(status)}\n`);
 
@@ -130,10 +133,10 @@ async function detail(
       }
 
       if (key.monitor_reset_at) {
-        w(`  ${c.dim("reset_at:   ")} ${key.monitor_reset_at} ${c.dim(`(${formatTime(key.monitor_reset_at)})`)}\n`);
+        w(`  ${c.dim("reset_at:   ")} ${safeText(key.monitor_reset_at)} ${c.dim(`(${formatTime(key.monitor_reset_at)})`)}\n`);
       }
       if (key.monitor_status_url) {
-        w(`  ${c.dim("status URL: ")} ${c.cyan(key.monitor_status_url)}\n`);
+        w(`  ${c.dim("status URL: ")} ${c.cyan(safeText(key.monitor_status_url))}\n`);
       }
 
       if (key.monitor_mode === "off") {
@@ -152,10 +155,10 @@ async function detail(
       w(`\n${c.bold(explained.hitsLabel)} (${inWindow.length}):\n`);
       const rows = inWindow.map((h) => [
         formatTime(h.occurred_at),
-        h.occurred_at,
-        h.ip ?? "-",
-        truncate(h.user_agent ?? "", 36),
-        h.bot_label ? c.dim(`bot:${h.bot_label}`) : "",
+        safeText(h.occurred_at),
+        safeText(h.ip ?? "-"),
+        truncate(safeText(h.user_agent), 36),
+        h.bot_label ? c.dim(`bot:${safeText(h.bot_label)}`) : "",
       ]);
       w(
         table(["when", "occurred_at", "ip", "user-agent", "bot"], rows) + "\n",
@@ -217,7 +220,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
   const statuses = await Promise.all(
     monitored.map(async (k) => ({
       key: k,
-      status: await fetchStatusSafe(client, k.public_id),
+      status: await fetchStatusSafe(client, k.id),
     })),
   );
 
@@ -243,7 +246,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
     () => {
       const rows = filtered.map(({ key, status }) => [
         shortId(key.id),
-        truncate(key.memo, 32),
+        truncate(safeText(key.memo), 32),
         formatMode(key),
         formatState(status),
         status.status === "tripped" && status.tripped_at
@@ -325,7 +328,7 @@ function explainTrip(
     }
     return {
       relevantHits: inWindow,
-      hitsLabel: `hits in window (${key.monitor_window_seconds}s)`,
+      hitsLabel: `hits in window (${safeText(key.monitor_window_seconds)}s)`,
       emptyLabel: "no hits in the current window",
       windowExpiresAt,
     };
@@ -347,17 +350,17 @@ function explainTrip(
 function formatMode(key: Key): string {
   if (key.monitor_mode === "off") return c.dim("off");
   if (key.monitor_mode === "latch") return c.cyan("latch");
-  return c.cyan(`window(${key.monitor_window_seconds}s)`);
+  return c.cyan(`window(${safeText(key.monitor_window_seconds)}s)`);
 }
 
 function formatState(status: ResolvedStatus): string {
   if (status.status === "tripped") {
-    const at = status.tripped_at ?? "";
+    const at = safeText(status.tripped_at);
     return `${c.red("⚠ tripped")} ${c.dim(`at ${at} (${formatTime(at)})`)}`;
   }
   if (status.status === "ok") return c.green("✓ ok");
   if (status.status === "off") return c.dim("off / not monitored");
-  if (status.status === "error") return c.yellow(`? error: ${status.error}`);
+  if (status.status === "error") return c.yellow(`? error: ${safeText(status.error)}`);
   return c.dim("?");
 }
 
@@ -372,5 +375,5 @@ function formatRelativeFuture(d: Date): string {
 }
 
 function shortId(id: string): string {
-  return id.slice(0, 8);
+  return safeText(id).slice(0, 8);
 }
