@@ -49,12 +49,17 @@ credentials or real alert destinations.
   and edge `0.1.5`. Previous releases are server `v0.2.0` and CLI `cli-v0.2.1`.
 - [ ] Verify the actual public URL, HTTPS termination, dashboard/public host
   separation, trusted proxy headers, and secure cookies in the target deployment.
+  If `TRUST_PROXY_HEADERS=1`, `TRUSTED_IP_HEADER` must be pinned to the header
+  the ingress writes (e.g. `x-forwarded-for` behind Tailscale serve/Funnel);
+  confirm a client-sent `CF-Connecting-IP` does not change the IP on a test hit.
 - [ ] Confirm production secrets, database backups, and a tested restore procedure.
   Preserve the API-key pepper and edge encryption key across redeploys.
 - [ ] Trigger a dedicated canary and verify delivery to each enabled real
   notification destination; verify retries and monitoring of delivery failures.
 - [ ] Confirm notification worker or cron operation, retention policy, health
-  monitoring, and rollback instructions for the selected host.
+  monitoring, and rollback instructions for the selected host. With the worker
+  off (Vercel, `RUN_NOTIFY_WORKER=0`), retention only runs from scheduled calls
+  to `/api/cron/notifications`.
 - [ ] For Apple Wallet, verify mounted signing/APNs assets and a real-device pass
   lifecycle if that optional feature is enabled.
 - [ ] Verify CLI release binaries on each supported OS/architecture and the
