@@ -1,8 +1,52 @@
-import { escapeCode, escapeMarkdown, escapeSlack, safeDisplayUrl } from "./escape";
+import {
+  escapeCode,
+  escapeMarkdown,
+  escapeSlack,
+  triggerLabel,
+  truncateEscaped,
+} from "./escape";
 import { parseHostContext, type HostContext } from "./host-context";
 import type { Channel, Payload } from "./types";
 
 const SEND_TIMEOUT_MS = 5000;
+
+// Delivery: one attempt plus up to two retries, only for failures that can
+// clear by themselves (429, 5xx, network error, timeout). The Worker is
+// stateless — nothing queues an alert once this invocation ends — so every
+// attempt and every wait has to fit in the time Cloudflare lets
+// ctx.waitUntil() keep running after the response is sent (30 s).
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 500;
+const RETRY_JITTER_MS = 250;
+// Longest wait we take on, including a Retry-After the destination asks for.
+// A destination that wants more than this cannot be satisfied inside the
+// budget, so the alert is reported as failed instead of retried too early.
+const MAX_RETRY_WAIT_MS = 5000;
+const FORWARD_BUDGET_MS = 25_000;
+// Not worth starting an attempt with less time than this left.
+const MIN_ATTEMPT_MS = 1000;
+
+// Display budgets for values an anonymous caller controls (X-Mantis-* host
+// context, IP, User-Agent), in characters AFTER escaping. Chat platforms
+// reject the whole message when one element is over its limit, which would
+// let a caller suppress its own alert with an oversized header. These sit far
+// below the hard limits, so no combination of values can reach them:
+//   Slack   — section field text 2000, at most 10 fields, header 150
+//   Discord — field value 1024, field name / title 256, whole embed 6000
+//   Teams   — whole message about 28 KB
+const BUDGET = {
+  ip: 64,
+  userAgent: 120,
+  user: 128,
+  host: 255,
+  device: 120,
+  event: 120,
+  sshClientIp: 64,
+  sudoCmd: 160,
+} as const;
+// The memo is sealed into the URL by whoever minted it, not chosen by the
+// caller, but an over-long one would trip the same limits.
+const MEMO_BUDGET = { slackHeader: 140, discordTitle: 230, text: 300 } as const;
 
 // Cap on the cumulative bytes of header names+values we forward into the
 // webhook body. Past this we drop the rest. Keeps a hostile client from
@@ -97,40 +141,111 @@ export async function forward(payload: Payload, req: Request): Promise<void> {
   const referer = req.headers.get("referer");
 
   const channel: Channel = payload.c ?? "webhook";
-  const body = formatBody({
-    channel,
-    triggerUrl: req.url,
-    memo,
-    occurredAt,
-    ip,
-    userAgent,
-    referer,
-    hostCtx,
-    headers,
-  });
+  // Built once: every attempt sends the same body (and the same hit id, so a
+  // receiver can drop a duplicate if a timed-out attempt did get through).
+  const body = JSON.stringify(
+    formatBody({
+      channel,
+      triggerUrl: req.url,
+      memo,
+      occurredAt,
+      ip,
+      userAgent,
+      referer,
+      hostCtx,
+      headers,
+    }),
+  );
 
+  const deadline = Date.now() + FORWARD_BUDGET_MS;
+  for (let attempt = 1; ; attempt++) {
+    const result = await sendOnce(
+      payload.w,
+      body,
+      Math.min(SEND_TIMEOUT_MS, deadline - Date.now()),
+    );
+    if (result.ok) return;
+
+    const failure = attempt > 1 ? `${result.error} (attempt ${attempt})` : result.error;
+    if (!result.retryable || attempt >= MAX_ATTEMPTS) throw new Error(failure);
+
+    const wait =
+      result.retryAfterMs !== undefined
+        ? Math.max(result.retryAfterMs, RETRY_BASE_MS)
+        : RETRY_BASE_MS * 2 ** (attempt - 1) +
+          Math.floor(Math.random() * RETRY_JITTER_MS);
+    if (wait > MAX_RETRY_WAIT_MS) {
+      throw new Error(`${failure}; not retried: destination asked to wait ${Math.ceil(wait / 1000)}s`);
+    }
+    if (Date.now() + wait + MIN_ATTEMPT_MS > deadline) {
+      throw new Error(`${failure}; not retried: out of time`);
+    }
+    await sleep(wait);
+  }
+}
+
+type SendResult =
+  | { ok: true }
+  | { ok: false; error: string; retryable: boolean; retryAfterMs?: number };
+
+async function sendOnce(
+  url: string,
+  body: string,
+  timeoutMs: number,
+): Promise<SendResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   try {
-    const res = await fetch(payload.w, {
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "user-agent": "mantis-edge-webhook/0.1",
       },
-      body: JSON.stringify(body),
+      body,
       redirect: "manual",
       signal: controller.signal,
     });
+    // The response body is never read; release it before any retry.
+    void res.body?.cancel().catch(() => {});
     if (res.status >= 300 && res.status < 400) {
-      throw new Error(`HTTP ${res.status} redirect refused`);
+      return { ok: false, error: `HTTP ${res.status} redirect refused`, retryable: false };
     }
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    if (res.ok) return { ok: true };
+    const error = `HTTP ${res.status} ${res.statusText}`.trimEnd();
+    if (res.status === 429 || res.status >= 500) {
+      return {
+        ok: false,
+        error,
+        retryable: true,
+        retryAfterMs: parseRetryAfter(res.headers.get("retry-after")),
+      };
     }
+    // Any other 4xx is a verdict on the request itself; repeating it cannot help.
+    return { ok: false, error, retryable: false };
+  } catch (err) {
+    // Network failure, or our own timeout aborting the request.
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      retryable: true,
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Retry-After as milliseconds from now: delay-seconds (Discord sends fractions) or an HTTP date. */
+function parseRetryAfter(value: string | null): number | undefined {
+  const v = value?.trim();
+  if (!v) return undefined;
+  if (/^\d+(\.\d+)?$/.test(v)) return Math.ceil(Number(v) * 1000);
+  const at = Date.parse(v);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 type FormatCtx = {
@@ -186,51 +301,64 @@ function formatRaw(ctx: FormatCtx): unknown {
   };
 }
 
+// Escape, then cut to the display budget (never the other way round: the
+// platform limits count escaped characters).
+function slackValue(raw: string, budget: number): string {
+  return truncateEscaped(escapeSlack(raw), budget, "slack");
+}
+
+function markdownValue(raw: string, budget: number): string {
+  return truncateEscaped(escapeMarkdown(raw), budget, "markdown");
+}
+
 function formatSlack(ctx: FormatCtx): unknown {
+  const field = (label: string, raw: string, budget: number) => ({
+    type: "mrkdwn" as const,
+    text: `*${label}*\n${slackValue(raw, budget)}`,
+  });
   const fields: Array<{ type: "mrkdwn"; text: string }> = [
-    { type: "mrkdwn", text: `*IP*\n${escapeSlack(ctx.ip ?? "—")}` },
-    {
-      type: "mrkdwn",
-      text: `*UA*\n${escapeSlack(truncate(ctx.userAgent ?? "—", 80))}`,
-    },
+    field("IP", ctx.ip ?? "—", BUDGET.ip),
+    field("UA", ctx.userAgent ?? "—", BUDGET.userAgent),
   ];
-  if (ctx.hostCtx?.user) {
-    fields.push({ type: "mrkdwn", text: `*User*\n${escapeSlack(ctx.hostCtx.user)}` });
-  }
-  if (ctx.hostCtx?.host) {
-    fields.push({ type: "mrkdwn", text: `*Host*\n${escapeSlack(ctx.hostCtx.host)}` });
-  }
-  if (ctx.hostCtx?.device) {
-    fields.push({ type: "mrkdwn", text: `*Device*\n${escapeSlack(truncate(ctx.hostCtx.device, 120))}` });
-  }
-  if (ctx.hostCtx?.event) {
-    fields.push({ type: "mrkdwn", text: `*Event*\n${escapeSlack(truncate(ctx.hostCtx.event, 120))}` });
-  }
+  if (ctx.hostCtx?.user) fields.push(field("User", ctx.hostCtx.user, BUDGET.user));
+  if (ctx.hostCtx?.host) fields.push(field("Host", ctx.hostCtx.host, BUDGET.host));
+  if (ctx.hostCtx?.device) fields.push(field("Device", ctx.hostCtx.device, BUDGET.device));
+  if (ctx.hostCtx?.event) fields.push(field("Event", ctx.hostCtx.event, BUDGET.event));
   if (ctx.hostCtx?.ssh_client_ip) {
-    fields.push({
-      type: "mrkdwn",
-      text: `*SSH from*\n${escapeSlack(ctx.hostCtx.ssh_client_ip)}`,
-    });
+    fields.push(field("SSH from", ctx.hostCtx.ssh_client_ip, BUDGET.sshClientIp));
   }
   if (ctx.hostCtx?.sudo_cmd) {
-    fields.push({
-      type: "mrkdwn",
-      text: `*Sudo cmd*\n\`${escapeCode(escapeSlack(truncate(ctx.hostCtx.sudo_cmd, 120)))}\``,
-    });
+    const cmd = truncateEscaped(
+      escapeCode(escapeSlack(ctx.hostCtx.sudo_cmd)),
+      BUDGET.sudoCmd,
+      "slack",
+    );
+    fields.push({ type: "mrkdwn", text: `*Sudo cmd*\n\`${cmd}\`` });
   }
 
+  const edge = triggerLabel(ctx.triggerUrl);
+  const edgeId = escapeCode(escapeSlack(edge.id));
+  const edgeHost = truncateEscaped(escapeCode(escapeSlack(edge.host)), BUDGET.host, "slack");
+
   return {
-    text: `Mantis triggered: ${escapeSlack(ctx.memo)}`,
+    text: `Mantis triggered: ${slackValue(ctx.memo, MEMO_BUDGET.text)}`,
     blocks: [
       {
         type: "header",
-        text: { type: "plain_text", text: `🪤 ${ctx.memo}`, emoji: true },
+        text: {
+          type: "plain_text",
+          text: `🪤 ${truncateEscaped(ctx.memo, MEMO_BUDGET.slackHeader, "plain")}`,
+          emoji: true,
+        },
       },
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `<${safeDisplayUrl(ctx.triggerUrl)}|Edge URL> · ${ctx.occurredAt}`,
+          // Deliberately not a link, and `verbatim` stops Slack turning the
+          // host name into one — see triggerLabel().
+          text: `Edge canary \`${edgeId}\` on \`${edgeHost}\` · ${ctx.occurredAt}`,
+          verbatim: true,
         },
       },
       { type: "section", fields: fields.slice(0, 10) },
@@ -239,47 +367,38 @@ function formatSlack(ctx: FormatCtx): unknown {
 }
 
 function formatDiscord(ctx: FormatCtx): unknown {
+  const field = (name: string, raw: string, budget: number, inline: boolean) => ({
+    name,
+    value: markdownValue(raw, budget),
+    inline,
+  });
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [
-    { name: "IP", value: escapeMarkdown(ctx.ip ?? "—"), inline: true },
-    {
-      name: "UA",
-      value: escapeMarkdown(truncate(ctx.userAgent ?? "—", 80)),
-      inline: false,
-    },
+    field("IP", ctx.ip ?? "—", BUDGET.ip, true),
+    field("UA", ctx.userAgent ?? "—", BUDGET.userAgent, false),
   ];
-  if (ctx.hostCtx?.user) {
-    fields.push({ name: "User", value: escapeMarkdown(ctx.hostCtx.user), inline: true });
-  }
-  if (ctx.hostCtx?.host) {
-    fields.push({ name: "Host", value: escapeMarkdown(ctx.hostCtx.host), inline: true });
-  }
-  if (ctx.hostCtx?.device) {
-    fields.push({ name: "Device", value: escapeMarkdown(truncate(ctx.hostCtx.device, 120)), inline: true });
-  }
-  if (ctx.hostCtx?.event) {
-    fields.push({ name: "Event", value: escapeMarkdown(truncate(ctx.hostCtx.event, 120)), inline: true });
-  }
+  if (ctx.hostCtx?.user) fields.push(field("User", ctx.hostCtx.user, BUDGET.user, true));
+  if (ctx.hostCtx?.host) fields.push(field("Host", ctx.hostCtx.host, BUDGET.host, true));
+  if (ctx.hostCtx?.device) fields.push(field("Device", ctx.hostCtx.device, BUDGET.device, true));
+  if (ctx.hostCtx?.event) fields.push(field("Event", ctx.hostCtx.event, BUDGET.event, true));
   if (ctx.hostCtx?.ssh_client_ip) {
-    fields.push({
-      name: "SSH from",
-      value: escapeMarkdown(ctx.hostCtx.ssh_client_ip),
-      inline: true,
-    });
+    fields.push(field("SSH from", ctx.hostCtx.ssh_client_ip, BUDGET.sshClientIp, true));
   }
   if (ctx.hostCtx?.sudo_cmd) {
-    fields.push({
-      name: "Sudo cmd",
-      value: "`" + escapeCode(truncate(ctx.hostCtx.sudo_cmd, 120)) + "`",
-      inline: false,
-    });
+    const cmd = truncateEscaped(escapeCode(ctx.hostCtx.sudo_cmd), BUDGET.sudoCmd, "plain");
+    fields.push({ name: "Sudo cmd", value: "`" + cmd + "`", inline: false });
   }
+
+  const edge = triggerLabel(ctx.triggerUrl);
+  const edgeHost = truncateEscaped(escapeCode(edge.host), BUDGET.host, "plain");
 
   return {
     username: "mantis",
     embeds: [
       {
-        title: `Mantis triggered: ${ctx.memo}`,
-        url: safeDisplayUrl(ctx.triggerUrl),
+        // No `url`: it would make the title a link to the live trigger — see
+        // triggerLabel().
+        title: `Mantis triggered: ${truncateEscaped(ctx.memo, MEMO_BUDGET.discordTitle, "plain")}`,
+        description: `Edge canary \`${escapeCode(edge.id)}\` on \`${edgeHost}\``,
         color: 0xef4444, // red-500
         timestamp: ctx.occurredAt,
         fields: fields.slice(0, 25),
@@ -289,21 +408,25 @@ function formatDiscord(ctx: FormatCtx): unknown {
 }
 
 function formatTeams(ctx: FormatCtx): unknown {
+  const fact = (title: string, raw: string, budget: number) => ({
+    title,
+    value: markdownValue(raw, budget),
+  });
   const facts: Array<{ title: string; value: string }> = [
-    { title: "IP", value: escapeMarkdown(ctx.ip ?? "—") },
+    fact("IP", ctx.ip ?? "—", BUDGET.ip),
     { title: "Occurred", value: ctx.occurredAt },
-    { title: "UA", value: escapeMarkdown(truncate(ctx.userAgent ?? "—", 120)) },
+    fact("UA", ctx.userAgent ?? "—", BUDGET.userAgent),
   ];
-  if (ctx.hostCtx?.user) facts.push({ title: "User", value: escapeMarkdown(ctx.hostCtx.user) });
-  if (ctx.hostCtx?.host) facts.push({ title: "Host", value: escapeMarkdown(ctx.hostCtx.host) });
-  if (ctx.hostCtx?.device) facts.push({ title: "Device", value: escapeMarkdown(truncate(ctx.hostCtx.device, 120)) });
-  if (ctx.hostCtx?.event) facts.push({ title: "Event", value: escapeMarkdown(truncate(ctx.hostCtx.event, 120)) });
+  if (ctx.hostCtx?.user) facts.push(fact("User", ctx.hostCtx.user, BUDGET.user));
+  if (ctx.hostCtx?.host) facts.push(fact("Host", ctx.hostCtx.host, BUDGET.host));
+  if (ctx.hostCtx?.device) facts.push(fact("Device", ctx.hostCtx.device, BUDGET.device));
+  if (ctx.hostCtx?.event) facts.push(fact("Event", ctx.hostCtx.event, BUDGET.event));
   if (ctx.hostCtx?.ssh_client_ip) {
-    facts.push({ title: "SSH from", value: escapeMarkdown(ctx.hostCtx.ssh_client_ip) });
+    facts.push(fact("SSH from", ctx.hostCtx.ssh_client_ip, BUDGET.sshClientIp));
   }
-  if (ctx.hostCtx?.sudo_cmd) {
-    facts.push({ title: "Sudo cmd", value: escapeMarkdown(ctx.hostCtx.sudo_cmd) });
-  }
+  if (ctx.hostCtx?.sudo_cmd) facts.push(fact("Sudo cmd", ctx.hostCtx.sudo_cmd, BUDGET.sudoCmd));
+
+  const edge = triggerLabel(ctx.triggerUrl);
 
   return {
     type: "message",
@@ -319,12 +442,13 @@ function formatTeams(ctx: FormatCtx): unknown {
               type: "TextBlock",
               size: "Medium",
               weight: "Bolder",
-              text: `Mantis triggered: ${escapeMarkdown(ctx.memo)}`,
+              text: `Mantis triggered: ${markdownValue(ctx.memo, MEMO_BUDGET.text)}`,
               wrap: true,
             },
             {
               type: "TextBlock",
-              text: `[Edge URL](${safeDisplayUrl(ctx.triggerUrl)})`,
+              // Plain text, not a markdown link — see triggerLabel().
+              text: `Edge canary ${escapeMarkdown(edge.id)} on ${markdownValue(edge.host, BUDGET.host)}`,
               wrap: true,
               isSubtle: true,
               spacing: "Small",
@@ -335,11 +459,6 @@ function formatTeams(ctx: FormatCtx): unknown {
       },
     ],
   };
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + "…";
 }
 
 function snapshotHeaders(h: Headers): Record<string, string> {

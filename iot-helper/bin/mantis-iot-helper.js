@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { readFile, stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { open, readFile, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { platform } from "node:os";
 import { resolve } from "node:path";
@@ -9,6 +8,22 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_INTERVAL_SECONDS = 30;
 const DEFAULT_COOLDOWN_SECONDS = 900;
 const DEFAULT_DELIVERY_TIMEOUT_SECONDS = 10;
+
+// Bounds for one log watcher in one poll. A watched log is filled by whatever
+// the host's syslog receiver accepts from the LAN, so how much it grows
+// between polls is not under the operator's control. Nothing the watcher
+// holds in memory may scale with that growth, or a burst could exhaust the
+// heap and abort the process before the matching line is alerted.
+//   - the log is read in fixed-size chunks (the only log data in memory);
+//   - only the first LOG_MAX_LINE_BYTES of a line are matched and reported;
+//   - at most LOG_MAX_EVENTS_PER_POLL matches are turned into events, and at
+//     most about LOG_MAX_BYTES_PER_POLL are read, per watcher per poll.
+// Whatever is left stays in the file and is read on the following polls, from
+// exactly where this one stopped — nothing is skipped.
+const LOG_CHUNK_BYTES = 256 * 1024;
+const LOG_MAX_LINE_BYTES = 16 * 1024;
+const LOG_MAX_BYTES_PER_POLL = 32 * 1024 * 1024;
+const LOG_MAX_EVENTS_PER_POLL = 64;
 
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
@@ -181,42 +196,122 @@ export async function scanLogWatcher(watcher, state, opts) {
   const previous = state.logOffsets.get(key);
   const fileId = `${info.dev}:${info.ino}`;
   const continuing = previous && previous.fileId === fileId && previous.offset <= info.size;
-  const start = !previous ? info.size : continuing ? previous.offset : 0;
-  if (start === info.size) {
-    state.logOffsets.set(key, { offset: info.size, fileId, partial: continuing ? previous.partial ?? "" : "" });
-    return;
-  }
+  // `offset` is the first byte not yet consumed: always the start of a line,
+  // or — while `skipping` — somewhere inside an over-long line whose head has
+  // already been scanned. A new file starts at its end, the same file carries
+  // on, and a rotated or truncated file starts over.
+  const position = {
+    offset: !previous ? info.size : continuing ? previous.offset : 0,
+    fileId,
+    skipping: continuing ? Boolean(previous.skipping) : false,
+  };
+  state.logOffsets.set(key, position);
+  if (position.offset >= info.size) return;
 
-  let text;
+  const limits = logLimits(opts);
+  const re = new RegExp(watcher.pattern, "i");
+  // While this watcher is in its cooldown a match cannot alert (delivery
+  // would discard it), so it is not worth an event — and must not use up the
+  // per-poll event budget, or a run of matching lines would hold back the
+  // rest of the log for no alert at all.
+  const eventKey = `log:${key}`;
+  const cooldownKey = JSON.stringify([eventKey, watcher.mantis_url]);
+  const coolingDown = () => {
+    const last = state.firedAt.get(cooldownKey);
+    return last !== undefined && Date.now() - last < opts.cooldownMs;
+  };
+  let handle;
   try {
-    text = await readRange(watcher.path, start, info.size);
+    handle = await open(watcher.path, "r");
+    const buffer = Buffer.allocUnsafe(limits.chunkBytes);
+    let bytesRead = 0;
+    let built = 0;
+    while (
+      position.offset < info.size &&
+      bytesRead < limits.maxBytesPerPoll &&
+      built < limits.maxEventsPerPoll
+    ) {
+      const want = Math.min(buffer.length, info.size - position.offset);
+      const { bytesRead: n } = await handle.read(buffer, 0, want, position.offset);
+      if (n === 0) break;
+      bytesRead += n;
+
+      const events = [];
+      let pos = 0;
+      while (pos < n && built + events.length < limits.maxEventsPerPoll) {
+        const newline = buffer.indexOf(0x0a, pos);
+        const lineBreak = newline === -1 || newline >= n ? -1 : newline;
+        if (position.skipping) {
+          // The rest of an over-long line: discard up to its line break.
+          if (lineBreak === -1) {
+            pos = n;
+            break;
+          }
+          pos = lineBreak + 1;
+          position.skipping = false;
+          continue;
+        }
+        // No line break yet and still within the line cap: leave the partial
+        // line in the file; it is read again once the rest has been written.
+        if (lineBreak === -1 && n - pos <= limits.maxLineBytes) break;
+
+        const end = lineBreak === -1 ? n : lineBreak;
+        let line = buffer.toString("utf8", pos, Math.min(end, pos + limits.maxLineBytes));
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (re.test(line) && !coolingDown()) {
+          events.push({
+            key: eventKey,
+            state,
+            cooldownMs: opts.cooldownMs,
+            dryRun: opts.dryRun,
+            deliveryTimeoutMs: opts.deliveryTimeoutMs,
+            url: watcher.mantis_url,
+            event: watcher.event ?? "device-log",
+            source: "iot-log",
+            device: watcher.device ?? watcher.name,
+            payload: { watcher: watcher.name, line, at: new Date().toISOString() },
+          });
+        }
+        if (lineBreak === -1) {
+          // Over the line cap with no line break in sight: the head has been
+          // scanned, so drop the remainder as it arrives.
+          position.skipping = true;
+          pos = n;
+        } else {
+          pos = lineBreak + 1;
+        }
+      }
+      if (pos === 0) break; // only an unfinished line is left
+      position.offset += pos;
+
+      // Deliver before reading on, so an alert never waits for the backlog.
+      // A failed delivery keeps its events (retried next poll) and stops the
+      // scan; the unread part of the file is picked up after they are sent.
+      if (events.length) {
+        built += events.length;
+        state.pendingLogs.set(key, events);
+        if (!await flushPendingLogs(key, state)) break;
+      }
+    }
   } catch (err) {
     console.error("log read failed", watcher.name, err instanceof Error ? err.message : String(err));
-    return;
+  } finally {
+    await handle?.close().catch(() => {});
   }
-  const lines = `${continuing ? previous.partial ?? "" : ""}${text}`.split(/\r?\n/);
-  const partial = lines.pop() ?? "";
-  state.logOffsets.set(key, { offset: info.size, fileId, partial });
-  const re = new RegExp(watcher.pattern, "i");
-  const events = [];
-  for (const line of lines) {
-    if (!re.test(line)) continue;
-    const event = {
-      key: `log:${key}`,
-      state,
-      cooldownMs: opts.cooldownMs,
-      dryRun: opts.dryRun,
-      deliveryTimeoutMs: opts.deliveryTimeoutMs,
-      url: watcher.mantis_url,
-      event: watcher.event ?? "device-log",
-      source: "iot-log",
-      device: watcher.device ?? watcher.name,
-      payload: { watcher: watcher.name, line, at: new Date().toISOString() },
-    };
-    events.push(event);
-  }
-  if (events.length) state.pendingLogs.set(key, events);
-  await flushPendingLogs(key, state);
+}
+
+function logLimits(opts) {
+  const custom = opts?.logLimits ?? {};
+  const pick = (value, fallback) => (Number.isInteger(value) && value > 0 ? value : fallback);
+  const maxLineBytes = pick(custom.maxLineBytes, LOG_MAX_LINE_BYTES);
+  return {
+    maxLineBytes,
+    // A chunk must be able to hold one capped line plus its line break, or a
+    // read that starts at a line could make no progress.
+    chunkBytes: Math.max(pick(custom.chunkBytes, LOG_CHUNK_BYTES), maxLineBytes + 2),
+    maxBytesPerPoll: pick(custom.maxBytesPerPoll, LOG_MAX_BYTES_PER_POLL),
+    maxEventsPerPoll: pick(custom.maxEventsPerPoll, LOG_MAX_EVENTS_PER_POLL),
+  };
 }
 
 async function flushPendingLogs(key, state) {
@@ -306,20 +401,6 @@ function parseHm(raw) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(String(raw));
   if (!match) return 0;
   return Math.min(1439, Math.max(0, Number(match[1]) * 60 + Number(match[2])));
-}
-
-async function readRange(path, start, end) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    const stream = createReadStream(path, {
-      start,
-      end: Math.max(start, end - 1),
-      encoding: "utf8",
-    });
-    stream.on("data", (chunk) => chunks.push(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolve(chunks.join("")));
-  });
 }
 
 function run(cmd, args, { timeoutMs = 5000 } = {}) {
