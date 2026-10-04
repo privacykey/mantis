@@ -15,7 +15,7 @@ import {
 import { audit } from "@/lib/audit";
 import { canAccessKey } from "@/lib/auth";
 import { clientIpFromHeaders } from "@/lib/request-info";
-import { getSessionApiKey } from "@/lib/session";
+import { getDashboardSession, getSessionApiKey } from "@/lib/session";
 import { validateDestination } from "@/lib/notify/channels";
 import { replaceDestinations, type DestinationInput } from "@/lib/notify/destinations";
 import {
@@ -94,7 +94,7 @@ export async function deleteKeyAction(formData: FormData): Promise<void> {
   redirect("/keys");
 }
 
-export type MonitorActionState = { error?: string; saved?: boolean };
+export type MonitorActionState = { error?: string; saved?: boolean; saveOutcomeUnknown?: boolean };
 
 export type DestinationsActionState = { error?: string; saved?: boolean };
 
@@ -199,11 +199,15 @@ export async function setMonitorAction(
   _prev: MonitorActionState,
   formData: FormData,
 ): Promise<MonitorActionState> {
-  let session;
-  try { session = await getSessionApiKey(); } catch {
+  let context;
+  try { context = await getDashboardSession(); } catch {
     return { error: "could not verify your session; your changes are still in the form" };
   }
-  if (!session) return { error: "session expired; sign in in another tab, then save again" };
+  if (!context) return { error: "session expired; sign in again, then reload this page" };
+  if (formData.get("monitor_draft_scope") !== context.draftScope) {
+    return { error: "your sign-in changed; reload this page before saving again" };
+  }
+  const session = context.apiKey;
   const id = String(formData.get("id") ?? "");
   let owned;
   try {
@@ -219,9 +223,9 @@ export async function setMonitorAction(
   }
 
   const windowRaw = String(formData.get("monitor_window_seconds") ?? "300");
-  const windowSeconds = Number.parseInt(windowRaw, 10);
+  const windowSeconds = Number(windowRaw);
   if (
-    !Number.isFinite(windowSeconds) ||
+    !Number.isInteger(windowSeconds) ||
     windowSeconds < 30 ||
     windowSeconds > 86_400
   ) {
@@ -231,7 +235,7 @@ export async function setMonitorAction(
   try {
     await db.update(keys).set({ monitorMode: modeRaw, monitorWindowSeconds: windowSeconds }).where(eq(keys.id, id));
   } catch {
-    return { error: "could not save monitor settings; your changes are still in the form" };
+    return { error: "could not confirm saved monitor settings; your changes are still in the form", saveOutcomeUnknown: true };
   }
 
   await audit({
@@ -253,11 +257,15 @@ export async function setMonitorAction(
 }
 
 export async function resetMonitorAction(_prev: MonitorActionState, formData: FormData): Promise<MonitorActionState> {
-  let session;
-  try { session = await getSessionApiKey(); } catch {
+  let context;
+  try { context = await getDashboardSession(); } catch {
     return { error: "could not verify your session; try again when the server is available" };
   }
-  if (!session) return { error: "session expired; sign in again" };
+  if (!context) return { error: "session expired; sign in again, then reload this page" };
+  if (formData.get("monitor_draft_scope") !== context.draftScope) {
+    return { error: "your sign-in changed; reload this page before resetting again" };
+  }
+  const session = context.apiKey;
   const id = String(formData.get("id") ?? "");
   let owned;
   try { owned = await loadOwned(session, id); } catch {
