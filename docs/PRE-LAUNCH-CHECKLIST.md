@@ -5,6 +5,45 @@ and #85. Patch targets: server 0.2.1, CLI 0.2.2, edge 0.1.5. Checks below
 distinguish repository verification from deployment-specific sign-off; a green
 build alone is not a production launch check.
 
+The checklist below records that 0.2.1 review. The 0.3.0 security release that
+followed it is recorded in the next section.
+
+## 0.3.0 security release (2026-10-03)
+
+Server 0.3.0, CLI 0.3.0 and edge 0.2.0 fix the findings of the October 2026
+security audit (PR #108). [`CHANGELOG.md`](../CHANGELOG.md) has the full list
+and the upgrade checklist.
+
+Repository checks:
+
+- [x] Run all component unit tests: **688 server + 271 CLI + 118 edge + 19 IoT
+  helper** passing.
+- [x] Run **188 integration tests** against an isolated Postgres database.
+- [x] Run **20 production HTTP tests** against a standalone build, including
+  host separation, any-path triggers and the status URL without its tag.
+- [x] Pass `pnpm run check` and code scanning on the release commit.
+- [x] Publish from the merge commit: server `v0.3.0`, CLI `cli-v0.3.0` (four
+  platform tarballs and `SHA256SUMS`, Homebrew formula bumped) and edge
+  `edge-v0.2.0`.
+- [ ] Clear the production dependency audit: `pnpm audit --prod` reports one
+  high advisory in `node-forge` (via `passkit-generator`, used to sign Wallet
+  passes). No patched release existed on 2026-10-03.
+
+Deployment sign-off for 0.3.0, on top of the list at the end of this page:
+
+- [ ] Apply migration `0008_fleet_lineage_self_origins` and upgrade the CLI
+  with the server.
+- [ ] Re-point every Uptime Kuma monitor at the key's new status URL
+  (`/status/<publicId>.<tag>`); the old form returns 404.
+- [ ] If fleet devices attach their own alert destination at enrollment, set
+  `MANTIS_ENROLL_DESTINATIONS`; re-paste the Kandji script.
+- [ ] Regenerate deployed css-background snippets, Windows device bundles and
+  the Home Assistant receiver.
+- [ ] Check on the real platform what the tests cannot: import the three
+  generated Windows task XMLs with `schtasks /create /xml`; load the Home
+  Assistant YAML; in the Tailscale split profile confirm from outside the
+  tailnet that `/c/<id>` fires and `/login` is a 404.
+
 ## Repository checks
 
 - [x] Review open PRs and issues. No open issues; PR #84 fixes polling intervals
