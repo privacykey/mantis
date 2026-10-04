@@ -87,6 +87,7 @@ The prose documentation lives at [docs.mantis.privacykey.org](https://docs.manti
 - [Use cases](https://docs.mantis.privacykey.org/use-cases) — defensive, detective, operational and adversarial patterns
 - [HTTP API](https://docs.mantis.privacykey.org/api) — endpoints, response kinds, webhook payload shape
 - [File keys](https://docs.mantis.privacykey.org/file-keys), [host-event keys](https://docs.mantis.privacykey.org/host-events), [deployment](https://docs.mantis.privacykey.org/deployment), [updating](https://docs.mantis.privacykey.org/updating)
+- [`CHANGELOG.md`](./CHANGELOG.md) — what changed in each release, with the upgrade steps (migrations, settings, artifacts to regenerate)
 
 ## Contributing
 
