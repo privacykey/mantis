@@ -2,18 +2,19 @@ name: Mantis IoT Helper
 slug: mantis_iot_helper
 version: "0.1.0"
 description: Watch IoT network/log events and fire Mantis canaries.
-url: "https://github.com/example/mantis"
+url: "https://github.com/privacykey/mantis"
 arch:
   - aarch64
   - amd64
-  - armv7
 startup: services
 boot: auto
 host_network: true
 privileged:
   - NET_ADMIN
 map:
-  - config:rw
+  - type: homeassistant_config
+    read_only: true
+    path: /config
 options:
   interval_seconds: 30
   cooldown_seconds: 900
