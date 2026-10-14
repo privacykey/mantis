@@ -45,9 +45,37 @@ function maybeWarnNoProxy(): void {
       "[mantis] TRUST_PROXY_HEADERS is not set and NODE_ENV=production. " +
         "Client IPs will be recorded as null. Set TRUST_PROXY_HEADERS=1 if " +
         "this app sits behind a trusted reverse proxy (Cloudflare, " +
-        "cloudflared tunnel, Tailscale Funnel, Vercel, nginx, etc.).",
+        "cloudflared tunnel, Tailscale Funnel, Vercel, nginx, etc.), and " +
+        "pin TRUSTED_IP_HEADER to the one header that proxy writes " +
+        `(${PIN_GUIDANCE}).`,
     );
   }
+}
+
+// Shared by the boot warnings below; mirrors the table in .env.example.
+const PIN_GUIDANCE =
+  "cf-connecting-ip behind Cloudflare / cloudflared; x-forwarded-for behind " +
+  "Tailscale serve/Funnel, Fly or Render; x-real-ip or x-forwarded-for " +
+  "behind nginx/Caddy/Traefik, whichever it is configured to set; " +
+  "x-vercel-forwarded-for on Vercel";
+
+let warnedUnpinned = false;
+function maybeWarnUnpinned(): void {
+  if (warnedUnpinned) return;
+  // Production only: the non-production default trusts headers so local dev
+  // sees IPs, and nagging there (or in tests) would just be noise.
+  if (process.env.NODE_ENV !== "production") return;
+  warnedUnpinned = true;
+  // Avoid pulling in the pino logger here to keep this module edge-safe.
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[mantis] Client-IP headers are trusted but TRUSTED_IP_HEADER is not " +
+      `set, so the first header present out of ${IP_HEADERS.join(", ")} ` +
+      "wins. Any of those your proxy does not overwrite can be sent by the " +
+      "client, which lets it choose the IP recorded on hits and used for " +
+      "per-IP limits. Pin the one header your ingress writes: " +
+      `${PIN_GUIDANCE}.`,
+  );
 }
 
 // Number of trusted reverse-proxy hops in front of this app. The client IP in
@@ -61,7 +89,10 @@ function trustProxyHops(): number {
 // other one in IP_HEADERS. Pin it to the header your proxy authoritatively
 // sets (e.g. "x-real-ip" behind nginx/Caddy/Traefik) so an attacker cannot
 // smuggle a forged cf-connecting-ip past a proxy that doesn't strip inbound
-// copies of it. Unset = the legacy ordered fallback across all IP_HEADERS.
+// copies of it. Unset = the legacy ordered fallback across all IP_HEADERS,
+// which is only safe behind an ingress that overwrites the FIRST header in
+// that order it lets through (Cloudflare does; a proxy that writes only
+// X-Forwarded-For does not) — hence the one-time warning when it is unset.
 function trustedIpHeader(): string | null {
   const raw = process.env.TRUSTED_IP_HEADER;
   if (!raw) return null;
@@ -89,6 +120,58 @@ function maybeWarnUnknownTrustedHeader(): void {
 
 type HeaderGetter = (name: string) => string | null | undefined;
 
+const IPV4_RE =
+  /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const IPV6_GROUP_RE = /^[0-9A-Fa-f]{1,4}$/;
+const IPV6_ZONE_RE = /^[0-9A-Za-z._-]{1,32}$/;
+
+function isIpv6Literal(value: string): boolean {
+  // Longest textual form (IPv4-embedded, fully expanded) is 45 chars.
+  if (value.length < 2 || value.length > 45) return false;
+  const halves = value.split("::");
+  if (halves.length > 2) return false;
+  const groups = halves.flatMap((half) => (half === "" ? [] : half.split(":")));
+  let count = 0;
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i] ?? "";
+    if (i === groups.length - 1 && group.includes(".")) {
+      // Trailing dotted quad (::ffff:203.0.113.9) stands for two groups.
+      if (!IPV4_RE.test(group)) return false;
+      count += 2;
+    } else {
+      if (!IPV6_GROUP_RE.test(group)) return false;
+      count += 1;
+    }
+  }
+  // "::" stands for at least one zero group; without it all eight are spelled.
+  return halves.length === 2 ? count <= 7 : count === 8;
+}
+
+/**
+ * Returns `token` as a bare IP address when it is a syntactically valid IPv4 or
+ * IPv6 literal, else null. Tolerates the decorations real proxies add — a port
+ * ("203.0.113.9:4711", "[2001:db8::1]:4711"), brackets, an IPv6 zone — and
+ * strips port and brackets so one client maps to one value. Hand-rolled rather
+ * than node:net's isIP to keep this module edge-safe.
+ */
+export function parseIpLiteral(token: string): string | null {
+  let value = token.trim();
+  if (value.startsWith("[")) {
+    const bracketed = /^\[([^\]]+)\](?::\d{1,5})?$/.exec(value);
+    if (!bracketed?.[1]) return null;
+    value = bracketed[1];
+  } else {
+    const withPort = /^([^:]+):\d{1,5}$/.exec(value);
+    if (withPort?.[1]) value = withPort[1];
+  }
+  if (IPV4_RE.test(value)) return value;
+
+  const zoneAt = value.indexOf("%");
+  const address = zoneAt === -1 ? value : value.slice(0, zoneAt);
+  if (zoneAt !== -1 && !IPV6_ZONE_RE.test(value.slice(zoneAt + 1))) return null;
+  return isIpv6Literal(address) ? value : null;
+}
+
 /**
  * Extract the client IP from a Headers-like object, applying the trust gate and
  * the rightmost-hop X-Forwarded-For parsing. This is the single source of truth
@@ -100,7 +183,11 @@ type HeaderGetter = (name: string) => string | null | undefined;
  * consulted; an unrecognised value (e.g. a typo) is ignored with a one-time
  * warning so a misconfiguration can't silently null out every client IP.
  * Otherwise the IP_HEADERS list is tried in order (cf-connecting-ip first) for
- * backward compatibility.
+ * backward compatibility, with a one-time production warning to pin it.
+ *
+ * Whichever header wins, its value must be an IP literal; anything else is
+ * skipped and the next header consulted, so free text can never be recorded as
+ * a client IP or used as a limiter key.
  */
 export function clientIpFromHeaders(get: HeaderGetter): string | null {
   if (!trustProxyHeaders()) {
@@ -113,6 +200,7 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
     headers = [pinned];
   } else {
     if (pinned) maybeWarnUnknownTrustedHeader();
+    else maybeWarnUnpinned();
     headers = IP_HEADERS;
   }
   for (const h of headers) {
@@ -124,20 +212,18 @@ export function clientIpFromHeaders(get: HeaderGetter): string | null {
       .filter(Boolean);
     if (parts.length === 0) continue;
 
-    if (CHAIN_IP_HEADERS.has(h)) {
-      // A client-first append chain ("client, proxy1, …"): the LEFTMOST entry
-      // is supplied by the client and is fully spoofable. Take the entry
-      // TRUST_PROXY_HOPS from the right (the nearest trusted hop), which a
-      // client cannot forge past your proxy layer. Applies to x-forwarded-for
-      // and x-vercel-forwarded-for, both of which can arrive comma-joined.
-      const ip = parts[Math.max(0, parts.length - trustProxyHops())];
-      if (ip) return ip;
-    } else {
-      // cf-connecting-ip / x-real-ip are single values set by the trusted
-      // proxy, not a client-controlled list.
-      const ip = parts[0];
-      if (ip) return ip;
-    }
+    // A client-first append chain ("client, proxy1, …"): the LEFTMOST entry
+    // is supplied by the client and is fully spoofable. Take the entry
+    // TRUST_PROXY_HOPS from the right (the nearest trusted hop), which a
+    // client cannot forge past your proxy layer. Applies to x-forwarded-for
+    // and x-vercel-forwarded-for, both of which can arrive comma-joined.
+    // cf-connecting-ip / x-real-ip are single values set by the trusted
+    // proxy, not a client-controlled list.
+    const candidate = CHAIN_IP_HEADERS.has(h)
+      ? parts[Math.max(0, parts.length - trustProxyHops())]
+      : parts[0];
+    const ip = candidate ? parseIpLiteral(candidate) : null;
+    if (ip) return ip;
   }
   return null;
 }

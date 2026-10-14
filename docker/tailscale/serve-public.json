@@ -7,8 +7,14 @@
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
       "Handlers": {
-        "/": {
-          "Proxy": "http://mantis:3000"
+        "/c": {
+          "Proxy": "http://mantis:3000/c"
+        },
+        "/status": {
+          "Proxy": "http://mantis:3000/status"
+        },
+        "/api/wallet": {
+          "Proxy": "http://mantis:3000/api/wallet"
         }
       }
     }

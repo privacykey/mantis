@@ -4,13 +4,14 @@ import { dirname, resolve } from "node:path";
 import type {
   DeviceProfileMeta,
   DeviceVectorMeta,
+  KeyWithDestinationResults,
   MantisClient,
 } from "../lib/api.js";
 import {
   applyBundleLocally,
   assertBundleInstallableHere,
 } from "../lib/device-install.js";
-import { c, emit, ExitCode, fail } from "../lib/out.js";
+import { c, emit, ExitCode, fail, safeText } from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type DeviceNewOpts = GlobalOpts & {
@@ -44,11 +45,11 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
       emit(
         () => {
           process.stderr.write(
-            `${c.bold(device)} (${profile.os}) — ${vectors.length} alarm(s), nothing minted:\n`,
+            `${c.bold(safeText(device))} (${safeText(profile.os)}) — ${vectors.length} alarm(s), nothing minted:\n`,
           );
           for (const v of vectors) {
             process.stderr.write(
-              `  ${c.cyan(v.slug.padEnd(14))} ${v.label}${v.needs_root ? c.dim(" [root]") : ""}\n`,
+              `  ${c.cyan(safeText(v.slug).padEnd(14))} ${safeText(v.label)}${v.needs_root ? c.dim(" [root]") : ""}\n`,
             );
           }
         },
@@ -66,12 +67,15 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
     try {
       for (const v of vectors) {
         const memo = `${device} — ${v.label}`;
+        const ext = externalId(device, profile.os, v.slug);
         const key = await client.createKey({
           memo,
-          external_id: externalId(device, profile.os, v.slug),
+          external_id: ext,
           response_kind: v.response_kind,
           dedupe_window_seconds: v.dedupe_window_seconds,
         });
+        // Runs before anything is bundled or installed.
+        assertReusedKeyIsOurs(key, ext, v.slug);
         minted.push({ id: key.id, slug: v.slug, memo, url: key.url });
       }
 
@@ -95,7 +99,18 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
         });
       }
     } catch (err) {
-      const confirmed = minted.map((m) => `  ${m.slug}: ${m.id} ${m.url}`).join("\n");
+      const confirmed = minted
+        .map((m) => `  ${safeText(m.slug)}: ${safeText(m.id)} ${safeText(m.url)}`)
+        .join("\n");
+      if (err instanceof ReusedKeyRefused) {
+        // Re-running would adopt the same key again, so no resume hint here.
+        throw new Error(
+          `${err.message}\nNothing was bundled or installed.` +
+            (confirmed
+              ? ` ${minted.length} other alarm key(s) from this run are on the server:\n${confirmed}`
+              : ""),
+        );
+      }
       const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
       const target = client.profile ? `--profile ${quote(client.profile)}` : `--base-url ${quote(client.baseUrl)}`;
       const resume = `mantis ${target} device new --name ${quote(device)} --os ${profile.os} --vectors ${quote(vectors.map((v) => v.slug).join(","))}` +
@@ -112,10 +127,12 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
     emit(
       () => {
         process.stderr.write(
-          `${c.green("✓")} ${c.bold(device)} ${installed ? "armed" : "minted"} — ${minted.length} alarm(s)\n`,
+          `${c.green("✓")} ${c.bold(safeText(device))} ${installed ? "armed" : "minted"} — ${minted.length} alarm(s)\n`,
         );
         for (const m of minted) {
-          process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.cyan(m.url)}\n`);
+          process.stderr.write(
+            `  ${c.dim(safeText(m.memo))}\n    ${c.cyan(safeText(m.url))}\n`,
+          );
         }
         if (bundlePath) {
           process.stderr.write(`\n${c.green("✓")} bundle → ${c.cyan(bundlePath)}\n`);
@@ -144,17 +161,21 @@ export async function deviceProfilesCmd(opts: GlobalOpts): Promise<void> {
     emit(
       () => {
         for (const p of profiles) {
-          process.stderr.write(`\n${c.bold(p.label)} ${c.dim(`(${p.os})`)}\n`);
+          process.stderr.write(
+            `\n${c.bold(safeText(p.label))} ${c.dim(`(${safeText(p.os)})`)}\n`,
+          );
           for (const v of p.vectors) {
             const flags = [
               v.needs_root ? "root" : null,
-              v.needs_extra_setup ? `needs ${v.needs_extra_setup.what}` : null,
+              v.needs_extra_setup
+                ? `needs ${safeText(v.needs_extra_setup.what)}`
+                : null,
               p.defaults.includes(v.slug) ? null : "off by default",
             ].filter(Boolean);
             process.stderr.write(
-              `  ${c.cyan(v.slug.padEnd(14))} ${v.label}` +
+              `  ${c.cyan(safeText(v.slug).padEnd(14))} ${safeText(v.label)}` +
                 (flags.length ? c.dim(`  [${flags.join(", ")}]`) : "") +
-                `\n      ${c.dim(v.blurb)}\n`,
+                `\n      ${c.dim(safeText(v.blurb))}\n`,
             );
           }
         }
@@ -263,6 +284,43 @@ function externalId(device: string, os: string, slug: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
   return `mantis:device:${os}:${normalized}:${slug}`;
+}
+
+class ReusedKeyRefused extends Error {}
+
+/**
+ * external_id is first-writer-wins on the server: a later create for the same
+ * identity returns the EXISTING key (`reused: true`) with whatever settings
+ * its first writer chose. That is what makes re-running this command safe —
+ * and also what would let someone who knows a machine's name claim its
+ * identity first, with a key that is disabled, already expiring or routed
+ * somewhere else. Only adopt a reused key that this credential created and
+ * that is plainly live; refuse anything else rather than arm a machine with
+ * an alarm that may never ring.
+ *
+ * `created_by_caller` is absent on older servers; there the creator cannot be
+ * checked, so only the disabled / expiry checks apply.
+ */
+function assertReusedKeyIsOurs(
+  key: KeyWithDestinationResults,
+  ext: string,
+  slug: string,
+): void {
+  if (!key.reused) return;
+  const why =
+    key.created_by_caller === false
+      ? "was created by a different API key"
+      : key.disabled || key.disabled_at
+        ? "is disabled"
+        : key.expires_at != null
+          ? `is set to expire (${safeText(key.expires_at)}), after which it records nothing`
+          : null;
+  if (!why) return;
+  const id = safeText(key.id);
+  throw new ReusedKeyRefused(
+    `${safeText(slug)}: ${ext} already belongs to key ${id}, which ${why}. Refusing to arm this machine with it. ` +
+      `Inspect it with \`mantis show ${id}\`; if it is not one you set up, delete it (\`mantis rm ${id}\`) and re-run.`,
+  );
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,6 +1,6 @@
 import type { MonitorMode } from "../lib/api.js";
-import { c, emit } from "../lib/out.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { c, emit, safeText } from "../lib/out.js";
+import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 const MODES: readonly MonitorMode[] = ["off", "latch", "window"];
@@ -26,7 +26,7 @@ export async function monitorCmd(id: string, opts: MonitorOpts): Promise<void> {
   }
 
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, id);
+    const fullId = await resolveKeyRefForAction(client, id);
     const key = await client.setMonitor(fullId, {
       mode,
       window_seconds: windowSeconds,
@@ -36,7 +36,7 @@ export async function monitorCmd(id: string, opts: MonitorOpts): Promise<void> {
     let trippedAt: string | undefined;
     if (key.monitor_mode !== "off") {
       try {
-        const s = await client.fetchStatus(key.public_id);
+        const s = await client.fetchStatus(key.id);
         currentState = s.status;
         trippedAt = s.tripped_at;
       } catch {
@@ -48,18 +48,18 @@ export async function monitorCmd(id: string, opts: MonitorOpts): Promise<void> {
       () => {
         const w = process.stdout.write.bind(process.stdout);
         w(
-          `${c.green("✓")} monitor set: ${c.bold(key.monitor_mode)}` +
+          `${c.green("✓")} monitor set: ${c.bold(safeText(key.monitor_mode))}` +
             (key.monitor_mode === "window"
-              ? ` (${key.monitor_window_seconds}s)`
+              ? ` (${safeText(key.monitor_window_seconds)}s)`
               : "") +
             "\n",
         );
         if (key.monitor_status_url) {
-          w(`  ${c.dim("status URL:")} ${c.cyan(key.monitor_status_url)}\n`);
+          w(`  ${c.dim("status URL:")} ${c.cyan(safeText(key.monitor_status_url))}\n`);
           w(
             `  ${c.dim("current:   ")} ${
               currentState === "tripped"
-                ? c.red("tripped") + (trippedAt ? c.dim(` @ ${trippedAt}`) : "")
+                ? c.red("tripped") + (trippedAt ? c.dim(` @ ${safeText(trippedAt)}`) : "")
                 : currentState === "ok"
                   ? c.green("ok")
                   : c.dim("off")

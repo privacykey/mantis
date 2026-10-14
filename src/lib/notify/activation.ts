@@ -7,9 +7,11 @@ import {
   type NotificationChannel,
   type NotificationDestination,
 } from "@/db/schema";
-import { env, keyUrl } from "@/lib/env";
+import { env, keyDashboardUrl, keyUrl } from "@/lib/env";
 import { log } from "@/lib/log";
 import { sanitizeHeaderValue } from "@/lib/sanitize";
+import { causeDetail } from "@/lib/ssrf";
+import { truncate } from "./escape";
 import { safePostJson } from "./safe-post";
 import { boundedSmtpUrl } from "./smtp";
 
@@ -47,7 +49,8 @@ export async function fireActivationPing(
       // A global destination (keyId NULL) has no key to describe, so the ping
       // announces the destination itself instead.
       label: key ? key.memo : "global destination",
-      url: key ? keyUrl(key.publicId) : env.publicBaseUrl,
+      dashboardUrl: key ? keyDashboardUrl(key.id) : env.dashboardBaseUrl,
+      triggerUrl: key ? keyUrl(key.publicId) : null,
       keyId: key?.id ?? null,
       publicId: key?.publicId ?? null,
       target: destination.target,
@@ -55,10 +58,18 @@ export async function fireActivationPing(
     await persistActivationStatus(destination.id, "ok", null);
     return { ok: true };
   } catch (err) {
+    // `msg` is persisted and returned to whoever created the destination, so
+    // it carries no resolver detail (see REFUSED_DESTINATION). The cause —
+    // resolved address, resolver error — is logged here and nowhere else.
     const msg = err instanceof Error ? err.message : String(err);
     await persistActivationStatus(destination.id, "failed", msg.slice(0, 500));
     log.warn(
-      { destinationId: destination.id, channel: destination.channel, err: msg },
+      {
+        destinationId: destination.id,
+        channel: destination.channel,
+        err: msg,
+        cause: causeDetail(err),
+      },
       "activation ping failed",
     );
     return { ok: false, error: msg };
@@ -88,8 +99,17 @@ async function persistActivationStatus(
 type ActivationCtx = {
   /** Human label for what was connected — a key's memo, or "global destination". */
   label: string;
-  /** Key trigger URL, or the dashboard base URL for a global destination. */
-  url: string;
+  /**
+   * Non-firing dashboard link: the key's page, or the dashboard root for a
+   * global destination. The only URL a human-facing message may render.
+   */
+  dashboardUrl: string;
+  /**
+   * The key's TRIGGER URL (null for a global destination). Machine data for
+   * the webhook / Home Assistant payloads only — never render it as a link:
+   * following it fires the canary.
+   */
+  triggerUrl: string | null;
   keyId: string | null;
   publicId: string | null;
   target: string;
@@ -135,7 +155,9 @@ async function activateWebhook(ctx: ActivationCtx): Promise<void> {
             id: ctx.keyId,
             public_id: ctx.publicId,
             memo: ctx.label,
-            url: ctx.url,
+            // Same meaning as in the mantis.hit payload: `url` fires the canary.
+            url: ctx.triggerUrl,
+            dashboard_url: ctx.dashboardUrl,
           },
     connected_at: new Date().toISOString(),
     message: `Mantis destination connected. ${scopeNote(ctx)}`,
@@ -152,7 +174,7 @@ async function activateEmail(ctx: ActivationCtx): Promise<void> {
     text:
       `Mantis "${ctx.label}" is now configured to alert this email address.\n\n` +
       `${scopeNote(ctx)}\n\n` +
-      `URL: ${ctx.url}\n\n` +
+      `Dashboard: ${ctx.dashboardUrl}\n\n` +
       `This is a one-time confirmation. Real alerts will look similar but with hit details.`,
   });
 }
@@ -166,7 +188,7 @@ async function activateSlack(ctx: ActivationCtx): Promise<void> {
         text: {
           type: "mrkdwn",
           text:
-            `✅ *Mantis connected*: <${ctx.url}|${escapeMrkdwn(ctx.label)}>\n` +
+            `✅ *Mantis connected*: <${ctx.dashboardUrl}|${escapeMrkdwn(ctx.label)}>\n` +
             scopeNote(ctx),
         },
       },
@@ -179,8 +201,9 @@ async function activateDiscord(ctx: ActivationCtx): Promise<void> {
     username: "mantis",
     embeds: [
       {
-        title: `✅ Mantis connected: ${ctx.label}`,
-        url: ctx.url,
+        // Discord rejects a title over 256 characters.
+        title: truncate(`✅ Mantis connected: ${ctx.label}`, 256),
+        url: ctx.dashboardUrl,
         color: 0x10b981, // emerald-500
         description: scopeNote(ctx),
         timestamp: new Date().toISOString(),
@@ -209,7 +232,7 @@ async function activateTeams(ctx: ActivationCtx): Promise<void> {
             },
             {
               type: "TextBlock",
-              text: `[Open in dashboard](${ctx.url})`,
+              text: `[Open in dashboard](${ctx.dashboardUrl})`,
               wrap: true,
               isSubtle: true,
               spacing: "Small",
@@ -232,7 +255,9 @@ async function activateHomeAssistant(ctx: ActivationCtx): Promise<void> {
     type: "mantis.activation",
     scope: ctx.keyId === null ? "global" : "key",
     memo: ctx.label,
-    key_url: ctx.url,
+    // Same meaning as in the mantis.hit payload: key_url fires the canary.
+    key_url: ctx.triggerUrl,
+    dashboard_url: ctx.dashboardUrl,
     key_public_id: ctx.publicId,
     activation: true,
     connected_at: new Date().toISOString(),

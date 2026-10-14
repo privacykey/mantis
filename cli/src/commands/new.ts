@@ -8,7 +8,14 @@ import {
   isInstallType,
   type InstallType,
 } from "@mantis/core/installers";
-import { c, emit, fail, isJsonMode } from "../lib/out.js";
+import {
+  c,
+  emit,
+  fail,
+  isJsonMode,
+  safeText,
+  stdoutPayload,
+} from "../lib/out.js";
 import { canPrompt, createPrompter, type Prompter } from "../lib/prompt.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import { runInstaller } from "./install.js";
@@ -250,16 +257,16 @@ export async function newCmd(
       emit(
         () => {
           if (effectiveOpts.idOnly) {
-            process.stdout.write(key.id + "\n");
+            process.stdout.write(safeText(key.id) + "\n");
             return;
           }
           if (effectiveOpts.urlOnly) {
-            process.stdout.write(key.url + "\n");
+            process.stdout.write(safeText(key.url) + "\n");
             return;
           }
-          process.stdout.write(`${c.green("✓")} created ${c.bold(key.id)}\n`);
-          process.stdout.write(`  ${c.dim("memo:")}  ${key.memo}\n`);
-          process.stdout.write(`  ${c.dim("url: ")} ${c.cyan(key.url)}\n`);
+          process.stdout.write(`${c.green("✓")} created ${c.bold(safeText(key.id))}\n`);
+          process.stdout.write(`  ${c.dim("memo:")}  ${safeText(key.memo)}\n`);
+          process.stdout.write(`  ${c.dim("url: ")} ${c.cyan(safeText(key.url))}\n`);
           if (copied !== null) {
             process.stdout.write(
               copied
@@ -282,11 +289,11 @@ export async function newCmd(
             };
             const marker = activation.ok ? c.green("✓") : c.yellow("⚠");
             process.stdout.write(
-              `  ${marker} ${c.dim(d.channel.padEnd(7))} ${d.target}\n`,
+              `  ${marker} ${c.dim(safeText(d.channel).padEnd(7))} ${safeText(d.target)}\n`,
             );
             if (!activation.ok && activation.error) {
               process.stdout.write(
-                `    ${c.dim("activation failed:")} ${activation.error}\n`,
+                `    ${c.dim("activation failed:")} ${safeText(activation.error)}\n`,
               );
             }
           }
@@ -311,7 +318,7 @@ export async function newCmd(
             process.stdout.write("\n" + qrTerminal);
           }
           if (installerResult && !installerResult.writtenTo) {
-            process.stdout.write("\n" + installerResult.content);
+            process.stdout.write("\n" + stdoutPayload(installerResult.content));
           }
         },
         {

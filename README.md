@@ -38,7 +38,7 @@ Components are versioned independently: the server, the CLI, and the edge worker
 - **Smart-home triggers** via Home Assistant, Scrypted, and an optional LAN watcher
 - **Smart-home actions** — the `home_assistant` destination posts to a HA webhook automation, so a hit can flip a switch, fire a scene, or push a phone notification; `mantis install <key> --type homeassistant-receiver` prints the automation skeleton
 - **Direct notification destinations** — webhook, email, Slack, Discord, Teams — with a Postgres-backed retry queue and per-key dedup
-- **Uptime Kuma integration** — a per-key status URL flips on hit, so Kuma can fan out to its own notification channels
+- **Uptime Kuma integration** — a per-key status URL (`/status/<publicId>.<tag>`) flips on hit, so Kuma can fan out to its own notification channels. Copy it from the key's monitor card or `monitor_status_url`: the tag cannot be derived from the trigger URL, and the bare `/status/<publicId>` form used by earlier releases now returns 404, so existing Kuma monitors must be re-pointed
 - **Fleet provisioning** — idempotent key creation keyed on an `external_id`, plus create-only enrollment API keys safe to embed in MDM scripts. See [`docs/FLEET-PROVISIONING.md`](./docs/FLEET-PROVISIONING.md)
 
 The server stores a primary hit and its notification jobs in one transaction.
@@ -47,6 +47,12 @@ least once: a receiver may accept a message before the worker can record that
 success, so a recovery attempt can repeat it. Generic webhook receivers can
 deduplicate the stable `X-Mantis-Delivery-Id` / `Idempotency-Key` header (also
 `delivery_id` in the JSON payload). Third-party channels may still show repeats.
+
+In webhook payloads `key.url` (Home Assistant: `key_url`) is the key's
+**trigger URL** — fetching it fires the canary. Treat it as data, and use
+`key.dashboard_url` (Home Assistant: `dashboard_url`) for anything a person
+may click or a chat client may preview. The Slack, Discord, Teams and email
+alerts Mantis renders itself link only the dashboard.
 
 ## Get it
 
@@ -81,6 +87,7 @@ The prose documentation lives at [docs.mantis.privacykey.org](https://docs.manti
 - [Use cases](https://docs.mantis.privacykey.org/use-cases) — defensive, detective, operational and adversarial patterns
 - [HTTP API](https://docs.mantis.privacykey.org/api) — endpoints, response kinds, webhook payload shape
 - [File keys](https://docs.mantis.privacykey.org/file-keys), [host-event keys](https://docs.mantis.privacykey.org/host-events), [deployment](https://docs.mantis.privacykey.org/deployment), [updating](https://docs.mantis.privacykey.org/updating)
+- [`CHANGELOG.md`](./CHANGELOG.md) — what changed in each release, with the upgrade steps (migrations, settings, artifacts to regenerate)
 
 ## Contributing
 

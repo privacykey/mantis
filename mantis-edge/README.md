@@ -1,6 +1,6 @@
 # @mantis/edge
 
-Stateless, encryption-only mantis variant. Runs as a single Cloudflare Worker. No database, no persistence — the webhook destination is encrypted into the URL itself, the worker decrypts on each hit and forwards the request metadata. Pure RAM, ~10MB footprint, fits comfortably in Cloudflare's free tier.
+Stateless, encryption-only mantis variant. Runs as a single Cloudflare Worker. No database, no persistence — the webhook destination is encrypted into the URL itself, the worker decrypts on each hit and forwards the request metadata. Pure RAM, ~10MB footprint. It runs on the Workers Free plan, but that plan has a daily request cap that can silence every edge canary at once — read [Platform request quota](#platform-request-quota) before you rely on it.
 
 ## When to use this vs. stateful mantis
 
@@ -13,7 +13,7 @@ Stateless, encryption-only mantis variant. Runs as a single Cloudflare Worker. N
 | Uptime Kuma latch/window monitoring | ✓ | ✗ |
 | Postgres required | ✓ | ✗ |
 | Horizontal scaling | bounded by DB | ∞ |
-| Cost to run | postgres + app | free tier on Workers |
+| Cost to run | postgres + app | Workers Free works; Workers Paid for anything you rely on ([why](#platform-request-quota)) |
 
 You can run both side-by-side: stateful mantis for keys you want to manage, edge for high-volume / ephemeral / red-team-window-bounded ones.
 
@@ -40,7 +40,7 @@ AES-256-GCM gives confidentiality + integrity. Tamper any byte → decrypt throw
 
 Prereqs:
 
-- **A Cloudflare account with Workers enabled** (the free tier is fine).
+- **A Cloudflare account with Workers enabled.** The Free plan is enough to try it; see [Platform request quota](#platform-request-quota) before relying on it for real alerts.
 - **The mantis CLI**, which provides the `mantis edge *` commands used below. Install it globally with `npm i -g @mantis/cli` (or `brew install mantis`). The CLI is all you need to *mint* and *manage* edge URLs against an already-deployed worker.
 - **Only to deploy the worker from source:** `cd mantis-edge && npm install`. Wrangler is bundled as a dev dependency, so this installs it locally and the snippets below invoke it via `npx wrangler` — no global wrangler install needed.
 - **Cloudflare auth for wrangler.** Run `npx wrangler login` once; the first wrangler command opens a browser to authorize against your account. For CI / headless environments where no browser is available, set the `CLOUDFLARE_API_TOKEN` env var (a Workers-scoped API token) instead of logging in interactively.
@@ -179,6 +179,10 @@ curl -i https://mantis-edge.<sub>.workers.dev/c/<blob>
 
 The channel is baked into the encrypted blob at mint time — the worker doesn't have to know in advance which channel a given URL targets, and the same worker can serve URLs minted for all four channels simultaneously.
 
+**Chat alerts never contain the edge URL.** Slack, Discord and Teams alerts identify the URL that fired as inert text — `Edge canary AQx1Yz-aB3… on mantis-edge.<sub>.workers.dev` — the worker's host plus the first 10 characters of the sealed blob, which you can match against the URLs you minted. There is deliberately no link: the URL *is* the trigger and the worker keeps no state, so a click on the alert, a link preview, or a mail/chat security scanner following the link would fire the canary again and post another alert with the same link. The fragment is far too short to decrypt, so nothing built from it can fire anything.
+
+Values the caller controls (`X-Mantis-*` host context, IP, User-Agent) are escaped and then cut to a short display budget, so an oversized header cannot push a field past Slack's or Discord's length limits and get the whole alert rejected. The raw `webhook` channel still carries the full values.
+
 ## Raw webhook payload shape
 
 `--channel webhook` (or omitting `--channel`) sends Mantis's structured hit payload, matching the stateful mantis's webhook body with `key.id` / `key.public_id` set to `null` (stateless mode has no stored key row):
@@ -212,6 +216,8 @@ The channel is baked into the encrypted blob at mint time — the worker doesn't
 
 UA-parsing and bot-detection are skipped on the worker (keep it minimal). The receiving webhook can parse headers itself if it wants enrichment.
 
+`key.url` is the full edge URL as it was requested — machine data, kept so a receiver can tell which URL fired. It is still the live trigger. If your receiver relays alerts into chat, email or a ticket, do not render `key.url` as a link (or at all): anything that fetches it fires the canary again.
+
 `host_context` is populated from `X-Mantis-*` headers exactly as in the stateful version, so the existing installers (shell / macOS / Linux / Windows / web embeds) work with no changes — just point them at the edge URL.
 
 ## Limits and tradeoffs
@@ -222,6 +228,21 @@ UA-parsing and bot-detection are skipped on the worker (keep it minimal). The re
 - **No mint endpoint on the worker.** Minting is strictly client-side. A compromised worker can forward existing URLs but can't mint new ones — only the key holder can.
 - **`exp` is advisory.** Once a URL is minted, the only way to revoke it before `exp` is to rotate the key.
 - **Webhook allowlisting is optional.** Set `MANTIS_EDGE_WEBHOOK_ALLOWLIST` to exact hosts or wildcards to reduce blast radius if the edge key leaks. Examples: `hooks.slack.com`, `discord.com`, `*.example.com`.
+- **Every fetch is a hit.** There is no dedupe window and no per-URL or per-IP limiter: every request to an edge URL, with any HTTP method, forwards one alert. Do not paste an edge URL into a chat, ticket or email that previews or scans links.
+- **Delivery is best-effort, with a short retry.** A forward that fails with `429`, a `5xx`, a network error or a timeout is retried up to twice (backoff of about 0.5 s then 1 s, or the destination's `Retry-After` when it is 5 s or less), all inside the roughly 30 s Cloudflare lets a Worker keep working after it has answered. After that the alert is dropped and only logged (`npx wrangler tail`, look for `mantis-edge webhook forward failed`) — the worker has nowhere to queue it. A destination that asks for a longer `Retry-After` is not retried.
+- **One flooded URL can cost you other alerts.** Anyone who holds one edge URL can request it as often as they like, and each request is one POST to its webhook. Chat providers rate-limit per webhook, and `mantis edge device` seals the *same* webhook into every vector's URL, so a flood of one URL can use up the budget the others need; the retry above only bridges a short rejection window. If that matters: give the canaries you care most about their own webhook, and put the worker on a custom domain with a rate-limiting rule (below).
+
+### Platform request quota
+
+On the **Workers Free** plan Cloudflare caps an account at **100,000 Worker requests per day**, counted across every Worker on the account and reset at 00:00 UTC (check [Cloudflare's limits page](https://developers.cloudflare.com/workers/platform/limits/) for the current figure). Every request to the worker's hostname counts, including junk that the worker answers with `404` — any path, any method, or a `/c/<blob>` that does not decrypt.
+
+Once the cap is reached **the worker is no longer invoked**: Cloudflare answers with its own error page (or bypasses the worker, depending on the route's failure mode) until the reset. Nothing is forwarded, nothing is logged by the worker, and **every edge canary on that account is silent**. The hostname is in every edge URL, so anyone who has seen one URL can spend the quota without ever firing a canary, and nothing in mantis-edge will tell you it happened.
+
+The worker cannot defend itself — the request is counted before the code runs. What you can do:
+
+- **Use Workers Paid** for canaries you rely on. There is no daily cap; excess traffic becomes billed requests instead of an outage. Turn on Cloudflare's usage/billing notifications so a flood is something you hear about.
+- **Serve the worker from a custom domain** (see [deploy.md](./deploy.md#request-quota-rate-limiting-and-a-heartbeat)) and add a WAF rate-limiting rule for the hostname, plus a custom rule that blocks every path that does not start with `/c/`. A request blocked by a zone rule never reaches the worker. Two caveats: a `*.workers.dev` hostname is not part of any zone, so **zone WAF and rate-limiting rules cannot protect it** — set `workers_dev = false` in `wrangler.toml` once your URLs use the custom domain, or the unprotected hostname keeps reaching the same worker. And a per-IP limit does not stop a distributed flood, while random `/c/<blob>` paths look exactly like real ones, so this narrows the problem rather than closing it.
+- **Run an external heartbeat.** Mint one dedicated edge URL whose webhook is a dead-man's-switch monitor — a healthchecks.io check or an Uptime Kuma *push* monitor, for example — and have something outside Cloudflare (cron on a server, an uptime service) request that URL every few minutes. The monitor alarms when the pings stop, which is how you find out that the worker has stopped being invoked for any reason: quota, a bad deploy, a rotated key. If you use `MANTIS_EDGE_WEBHOOK_ALLOWLIST`, add the monitor's host to it.
 
 ## Files
 
@@ -229,7 +250,9 @@ UA-parsing and bot-detection are skipped on the worker (keep it minimal). The re
 src/
   index.ts         # fetch handler: parse, unseal, forward, respond
   seal.ts          # AES-256-GCM seal/unseal + base64url
-  forward.ts       # POST to payload.w with mantis.hit JSON shape
+  forward.ts       # POST to payload.w (raw mantis.hit JSON or a chat format), bounded retry
+  escape.ts        # escaping + length budgets for chat alerts, inert URL label
+  private-host.ts  # blocks literal private / loopback / metadata webhook hosts
   response.ts      # gif / empty / json / redirect / html
   host-context.ts  # parses X-Mantis-* headers (matches stateful version)
   types.ts         # shared types

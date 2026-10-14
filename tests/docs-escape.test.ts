@@ -83,13 +83,22 @@ describe("icsEscape (ICS property-line injection)", () => {
 
     // No bare CR survives — every \r in the output is a structural CRLF.
     expect(/\r(?!\n)/.test(text)).toBe(false);
-    // The URL is folded into its property value as a literal \n, not promoted
-    // to its own property line. Applies to both URL and ATTACH interpolations.
-    expect(text).toContain("URL:https://example.com/c/abc\\nINJECTED:evil");
+    // The line break is percent-encoded inside the URI value, not promoted to
+    // its own property line. Applies to both URL and ATTACH interpolations.
+    expect(text).toContain("URL:https://example.com/c/abc%0D%0AINJECTED:evil");
     expect(text).toContain(
-      "ATTACH;FMTTYPE=image/png:https://example.com/c/abc\\nINJECTED:evil",
+      "ATTACH;FMTTYPE=image/png:https://example.com/c/abc%0D%0AINJECTED:evil",
     );
     expect(text.split("\r\n")).not.toContain("INJECTED:evil");
+  });
+
+  it("leaves a URI value intact: no TEXT escaping of ; , or backslash", async () => {
+    // RFC 5545 defines no backslash escaping for URI values; escaping them
+    // would hand the calendar client a different URL, and the bait would miss.
+    const url = "https://example.com/base;v=1/c/abc123?a=1,2";
+    const text = (await generateIcs({ title: "Demo", url })).toString("utf8");
+    expect(text).toContain(`URL:${url}\r\n`);
+    expect(text).toContain(`ATTACH;FMTTYPE=image/png:${url}\r\n`);
   });
 });
 
@@ -114,11 +123,18 @@ describe("vcfEscape (vCard property-line injection)", () => {
     const text = buf.toString("utf8");
 
     expect(/\r(?!\n)/.test(text)).toBe(false);
-    // Folded into both the PHOTO and URL property values as a literal \n.
-    expect(text).toContain("URL:https://example.com/c/abc\\nINJECTED:evil");
+    // Percent-encoded inside both the PHOTO and URL property values.
+    expect(text).toContain("URL:https://example.com/c/abc%0D%0AINJECTED:evil");
     expect(text).toContain(
-      "PHOTO;VALUE=URI:https://example.com/c/abc\\nINJECTED:evil",
+      "PHOTO;VALUE=URI:https://example.com/c/abc%0D%0AINJECTED:evil",
     );
     expect(text.split("\r\n")).not.toContain("INJECTED:evil");
+  });
+
+  it("leaves a URI value intact: no TEXT escaping of ; , or backslash", async () => {
+    const url = "https://example.com/base;v=1/c/abc123?a=1,2";
+    const text = (await generateVcf({ title: "Demo", url })).toString("utf8");
+    expect(text).toContain(`URL:${url}\r\n`);
+    expect(text).toContain(`PHOTO;VALUE=URI:${url}\r\n`);
   });
 });

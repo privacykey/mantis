@@ -158,6 +158,10 @@ if [ -f fly.toml ]; then
   if ! grep -q "TRUST_PROXY_HEADERS" fly.toml; then
     echo "  ⚠ your fly.toml has no TRUST_PROXY_HEADERS — every hit will record"
     echo "    ip = null. Copy the [env] block from deploy/fly.toml.example."
+  elif ! grep -q "TRUSTED_IP_HEADER" fly.toml; then
+    echo "  ⚠ your fly.toml sets TRUST_PROXY_HEADERS without TRUSTED_IP_HEADER — a"
+    echo "    client can forge its recorded IP with a CF-Connecting-IP header."
+    echo "    Copy the [env] block from deploy/fly.toml.example."
   fi
 else
   info "generating fly.toml for '$APP' in $REGION"

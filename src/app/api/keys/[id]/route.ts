@@ -112,6 +112,9 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
   if (input.monitor_window_seconds !== undefined) {
     patch.monitorWindowSeconds = input.monitor_window_seconds;
   }
+  if (input.self_origins !== undefined) {
+    patch.selfOrigins = input.self_origins;
+  }
   if (input.disabled !== undefined) {
     patch.disabledAt = input.disabled ? new Date() : null;
   }

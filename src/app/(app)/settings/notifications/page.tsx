@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { listGlobalDestinations } from "@/lib/notify/destinations";
+import {
+  fingerprintSecret,
+  listGlobalDestinations,
+} from "@/lib/notify/destinations";
+import { openSecret } from "@/lib/secret-box";
 import { getSessionApiKey } from "@/lib/session";
 import { GlobalDestinationsForm } from "./form";
 
@@ -70,6 +74,12 @@ export default async function NotificationSettingsPage() {
           id: d.id,
           channel: d.channel,
           target: d.target,
+          // Fingerprint only; the plaintext is fetched on demand through the
+          // audited reveal action and never rendered into the page.
+          signingSecretFingerprint:
+            d.channel === "webhook" && d.signingSecret
+              ? fingerprintSecret(openSecret(d.signingSecret))
+              : null,
           lastActivationStatus: d.lastActivationStatus,
           lastActivationError: d.lastActivationError,
         }))}

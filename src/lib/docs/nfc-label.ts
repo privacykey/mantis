@@ -1,6 +1,14 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import QRCode from "qrcode";
+import { winAnsiSafe } from "./pdf";
 import type { DocOptions } from "./util";
+
+// Same tagging the nfc-ndef installer applies: /c promotes ?src=<label> to
+// X-Mantis-Source, so a tap ("nfc") and a QR scan ("qr") are told apart from
+// each other and from someone who typed the printed URL.
+function withSource(url: string, src: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}src=${src}`;
+}
 
 /**
  * Printable NFC sticker label PDF — designed to be cut out and stuck on/near
@@ -29,11 +37,14 @@ export async function generateNfcLabel(opts: DocOptions): Promise<Buffer> {
 
   const { width, height } = page.getSize();
   const margin = 72;
+  // Helvetica is WinAnsi-only; see winAnsiSafe (a non-Latin memo must not 500).
+  const title = winAnsiSafe(fontBold, opts.title);
+  const urlText = winAnsiSafe(font, opts.url);
 
   // Title
   const titleSize = 20;
-  const titleWidth = fontBold.widthOfTextAtSize(opts.title, titleSize);
-  page.drawText(opts.title, {
+  const titleWidth = fontBold.widthOfTextAtSize(title, titleSize);
+  page.drawText(title, {
     x: (width - titleWidth) / 2,
     y: height - margin - titleSize,
     size: titleSize,
@@ -54,7 +65,7 @@ export async function generateNfcLabel(opts: DocOptions): Promise<Buffer> {
   });
 
   // QR code (PNG bytes -> embedded image)
-  const qrPngBuf = await QRCode.toBuffer(opts.url, {
+  const qrPngBuf = await QRCode.toBuffer(withSource(opts.url, "qr"), {
     errorCorrectionLevel: "M",
     width: 600,
     margin: 1,
@@ -68,8 +79,8 @@ export async function generateNfcLabel(opts: DocOptions): Promise<Buffer> {
 
   // URL text below QR — small enough that long URLs still fit
   const urlSize = 9;
-  const urlWidth = font.widthOfTextAtSize(opts.url, urlSize);
-  page.drawText(opts.url, {
+  const urlWidth = font.widthOfTextAtSize(urlText, urlSize);
+  page.drawText(urlText, {
     x: Math.max(margin, (width - urlWidth) / 2),
     y: qrY - 22,
     size: urlSize,
@@ -89,7 +100,7 @@ export async function generateNfcLabel(opts: DocOptions): Promise<Buffer> {
     "How to use:",
     "  1. Buy a blank NFC tag (NTAG213/215/216) — cheap, widely available.",
     "  2. Use any NFC-write app (e.g. NFC Tools on Android/iOS) to write a URL record.",
-    "     URL to write:  " + opts.url,
+    "     URL to write:  " + winAnsiSafe(font, withSource(opts.url, "nfc")),
     "  3. Stick the tag behind this paper, or stick the paper as a QR fallback.",
     "  4. Anyone who taps the tag (NFC) or scans the QR fires the canary.",
   ];

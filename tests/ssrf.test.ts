@@ -2,6 +2,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import {
   isPrivateAddress,
   assertSafeWebhookUrl,
+  causeDetail,
+  REFUSED_DESTINATION,
   safeLookup,
   UnsafeUrlError,
 } from "@/lib/ssrf";
@@ -89,15 +91,65 @@ describe("assertSafeWebhookUrl", () => {
   });
 
   it("rejects literal AWS metadata IP", async () => {
-    await expect(assertSafeWebhookUrl("http://169.254.169.254/latest/meta-data/")).rejects.toThrow(/private address/);
+    await expect(assertSafeWebhookUrl("http://169.254.169.254/latest/meta-data/")).rejects.toThrow(REFUSED_DESTINATION);
   });
 
   it("rejects loopback by IP", async () => {
-    await expect(assertSafeWebhookUrl("http://127.0.0.1:5432/")).rejects.toThrow(/private address/);
+    await expect(assertSafeWebhookUrl("http://127.0.0.1:5432/")).rejects.toThrow(REFUSED_DESTINATION);
   });
 
   it("rejects 'localhost' (DNS-resolves to 127.0.0.1 / ::1)", async () => {
     await expect(assertSafeWebhookUrl("http://localhost/hook")).rejects.toThrow();
+  });
+
+  // WHATWG URL keeps the brackets on an IPv6 host, so isIP("[::1]") is 0. The
+  // literal used to fall through to DNS as if it were a name, and a resolver
+  // that answers such names with a public address let it through — while the
+  // connect-time lookup hook never runs for a literal host.
+  it.each([
+    "http://[::1]:8080/hook", // loopback
+    "http://[::ffff:127.0.0.1]/hook", // IPv4-mapped loopback (dotted)
+    "http://[::ffff:7f00:1]/hook", // IPv4-mapped loopback (hex)
+    "http://[::ffff:a9fe:a9fe]/latest/meta-data/", // IPv4-mapped metadata
+    "http://[fd00:ec2::254]/latest/meta-data/", // ULA (AWS IMDS over IPv6)
+    "http://[fe80::1]/hook", // link-local
+    "http://[::]/hook", // unspecified
+  ])("rejects the bracketed private IPv6 literal %s without asking DNS", async (url) => {
+    // A resolver that would vouch for anything, as a wildcard search domain does.
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    await expect(assertSafeWebhookUrl(url)).rejects.toThrow(REFUSED_DESTINATION);
+    expect(lookupMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a bracketed public IPv6 literal without asking DNS", async () => {
+    await expect(
+      assertSafeWebhookUrl("https://[2606:4700:4700::1111]/hook"),
+    ).resolves.toBeUndefined();
+    expect(lookupMock).not.toHaveBeenCalled();
+  });
+
+  // The refusal text reaches whoever created the destination — including a
+  // semi-public enrollment key — so it must not reveal what this server's
+  // resolver answered: not the private address, not whether the name exists.
+  it("refuses a private answer, no answer and a resolver error with one identical message", async () => {
+    lookupMock.mockImplementation(async (host: string) => {
+      if (host === "db") return [{ address: "172.18.0.2", family: 4 }];
+      if (host === "empty.example") return [];
+      throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: "ENOTFOUND" });
+    });
+
+    const refusals: UnsafeUrlError[] = [];
+    for (const url of ["http://db/", "http://empty.example/", "http://nx.example/"]) {
+      const err = await assertSafeWebhookUrl(url).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UnsafeUrlError);
+      refusals.push(err as UnsafeUrlError);
+    }
+
+    expect(new Set(refusals.map((e) => e.message))).toEqual(new Set([REFUSED_DESTINATION]));
+    expect(REFUSED_DESTINATION).not.toMatch(/172\.18\.0\.2|\bdb\b|nx\.example|ENOTFOUND/);
+    // The detail is kept for the server log only.
+    expect(causeDetail(refusals[0])).toContain("172.18.0.2");
+    expect(causeDetail(refusals[2])).toContain("ENOTFOUND nx.example");
   });
 
   it("allows private addresses when ALLOW_PRIVATE_WEBHOOKS=1", async () => {
@@ -146,7 +198,11 @@ describe("safeLookup (DNS-rebinding connect guard)", () => {
     // The pre-flight saw a public IP; by connect time the record flipped to
     // metadata. safeLookup must catch it at the point of connection.
     lookupMock.mockResolvedValue([{ address: "169.254.169.254", family: 4 }]);
-    await expect(run("rebind.evil")).rejects.toThrow(/private address/);
+    const err = await run("rebind.evil").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnsafeUrlError);
+    // Constant caller-visible text; the resolved address only on the cause.
+    expect((err as Error).message).toBe(REFUSED_DESTINATION);
+    expect(causeDetail(err)).toContain("169.254.169.254");
   });
 
   it("rejects if ANY resolved address is private (mixed record set)", async () => {
@@ -154,7 +210,7 @@ describe("safeLookup (DNS-rebinding connect guard)", () => {
       { address: "93.184.216.34", family: 4 },
       { address: "10.0.0.5", family: 4 },
     ]);
-    await expect(run("mixed.evil")).rejects.toThrow(/private address/);
+    await expect(run("mixed.evil")).rejects.toThrow(REFUSED_DESTINATION);
   });
 
   it("returns all validated addresses when options.all is set", async () => {
@@ -186,6 +242,6 @@ describe("safeLookup (DNS-rebinding connect guard)", () => {
 
   it("rejects when the host does not resolve", async () => {
     lookupMock.mockResolvedValue([]);
-    await expect(run("nxdomain.invalid")).rejects.toThrow(/did not resolve/);
+    await expect(run("nxdomain.invalid")).rejects.toThrow(REFUSED_DESTINATION);
   });
 });

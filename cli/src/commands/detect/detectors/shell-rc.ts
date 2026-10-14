@@ -1,5 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { safeText } from "../../../lib/out.js";
 import type { Detector, Finding } from "../types.js";
 import { TRIGGER_URL_RE } from "../types.js";
 
@@ -114,6 +115,9 @@ function scanRcContent(absPath: string, content: string, relName: string): Findi
   const lines = content.split("\n");
   const findings: Finding[] = [];
   const seenLines = new Set<number>();
+  // absPath is a realpath, so a symlinked rc file brings its target's name.
+  // Hints are rendered line by line; keep the path from adding lines.
+  const shown = safeText(absPath);
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
@@ -130,7 +134,7 @@ function scanRcContent(absPath: string, content: string, relName: string): Findi
         line: lineNo,
         match: line.trim(),
         summary: `${relName} sources a mantis hook (${sourced})`,
-        removeHint: `# delete the source line in ${absPath}:\nsed -i.bak '${lineNo}d' ${absPath}`,
+        removeHint: `# delete the source line in ${shown}:\nsed -i.bak '${lineNo}d' ${shown}`,
       });
       continue;
     }
@@ -146,7 +150,7 @@ function scanRcContent(absPath: string, content: string, relName: string): Findi
         summary: `${relName} contains an inline X-Mantis-* / X-Canary-* header (curl snippet pasted directly)`,
         url: firstTriggerUrlIn(line),
         source: extractSource(line),
-        removeHint: `# edit ${absPath} and remove the mantis curl block around line ${lineNo}`,
+        removeHint: `# edit ${shown} and remove the mantis curl block around line ${lineNo}`,
       });
     }
   }
@@ -167,7 +171,7 @@ function scanRcContent(absPath: string, content: string, relName: string): Findi
       match: lines[lineNo - 1]?.trim(),
       summary: `${relName} contains a mantis-style trigger URL`,
       url: m[0],
-      removeHint: `# review ${absPath}:${lineNo} manually`,
+      removeHint: `# review ${shown}:${lineNo} manually`,
     });
   }
 

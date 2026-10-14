@@ -26,7 +26,15 @@ import {
   type InstallType,
   type Installer,
 } from "@mantis/core/installers";
-import { c, emit, ExitCode, fail, isJsonMode } from "../lib/out.js";
+import {
+  c,
+  emit,
+  ExitCode,
+  fail,
+  isJsonMode,
+  safeBlock,
+  safeText,
+} from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 import {
   URL_RE,
@@ -1154,7 +1162,7 @@ function writeTestResult(result: TestResult, channel: string): void {
   }
   if (result.status === 0) {
     process.stderr.write(
-      `${c.red("✗")} ${c.dim("test:")} could not reach worker — ${"error" in result ? result.error : "unknown"}\n`,
+      `${c.red("✗")} ${c.dim("test:")} could not reach worker — ${"error" in result ? safeText(result.error) : "unknown"}\n`,
     );
     return;
   }
@@ -1166,13 +1174,13 @@ function writeTestResult(result: TestResult, channel: string): void {
         `    • URL was truncated in transit (try with --copy)\n`,
     );
     if ("body" in result && result.body) {
-      process.stderr.write(`    body: ${result.body}\n`);
+      process.stderr.write(`    body: ${safeBlock(result.body)}\n`);
     }
     return;
   }
   process.stderr.write(
     `${c.yellow("!")} ${c.dim("test:")} unexpected worker status ${result.status}.` +
-      ("body" in result && result.body ? ` body: ${result.body}` : "") +
+      ("body" in result && result.body ? ` body: ${safeBlock(result.body)}` : "") +
       "\n",
   );
 }

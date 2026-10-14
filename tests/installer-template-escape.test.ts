@@ -42,13 +42,65 @@ describe("installer templates neutralise hostile memos", () => {
   });
 
   it("a hostile hostname cannot close the JS comment either", () => {
+    const benign = buildInstaller("js-clone-detector", { ...base, memo: "m", hostname: "example.com" });
     const out = buildInstaller("js-clone-detector", { ...base, memo: "m", hostname: "*/ alert(1) /*" });
     expect(out.content).not.toContain("*/ alert");
-    expect(out.content).toContain('var expected = "* / alert(1) /*";');
+    expect(out.content.split("*/")).toHaveLength(benign.content.split("*/").length);
+    // What is left after hostname normalisation is inert, and quoted.
+    expect(out.content).toContain('var expected = "*";');
   });
 
   it("templateSafeText collapses control characters", () => {
     expect(templateSafeText("a\r\nb\tc\x00d")).toBe("a b c d");
+  });
+
+  // YAML 1.1 loaders (PyYAML / libyaml, i.e. Home Assistant) end a line at
+  // NEL, LS and PS as well as at CR/LF. A memo carrying one would otherwise
+  // close the `#` comment it sits in and continue as top-level YAML.
+  const UNICODE_BREAKS = [0x85, 0x2028, 0x2029];
+  const yamlLines = (s: string) => s.split(/\r\n|[\n\r\x85]|\p{Zl}|\p{Zp}/u);
+
+  it("templateSafeText collapses C1 controls and Unicode line/paragraph separators", () => {
+    const [nel, ls, ps] = UNICODE_BREAKS.map((cp) => String.fromCharCode(cp));
+    expect(templateSafeText(`a${nel}b${ls}c${ps}d\x80e\x9ff`)).toBe("a b c d e f");
+    // Ordinary non-ASCII text is untouched.
+    expect(templateSafeText("café — naïve ½ 日本")).toBe("café — naïve ½ 日本");
+  });
+
+  it.each(["homeassistant", "homeassistant-receiver", "nfc-ndef"] as const)(
+    "%s keeps YAML 1.1 line breaks (NEL/LS/PS) in the memo out of the file",
+    (type) => {
+      const benign = buildInstaller(type, { ...base, memo: "a rest_command: evil", webhookId: "w" });
+      for (const cp of UNICODE_BREAKS) {
+        const memo = `a${String.fromCharCode(cp)}rest_command: evil`;
+        const out = buildInstaller(type, { ...base, memo, webhookId: "w" });
+        expect(out.content).not.toMatch(/[\x85\p{Zl}\p{Zp}]/u);
+        expect(yamlLines(out.content).filter((l) => l.startsWith("rest_command: evil"))).toEqual([]);
+        // The separator became a space: same file as a memo with a space.
+        expect(out.content).toBe(benign.content);
+      }
+    },
+  );
+
+  it("device bundle scripts treat Unicode line breaks in the device name the same way", () => {
+    const vector = getVector("linux", "boot")!;
+    for (const cp of UNICODE_BREAKS) {
+      const files = buildDeviceBundleFiles({
+        deviceName: `web01${String.fromCharCode(cp)}rm -rf /`,
+        os: "linux",
+        vectors: [
+          {
+            vector,
+            key: { id: base.keyId, publicId: "abc123", memo: "m" },
+            installer: buildInstaller(vector.installType, { ...base, memo: "m" }),
+          },
+        ],
+      });
+      for (const content of Object.values(files.files)) {
+        expect(content).not.toMatch(/[\x85\p{Zl}\p{Zp}]/u);
+      }
+      expect(files.files["install.sh"]).toContain("# Device : web01 rm -rf /\n");
+    }
   });
 
   it("device bundle scripts keep a multi-line device name inside the comment", () => {

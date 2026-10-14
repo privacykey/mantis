@@ -75,5 +75,24 @@ export async function register(): Promise<void> {
     log.info(
       "notify worker not started (Vercel or RUN_NOTIFY_WORKER=0). Configure cron to /api/cron/notifications.",
     );
+    // The hourly retention sweep normally rides on the worker loop. Without
+    // it, the only thing that runs the sweep is an authorised call to the cron
+    // endpoint — say so, rather than leaving a configured window silently inert.
+    if (
+      process.env.MANTIS_HIT_RETENTION_DAYS ||
+      process.env.MANTIS_NOTIFICATION_RETENTION_DAYS ||
+      process.env.MANTIS_AUDIT_RETENTION_DAYS ||
+      process.env.MANTIS_SESSION_RETENTION_DAYS
+    ) {
+      log.warn(
+        "retention is configured (MANTIS_*_RETENTION_DAYS) but the notify " +
+          "worker is disabled. Nothing is deleted until /api/cron/notifications " +
+          "is called on a schedule with CRON_SECRET; the sweep then runs about " +
+          "once an hour from that endpoint." +
+          (process.env.CRON_SECRET
+            ? ""
+            : " CRON_SECRET is not set, so that endpoint currently refuses every call."),
+      );
+    }
   }
 }

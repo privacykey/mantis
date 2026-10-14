@@ -21,9 +21,13 @@ export function generateRtf(opts: DocOptions): Promise<Buffer> {
     .map((line) => (line ? `\\pard\\sa180 ${rtfEscape(line)}\\par` : "\\par"))
     .join("\n");
 
-  // The field URL is doubly escaped: RTF control-word escaping, then the
-  // backslash-doubling INCLUDEPICTURE itself needs for its argument.
-  const fieldUrl = rtfEscape(opts.url).replace(/\\/g, "\\\\");
+  // The field URL is escaped twice, innermost layer first: the quoting the
+  // INCLUDEPICTURE argument itself needs (backslash, double quote), then RTF
+  // escaping of the result. In the opposite order the backslashes that RTF
+  // escaping just produced get doubled, so `\{` becomes a literal backslash
+  // plus a group-opening brace and `\uN?` becomes literal text — a URL with a
+  // brace or a non-ASCII character would corrupt the field or the document.
+  const fieldUrl = rtfEscape(opts.url.replace(/[\\"]/g, "\\$&"));
 
   const rtf = `{\\rtf1\\ansi\\ansicpg1252\\deff0
 {\\fonttbl{\\f0\\froman\\fcharset0 Times New Roman;}}

@@ -76,3 +76,39 @@ describe("canary presets", () => {
     expect(BULK_PRESETS.some((p) => p.id === "apple-wallet")).toBe(false);
   });
 });
+
+// The blurb is the only preset text the dashboard renders, and it is the
+// operator's statement of what the canary detects. It must not promise a
+// trigger the generated file cannot deliver.
+describe("preset blurbs do not over-promise", () => {
+  it("Office documents: no unconditional fire-on-open, and the gate is named", () => {
+    // One linked remote picture is the only beacon; Protected View and the
+    // external-content prompt can hold it back on a downloaded copy.
+    for (const id of ["doc-docx", "doc-xlsx", "doc-pptx"] as const) {
+      const { blurb } = getPreset(id);
+      expect(blurb, id).not.toMatch(/fires when the \.\w+ is opened/i);
+      expect(blurb, id).toMatch(/protected view/i);
+    }
+    // Word has a more reliable sibling; point at it.
+    expect(getPreset("doc-docx").blurb).toMatch(/rtf/i);
+  });
+
+  it("honey folder: fires on open/follow, not when the folder is listed", () => {
+    const { blurb, deployHint } = getPreset("folder-zip");
+    expect(blurb).not.toMatch(/when the folder is browsed/i);
+    expect(blurb).toMatch(/opened|followed/i);
+    expect(blurb).toMatch(/not when the folder is merely listed/i);
+    expect(deployHint).not.toMatch(/on preview/i);
+  });
+
+  it("discovery baits say the URL has to be requested", () => {
+    // Neither file makes a tool call this key's path by itself: .netrc matches
+    // on host only, and loading a cookie jar issues no request.
+    expect(getPreset("creds-netrc").blurb).not.toMatch(/auto-read|no one has to open/i);
+    expect(getPreset("creds-netrc").blurb).toMatch(/discovery bait/i);
+    expect(getPreset("browser-cookies").blurb).not.toMatch(/replayed/i);
+    expect(getPreset("browser-cookies").blurb).toMatch(/discovery bait/i);
+    // Rendering bookmarks.html fetches nothing; following the link does.
+    expect(getPreset("browser-bookmarks").blurb).not.toMatch(/on render/i);
+  });
+});

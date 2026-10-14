@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { apiKeys, keys, type ApiKey, type Key } from "@/db/schema";
 import { mintApiKey } from "@/lib/api-keys";
+import { clearAuthFailureCache } from "@/lib/auth";
 
 // Every table the integration tests touch. Order doesn't matter — CASCADE
 // handles FK children — but listing them all keeps each test isolated.
@@ -21,6 +22,9 @@ const TABLES = [
 ] as const;
 
 export async function truncateAll(): Promise<void> {
+  // The auth-failure limiter remembers exhausted windows in-process; the rows
+  // behind them are truncated below.
+  clearAuthFailureCache();
   await db.execute(
     sql.raw(
       `TRUNCATE ${TABLES.map((t) => `"${t}"`).join(", ")} RESTART IDENTITY CASCADE`,
@@ -40,7 +44,13 @@ export type SeededApiKey = { plaintext: string; row: ApiKey };
  * mintApiKey() so the stored hash matches what requireApiKey() recomputes.
  */
 export async function seedApiKey(
-  opts: { admin?: boolean; name?: string; scope?: "full" | "enroll" } = {},
+  opts: {
+    admin?: boolean;
+    name?: string;
+    scope?: "full" | "enroll";
+    /** Fleet owner for an enroll key (apiKeys.ownerApiKeyId). */
+    ownerId?: string;
+  } = {},
 ): Promise<SeededApiKey> {
   const minted = mintApiKey();
   const [row] = await db
@@ -51,6 +61,7 @@ export async function seedApiKey(
       hash: minted.hash,
       isAdmin: opts.admin ?? false,
       scope: opts.scope ?? "full",
+      ownerApiKeyId: opts.ownerId ?? null,
     })
     .returning();
   if (!row) throw new Error("seedApiKey: insert returned no row");

@@ -31,3 +31,39 @@ export function escapeCode(s: string): string {
 export function escapeMarkdown(s: string): string {
   return s.replace(/[\\`*_~|>[\]()]/g, (c) => `\\${c}`);
 }
+
+/** Caps literal (unescaped) text at `max` characters, ending in "…" when it was cut. */
+export function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  let end = max - 1;
+  // Don't leave half of a surrogate pair behind.
+  const last = s.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return s.slice(0, end) + "…";
+}
+
+/**
+ * Escapes `s` and caps the ESCAPED text at `max` characters, ending in "…"
+ * when it was cut. The chat platforms reject a whole message over one
+ * oversized field (Slack: 2000 characters of field text; Discord: 1024 per
+ * field value), and escaping grows a value (& → &amp;, _ → \_), so the budget
+ * has to be applied after escaping. The cut falls between source characters,
+ * so neither an escape sequence nor a surrogate pair is split. `escape` must
+ * work character by character, as the escapers above do. (Server-only so far:
+ * mantis-edge/src/forward.ts still truncates before escaping.)
+ */
+export function clipEscaped(
+  s: string,
+  max: number,
+  escape: (s: string) => string,
+): string {
+  const escaped = escape(s);
+  if (escaped.length <= max) return escaped;
+  let out = "";
+  for (const ch of s) {
+    const piece = escape(ch);
+    if (out.length + piece.length > max - 1) break;
+    out += piece;
+  }
+  return `${out}…`;
+}

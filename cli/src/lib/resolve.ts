@@ -1,16 +1,26 @@
 import { ApiError, type Key, type MantisClient } from "./api.js";
+import { c, isJsonMode, jsonText, safeText } from "./out.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PREFIX_RE = /^[0-9a-f]{4,}$/i;
 
 export class ResolveError extends Error {}
 
+export type ResolvedKeyRef = {
+  id: string;
+  /**
+   * The key a symbolic ref (`last` or a prefix) resolved to. Absent for a
+   * full UUID, which is passed through without a lookup.
+   */
+  key?: Key;
+};
+
 /**
  * Turn a user-typed key reference into a full UUID.
  *
  * Accepted forms:
  *   - full UUID (passed through, lower-cased)
- *   - `last` — most-recently-created key
+ *   - `last` — the key this credential created most recently
  *   - prefix of UUID (≥4 hex chars) — disambiguates against recent keys
  *
  * Falls back to a server round-trip only when needed; full UUIDs and "last"
@@ -20,20 +30,59 @@ export async function resolveKeyRef(
   client: MantisClient,
   ref: string,
 ): Promise<string> {
+  return (await resolveKeyRefDetailed(client, ref)).id;
+}
+
+/**
+ * resolveKeyRef for commands that change, fire or export a key. A symbolic
+ * ref is resolved afresh on every run, so the operator is told which key it
+ * picked — id and memo, on stderr — before the command acts on it.
+ */
+export async function resolveKeyRefForAction(
+  client: MantisClient,
+  ref: string,
+): Promise<string> {
+  const resolved = await resolveKeyRefDetailed(client, ref);
+  if (resolved.key) announceResolved(ref, resolved.key);
+  return resolved.id;
+}
+
+/** Say which key a symbolic ref resolved to. Stderr, so stdout stays clean. */
+export function announceResolved(ref: string, key: Key): void {
+  if (isJsonMode()) {
+    process.stderr.write(
+      jsonText({ resolved: { ref, id: key.id, memo: key.memo } }) + "\n",
+    );
+    return;
+  }
+  process.stderr.write(
+    c.dim(`${safeText(ref)} → ${safeText(key.id)} (${safeText(key.memo)})\n`),
+  );
+}
+
+/** resolveKeyRef, also returning the key a symbolic ref resolved to. */
+export async function resolveKeyRefDetailed(
+  client: MantisClient,
+  ref: string,
+): Promise<ResolvedKeyRef> {
   if (!ref || typeof ref !== "string") {
     throw new ResolveError("missing key reference");
   }
 
-  if (UUID_RE.test(ref)) return ref.toLowerCase();
+  if (UUID_RE.test(ref)) return { id: ref.toLowerCase() };
 
   if (ref === "last") {
-    const page = await client.listKeys({ limit: 1 });
+    // `mine` scopes the listing to keys this credential created. Without it
+    // an admin's listing spans every creator — fleet enroll keys included —
+    // so somebody else's newer key would stand in for the operator's own.
+    const page = await client.listKeys({ limit: 1, mine: 1 });
     if (page.data.length === 0) {
       throw new ResolveError(
-        "`last` — no keys exist yet. Run `mantis new \"memo\"` to create one.",
+        "`last` — this API key has not created any keys yet (keys made in the dashboard or with another API key don't count). Run `mantis new \"memo\"`, or pass a key id or prefix from `mantis list`.",
       );
     }
-    return page.data[0]!.id;
+    const key = page.data[0]!;
+    return { id: key.id, key };
   }
 
   if (!PREFIX_RE.test(ref)) {
@@ -63,9 +112,10 @@ export async function resolveKeyRef(
     );
   }
   if (matches.length > 1) {
+    // Memos are written by whoever created each key; keep them on one line.
     const sample = matches
       .slice(0, 5)
-      .map((k) => `  ${k.id.slice(0, 12)}… — ${k.memo}`)
+      .map((k) => `  ${safeText(k.id).slice(0, 12)}… — ${safeText(k.memo)}`)
       .join("\n");
     const extra =
       matches.length > 5
@@ -75,7 +125,8 @@ export async function resolveKeyRef(
       `prefix '${ref}' is ambiguous (${matches.length} matches):\n${sample}${extra}`,
     );
   }
-  return matches[0]!.id;
+  const key = matches[0]!;
+  return { id: key.id, key };
 }
 
 /** Same as resolveKeyRef, but returns null instead of throwing if input is undefined. */
