@@ -12,7 +12,7 @@ import {
 } from "@/lib/notify/destinations";
 import { computeMonitorState } from "@/lib/monitor";
 import { openSecret } from "@/lib/secret-box";
-import { getSessionApiKey } from "@/lib/session";
+import { getDashboardSession } from "@/lib/session";
 import { toggleKeyAction } from "../actions";
 import { CopyUrl } from "./copy-url";
 import { DeleteButton } from "./delete-button";
@@ -32,8 +32,9 @@ const UUID_RE =
 type Props = { params: Promise<{ id: string }> };
 
 export default async function KeyDetailPage({ params }: Props) {
-  const session = await getSessionApiKey();
-  if (!session) redirect("/login");
+  const context = await getDashboardSession();
+  if (!context) redirect("/login");
+  const session = context.apiKey;
 
   const { id } = await params;
   if (!UUID_RE.test(id)) notFound();
@@ -232,6 +233,8 @@ export default async function KeyDetailPage({ params }: Props) {
       <InstallersCard keyId={key.id} />
 
       <MonitorCard
+        key={`${context.draftScope}:${key.id}`}
+        draftScope={context.draftScope}
         keyId={key.id}
         statusUrl={buildStatusUrl(key.publicId)}
         currentMode={key.monitorMode}

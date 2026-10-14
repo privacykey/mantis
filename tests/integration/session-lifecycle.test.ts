@@ -34,6 +34,7 @@ vi.mock("next/headers", () => ({
 import {
   setSessionCookie,
   getSessionApiKey,
+  getDashboardSession,
   clearSessionCookie,
 } from "@/lib/session";
 import { eq } from "drizzle-orm";
@@ -57,6 +58,11 @@ describe("E2E-08 session lifecycle", () => {
     // Resolves to the owning API key.
     const resolved = await getSessionApiKey();
     expect(resolved?.id).toBe(op.row.id);
+    const context = (await getDashboardSession())!;
+    expect(context.apiKey.id).toBe(op.row.id);
+    expect(context.draftScope).toMatch(/^[a-f0-9]{64}$/);
+    expect(context.draftScope).not.toBe(createHash("sha256").update(token).digest("hex"));
+    expect(context.draftScope).not.toContain(token);
 
     // Stored as SHA-256, not plaintext.
     const [row] = await db
@@ -77,6 +83,11 @@ describe("E2E-08 session lifecycle", () => {
       .limit(1);
     expect(revoked!.revokedAt).not.toBeNull();
     expect(await getSessionApiKey()).toBeNull();
+    expect(await getDashboardSession()).toBeNull();
+
+    // Even the same API key receives a new non-authenticating draft scope.
+    await setSessionCookie(op.row.id);
+    expect((await getDashboardSession())!.draftScope).not.toBe(context.draftScope);
   });
 
   it("an expired session does not resolve", async () => {

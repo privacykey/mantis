@@ -1,17 +1,20 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import type { MonitorDraftValues } from "@/lib/monitor-drafts";
 import { parseMonitorSnapshot } from "@/lib/monitor-snapshot";
 import {
   resetMonitorAction,
   setMonitorAction,
   type MonitorActionState,
 } from "../actions";
+import { useMonitorDraft } from "./use-monitor-draft";
 
 type Mode = "off" | "latch" | "window";
 
 export type MonitorCardProps = {
+  draftScope: string;
   keyId: string;
   statusUrl: string;
   currentMode: Mode;
@@ -21,6 +24,7 @@ export type MonitorCardProps = {
 };
 
 export function MonitorCard({
+  draftScope,
   keyId,
   statusUrl,
   currentMode,
@@ -28,18 +32,27 @@ export function MonitorCard({
   state,
   trippedAt,
 }: MonitorCardProps) {
-  const [actionState, formAction] = useActionState<
+  const [actionState, formAction, saving] = useActionState<
     MonitorActionState,
     FormData
   >(setMonitorAction, {});
-  const [mode, setMode] = useState<Mode>(currentMode);
-  const [windowSeconds, setWindowSeconds] = useState<number>(
-    currentWindowSeconds,
-  );
+  const draft = useMonitorDraft(draftScope, keyId, { mode: currentMode, windowSeconds: currentWindowSeconds });
+  const { mode, windowInput } = draft.values;
+  const submitted = useRef<MonitorDraftValues | null>(null);
   const [copied, setCopied] = useState(false);
-  const [resetState, resetAction] = useActionState(resetMonitorAction, {});
+  const [resetState, resetAction, resetting] = useActionState(resetMonitorAction, {});
+  const [snapshotReady, setSnapshotReady] = useState(false);
   const [live, setLive] = useState({ state: state as "off" | "ok" | "tripped" | "unavailable", trippedAt, mode: currentMode, windowSeconds: currentWindowSeconds });
   useEffect(() => {
+    submitted.current = null;
+    setLive({ state, trippedAt, mode: currentMode, windowSeconds: currentWindowSeconds });
+  }, [draftScope, keyId]);
+  useEffect(() => {
+    if (actionState.saved && submitted.current) draft.acknowledgeSave(submitted.current);
+    else if (actionState.error) draft.failedSave(actionState.saveOutcomeUnknown === true);
+  }, [actionState]);
+  useEffect(() => {
+    setSnapshotReady(false);
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const controller = new AbortController();
@@ -51,17 +64,24 @@ export function MonitorCard({
         if (!response.ok) throw new Error("monitor status unavailable");
         const next = parseMonitorSnapshot(await response.json());
         if (!next) throw new Error("invalid monitor status");
-        if (!disposed) setLive(next);
+        if (!disposed) {
+          draft.reconcile(next);
+          setLive(next);
+          setSnapshotReady(true);
+        }
       } catch {
-        if (!disposed) setLive((previous) => ({ ...previous, state: "unavailable" }));
+        if (!disposed) {
+          setLive((previous) => ({ ...previous, state: "unavailable" }));
+          setSnapshotReady(false);
+        }
       } finally {
         if (!disposed) timer = setTimeout(poll, 3000);
       }
     };
     void poll();
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
-  }, [keyId, actionState, resetState]);
-  const unsaved = mode !== live.mode || windowSeconds !== live.windowSeconds;
+  }, [draftScope, keyId, actionState, resetState]);
+  const canSubmit = snapshotReady && draft.loaded && !saving && !resetting;
 
   const onCopy = async () => {
     try {
@@ -84,17 +104,22 @@ export function MonitorCard({
         configured notifications when it flips.
       </p>
 
-      <form action={formAction} className="space-y-3">
+      <form action={formAction} className="space-y-3" onSubmit={(event) => {
+        if (!canSubmit) { event.preventDefault(); return; }
+        submitted.current = draft.beginSave();
+      }}>
         <input type="hidden" name="id" value={keyId} />
+        <input type="hidden" name="monitor_draft_scope" value={draftScope} />
         <div className="flex flex-wrap items-end gap-3">
           <label className="block">
             <span className="block text-xs uppercase tracking-wide text-neutral-500 mb-1">
               mode
             </span>
             <select
+              disabled={!draft.loaded}
               name="monitor_mode"
               value={mode}
-              onChange={(e) => setMode(e.target.value as Mode)}
+              onChange={(e) => draft.edit({ mode: e.target.value as Mode })}
               className="bg-neutral-900 border border-neutral-800 rounded px-3 py-1.5 text-sm text-neutral-100 focus:outline-none focus:border-neutral-600"
             >
               <option value="off">off (no monitoring)</option>
@@ -108,10 +133,11 @@ export function MonitorCard({
                 window (seconds)
               </span>
               <input
+                disabled={!draft.loaded}
                 type="number"
                 name="monitor_window_seconds"
-                value={windowSeconds}
-                onChange={(e) => setWindowSeconds(Number(e.target.value))}
+                value={windowInput}
+                onChange={(e) => draft.edit({ windowInput: e.target.value })}
                 min={30}
                 max={86_400}
                 className="bg-neutral-900 border border-neutral-800 rounded px-3 py-1.5 text-sm text-neutral-100 w-32 focus:outline-none focus:border-neutral-600"
@@ -122,18 +148,26 @@ export function MonitorCard({
             <input
               type="hidden"
               name="monitor_window_seconds"
-              value={windowSeconds}
+              value={windowInput}
             />
           )}
-          <SubmitButton />
+          <SubmitButton canSubmit={canSubmit} />
         </div>
         {actionState.error && (
           <div role="alert" className="text-sm text-red-400">
             {actionState.error}
           </div>
         )}
-        {unsaved && <p className="text-xs text-amber-400">Unsaved settings — status reflects the saved configuration.</p>}
-        {actionState.saved && !unsaved && <p role="status" className="text-xs text-emerald-400">Monitor settings saved.</p>}
+        {draft.restored && <p role="status" className="text-xs text-amber-400">Unsaved monitor settings restored. Review them before saving.</p>}
+        {draft.conflict && <p className="text-xs text-amber-400">Saved settings changed since this draft was created.</p>}
+        {draft.unsaved && <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+          <p className="text-amber-400">Unsaved settings — status reflects saved {live.mode}{live.mode === "window" ? ` (${live.windowSeconds}s)` : ""} configuration.</p>
+          <button type="button" onClick={draft.discard} className="text-neutral-400 underline hover:text-neutral-200">discard draft</button>
+        </div>}
+        {draft.unavailable && draft.unsaved && <p role="status" className="text-xs text-amber-400">Reload recovery is unavailable in this browser. Keep this tab open until you save.</p>}
+        {draft.unavailable && !draft.unsaved && <p role="status" className="text-xs text-amber-400">Browser drafts could not be cleared. Review settings again after reloading.</p>}
+        {!snapshotReady && <p role="status" className="text-xs text-neutral-400">Checking saved settings before changes can be applied…</p>}
+        {actionState.saved && !draft.unsaved && <p role="status" className="text-xs text-emerald-400">Monitor settings saved.</p>}
       </form>
 
       {mode !== "off" && (
@@ -161,9 +195,10 @@ export function MonitorCard({
 
       {live.state === "tripped" && (
         <div className="mt-3">
-          <form action={resetAction}>
+          <form action={resetAction} onSubmit={(event) => { if (!canSubmit) event.preventDefault(); }}>
             <input type="hidden" name="id" value={keyId} />
-            <ResetButton />
+            <input type="hidden" name="monitor_draft_scope" value={draftScope} />
+            <ResetButton canSubmit={canSubmit} />
           </form>
         </div>
       )}
@@ -197,17 +232,17 @@ function StateBadge({
   );
 }
 
-function ResetButton() {
+function ResetButton({ canSubmit }: { canSubmit: boolean }) {
   const { pending } = useFormStatus();
-  return <button type="submit" disabled={pending} className="text-xs bg-amber-900/40 border border-amber-900 text-amber-300 hover:text-amber-100 rounded px-3 py-1.5 disabled:opacity-50">{pending ? "resetting…" : "reset trip"}</button>;
+  return <button type="submit" disabled={pending || !canSubmit} className="text-xs bg-amber-900/40 border border-amber-900 text-amber-300 hover:text-amber-100 rounded px-3 py-1.5 disabled:opacity-50">{pending ? "resetting…" : "reset trip"}</button>;
 }
 
-function SubmitButton() {
+function SubmitButton({ canSubmit }: { canSubmit: boolean }) {
   const { pending } = useFormStatus();
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || !canSubmit}
       className="text-xs bg-neutral-100 text-neutral-900 rounded px-3 py-1.5 hover:bg-white disabled:opacity-50 cursor-pointer font-[inherit]"
     >
       {pending ? "saving…" : "save"}

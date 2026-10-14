@@ -3,10 +3,15 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest
 // Every dashboard path that creates a key or changes how its alerts are
 // routed or monitored writes the same audit record its API sibling does.
 
+const DRAFT_SCOPE = "test-draft-scope";
 const session = vi.hoisted(() => ({
   current: null as null | { id: string; name: string; isAdmin: boolean; scope: "full" },
 }));
-vi.mock("@/lib/session", () => ({ getSessionApiKey: async () => session.current }));
+vi.mock("@/lib/session", () => ({
+  getSessionApiKey: async () => session.current,
+  getDashboardSession: async () =>
+    session.current ? { apiKey: session.current, draftScope: DRAFT_SCOPE } : null,
+}));
 vi.mock("@/lib/log", () => ({
   log: { info() {}, warn() {}, error() {}, debug() {}, fatal() {}, trace() {} },
 }));
@@ -160,7 +165,15 @@ describe("dashboard actions are audited", () => {
     const key = await seedCanaryKey(me.row.id);
 
     expect(
-      await setMonitorAction({}, form({ id: key.id, monitor_mode: "latch", monitor_window_seconds: "300" })),
+      await setMonitorAction(
+        {},
+        form({
+          id: key.id,
+          monitor_mode: "latch",
+          monitor_window_seconds: "300",
+          monitor_draft_scope: DRAFT_SCOPE,
+        }),
+      ),
     ).toEqual({ saved: true });
     expect(
       await setSelfOriginsAction({}, form({ id: key.id, self_origins: "https://WWW.Own-Site.test/\nhttps://www.own-site.test" })),
