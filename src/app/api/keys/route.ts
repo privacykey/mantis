@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { db } from "@/db/client";
 import { keys, notificationDestinations } from "@/db/schema";
 import { canAccessKey, requireApiKey } from "@/lib/auth";
 import { audit } from "@/lib/audit";
+import { isEnrollKey, sameFleet } from "@/lib/fleet";
 import {
   newPublicId,
   serializeKey,
@@ -18,6 +19,7 @@ import {
   readBodyJson,
 } from "@/lib/safe-body";
 import {
+  createDestination,
   createKeyWithDestinations,
   listDestinations,
   serializeResult,
@@ -27,6 +29,48 @@ import { encodeHitCursor, parseHitCursor } from "@/lib/hit-cursor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+// Enrollment-scoped keys ship on every managed device and are assumed
+// extracted. They mint a plain tripwire only: lifecycle, monitoring, trigger
+// response content and alert routing are operator decisions.
+const ENROLL_FIELDS = new Set([
+  "memo",
+  "external_id",
+  "response_kind",
+  "dedupe_window_seconds",
+  "destinations",
+]);
+const ENROLL_MAX_DEDUPE_SECONDS = 600;
+// The `mantis:device:` namespace belongs to the device flows (dashboard and
+// `mantis device new`), which run with a full key.
+const DEVICE_EXTERNAL_ID_PREFIX = "mantis:device:";
+const DEFAULT_ENROLL_KEYS_PER_HOUR = 1000;
+
+/**
+ * Destinations an admin pre-approved for enrollment-scoped keys:
+ * MANTIS_ENROLL_DESTINATIONS is a whitespace-separated list of
+ * "channel:target" pairs. Empty (the default) means enroll keys cannot attach
+ * destinations at all, and fleet alerts are routed by global destinations.
+ */
+function approvedEnrollDestinations(): Set<string> {
+  return new Set(
+    (process.env.MANTIS_ENROLL_DESTINATIONS ?? "")
+      .split(/\s+/)
+      .filter(Boolean),
+  );
+}
+
+/** New keys one enroll credential may create per hour (0 disables the cap). */
+function enrollKeysPerHour(): number {
+  const raw = process.env.MANTIS_ENROLL_KEYS_PER_HOUR;
+  if (!raw) return DEFAULT_ENROLL_KEYS_PER_HOUR;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : DEFAULT_ENROLL_KEYS_PER_HOUR;
+}
+
+function forbiddenForEnroll(message: string): NextResponse {
+  return NextResponse.json({ error: "forbidden", message }, { status: 403 });
+}
 
 export async function POST(req: NextRequest) {
   // The one route enrollment-scoped keys may call (see lib/auth.ts).
@@ -62,6 +106,30 @@ export async function POST(req: NextRequest) {
   }
   const input = parsed.data;
 
+  if (isEnroll) {
+    const extra = Object.entries(input)
+      .filter(([k, v]) => v !== null && !ENROLL_FIELDS.has(k))
+      .map(([k]) => k);
+    if (
+      extra.length > 0 ||
+      (input.response_kind !== undefined &&
+        input.response_kind !== "gif" &&
+        input.response_kind !== "empty") ||
+      (input.dedupe_window_seconds ?? 0) > ENROLL_MAX_DEDUPE_SECONDS ||
+      input.external_id?.startsWith(DEVICE_EXTERNAL_ID_PREFIX)
+    ) {
+      return forbiddenForEnroll(
+        `enrollment-scoped keys may only set memo, external_id, response_kind (gif or empty), a dedupe window up to ${ENROLL_MAX_DEDUPE_SECONDS} s and pre-approved destinations`,
+      );
+    }
+  }
+  if (input.adopt !== undefined && !auth.key.isAdmin) {
+    return NextResponse.json(
+      { error: "forbidden", message: "only an admin API key can adopt" },
+      { status: 403 },
+    );
+  }
+
   // Per-channel target validation; zod only checks shape.
   if (input.destinations) {
     for (let i = 0; i < input.destinations.length; i++) {
@@ -74,6 +142,51 @@ export async function POST(req: NextRequest) {
             message: `destinations[${i}].target: ${v.error}`,
           },
           { status: 422 },
+        );
+      }
+    }
+  }
+  // Each distinct destination is stored and pinged once, however often the
+  // request repeats it.
+  const destinationInputs = [
+    ...new Map(
+      (input.destinations ?? []).map((d) => [`${d.channel}:${d.target}`, d]),
+    ).values(),
+  ];
+
+  if (isEnroll) {
+    // Checked before anything is inserted or sent: creating a destination
+    // makes the server deliver an activation message to it.
+    if (destinationInputs.length > 0) {
+      const approved = approvedEnrollDestinations();
+      const i = destinationInputs.findIndex(
+        (d) => !approved.has(`${d.channel}:${d.target}`),
+      );
+      if (i !== -1) {
+        return forbiddenForEnroll(
+          `destinations[${i}] is not an approved enrollment destination`,
+        );
+      }
+    }
+    const perHour = enrollKeysPerHour();
+    if (perHour > 0) {
+      const [recent] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(keys)
+        .where(
+          and(
+            eq(keys.createdByApiKeyId, auth.key.id),
+            gt(keys.createdAt, sql`now() - interval '1 hour'`),
+          ),
+        );
+      // Re-claims of an existing external_id stay free; only new keys count.
+      if ((recent?.count ?? 0) >= perHour && !(await externalIdExists(input.external_id))) {
+        return NextResponse.json(
+          {
+            error: "rate_limited",
+            message: "this enrollment key has created too many keys in the last hour",
+          },
+          { status: 429, headers: { "Retry-After": "600" } },
         );
       }
     }
@@ -95,6 +208,9 @@ export async function POST(req: NextRequest) {
     ...(input.monitor_window_seconds !== undefined
       ? { monitorWindowSeconds: input.monitor_window_seconds }
       : {}),
+    ...(input.self_origins !== undefined
+      ? { selfOrigins: input.self_origins }
+      : {}),
     createdByApiKeyId: auth.key.id,
   };
 
@@ -102,10 +218,10 @@ export async function POST(req: NextRequest) {
   // key without changing its destinations. On a new key, both the key and its
   // destinations commit in one transaction.
   const created = input.external_id
-    ? await createKeyWithDestinations(insertValues, input.destinations ?? [], {
+    ? await createKeyWithDestinations(insertValues, destinationInputs, {
         onExternalIdConflict: true,
       })
-    : await createKeyWithDestinations(insertValues, input.destinations ?? []);
+    : await createKeyWithDestinations(insertValues, destinationInputs);
   const row = created.key;
 
   if (!row && input.external_id) {
@@ -124,19 +240,33 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    // Who may re-claim an existing external_id:
-    //   - its creator or an admin: yes (full shape for full keys, reduced
-    //     shape for enroll keys — no alert routing either way);
-    //   - an enrollment-scoped key that did not create it: the reduced shape
-    //     WITHOUT the memo. This is the documented fleet flow (a re-imaged
-    //     Mac recovers its trigger URL by serial; enroll keys get rotated —
-    //     see deploy/kandji/README.md) and is audited as a cross-key claim;
-    //   - any other full key: bare 409. External ids are guessable (hostnames,
-    //     serials), and a full key that owns nothing here has no business
-    //     learning another tenant's memo and trigger URL, which is enough to
-    //     fire false alarms on their tripwire.
+    // Who may re-claim an existing external_id (see lib/fleet.ts):
+    //   - its creator: yes;
+    //   - an enrollment-scoped key from the same fleet: the reduced shape,
+    //     WITHOUT the memo unless it created the key. This is the documented
+    //     fleet flow (a re-imaged Mac recovers its trigger URL by serial;
+    //     enroll keys get rotated — see deploy/kandji/README.md) and is
+    //     audited as a cross-key claim;
+    //   - an admin: rows from the operators' own fleet, or any row with an
+    //     explicit `adopt: true`;
+    //   - anyone else: bare 409. External ids are guessable (hostnames,
+    //     serials). A key from another fleet has no business learning this
+    //     row's memo and trigger URL, and a fleet must never arm a device
+    //     with a key that somebody outside it created first.
+    const createdByCaller = existing.createdByApiKeyId === auth.key.id;
+    const inFleet =
+      createdByCaller ||
+      ((isEnroll || auth.key.isAdmin) &&
+        (await sameFleet(auth.key, existing.createdByApiKeyId)));
+    const adopted = !inFleet && auth.key.isAdmin && input.adopt === true;
+    const mayClaim = inFleet || adopted;
     const owner = canAccessKey(auth.key, existing);
-    const crossKeyEnroll = !owner && isEnroll;
+    // A disabled or expired key never alerts. Handing it back as the device's
+    // tripwire would arm nothing while every consumer reports success.
+    const dead =
+      existing.disabledAt !== null ||
+      (existing.expiresAt !== null &&
+        existing.expiresAt.getTime() <= Date.now());
     await audit({
       type: "key.claimed",
       actorApiKeyId: auth.key.id,
@@ -145,13 +275,15 @@ export async function POST(req: NextRequest) {
       subjectId: existing.id,
       metadata: {
         external_id: input.external_id,
-        ...(owner ? { memo: existing.memo } : {}),
-        ...(crossKeyEnroll ? { cross_key: true } : {}),
-        ...(!owner && !isEnroll ? { denied: true } : {}),
+        ...(mayClaim && owner ? { memo: existing.memo } : {}),
+        ...(mayClaim && !createdByCaller ? { cross_key: true } : {}),
+        ...(adopted ? { adopted: true } : {}),
+        ...(mayClaim && dead ? { dead: true } : {}),
+        ...(!mayClaim || dead ? { denied: true } : {}),
       },
       ip: extractIp(req),
     });
-    if (!owner && !isEnroll) {
+    if (!mayClaim) {
       return NextResponse.json(
         {
           error: "conflict",
@@ -160,18 +292,72 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    if (isEnroll) {
+    if (dead) {
       return NextResponse.json(
         {
-          ...serializeKeyForEnroll(existing, { includeMemo: owner }),
+          error: "conflict",
+          message:
+            "external_id belongs to a disabled or expired key; an operator must enable or delete it",
+        },
+        { status: 409 },
+      );
+    }
+    if (isEnroll) {
+      // Whoever holds the fleet's enroll key can claim a serial before the
+      // real device does, and that first claim may have carried no
+      // destination. Top the key up with any approved destination this claim
+      // carries, so pre-claiming cannot leave a device's alarm unrouted. Only
+      // for keys an enroll key created: a claim never changes what an
+      // operator configured, and never removes or replaces anything.
+      if (
+        destinationInputs.length > 0 &&
+        (await isEnrollKey(existing.createdByApiKeyId))
+      ) {
+        const have = new Set(
+          (await listDestinations(existing.id)).map(
+            (d) => `${d.channel}:${d.target}`,
+          ),
+        );
+        const added = destinationInputs.filter(
+          (d) => !have.has(`${d.channel}:${d.target}`),
+        );
+        for (const d of added) {
+          // The activation result is persisted on the destination row; a
+          // failed ping must not fail the device's enrollment.
+          await createDestination(existing, d).catch(() => {});
+        }
+        if (added.length > 0) {
+          await audit({
+            type: "destinations.replaced",
+            actorApiKeyId: auth.key.id,
+            actorLabel: auth.key.name,
+            subjectKind: "key",
+            subjectId: existing.id,
+            metadata: {
+              added: added.length,
+              channels: added.map((d) => d.channel),
+              via: "enroll_claim",
+            },
+            ip: extractIp(req),
+          });
+        }
+      }
+      return NextResponse.json(
+        {
+          ...serializeKeyForEnroll(existing, { includeMemo: createdByCaller }),
           reused: true,
+          created_by_caller: createdByCaller,
         },
         { status: 200 },
       );
     }
     const existingDests = await listDestinations(existing.id);
     return NextResponse.json(
-      { ...serializeKey(existing, existingDests), reused: true },
+      {
+        ...serializeKey(existing, existingDests),
+        reused: true,
+        created_by_caller: createdByCaller,
+      },
       { status: 200 },
     );
   }
@@ -207,11 +393,17 @@ export async function POST(req: NextRequest) {
     // Reduced shape + activation status for the destinations this caller just
     // supplied. No signing-secret reveal: fleet-embedded keys never see
     // signing material (an admin can rotate the secret later to obtain one).
+    // No transport error text either: it describes the server's view of the
+    // network, which a fleet-embedded credential has no need for.
     return NextResponse.json(
       {
         ...serializeKeyForEnroll(row),
         reused: false,
-        destinations: results.map((r) => serializeResult(r)),
+        destinations: results.map((r) => ({
+          ...serializeResult(r),
+          last_activation_error: null,
+          activation: { ok: r.activation.ok },
+        })),
       },
       { status: 201 },
     );
@@ -226,6 +418,16 @@ export async function POST(req: NextRequest) {
     },
     { status: 201 },
   );
+}
+
+async function externalIdExists(externalId: string | undefined): Promise<boolean> {
+  if (!externalId) return false;
+  const [row] = await db
+    .select({ id: keys.id })
+    .from(keys)
+    .where(eq(keys.externalId, externalId))
+    .limit(1);
+  return row !== undefined;
 }
 
 export async function GET(req: NextRequest) {
@@ -250,9 +452,13 @@ export async function GET(req: NextRequest) {
   }
 
   // Non-admin keys see only their own; admins see all. See lib/auth.canAccessKey.
-  const ownerClause = auth.key.isAdmin
-    ? undefined
-    : eq(keys.createdByApiKeyId, auth.key.id);
+  // ?mine=1 restricts any caller, admins included, to keys it created (the
+  // CLI's `last` must never resolve to a key another credential minted).
+  const mine = url.searchParams.get("mine") === "1";
+  const ownerClause =
+    auth.key.isAdmin && !mine
+      ? undefined
+      : eq(keys.createdByApiKeyId, auth.key.id);
   const cursorAt = keyCursor ? sql`${keyCursor.at}::timestamptz` : null;
   const cursorClause = keyCursor && cursorAt
     ? keyCursor.id

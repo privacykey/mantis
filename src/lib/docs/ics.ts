@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { type DocOptions } from "./util";
+import { type DocOptions, lineSafeUri } from "./util";
 
 /**
  * iCalendar .ics event with ATTACH;FMTTYPE=image/png pointing at the trigger URL.
@@ -13,10 +13,12 @@ import { type DocOptions } from "./util";
  */
 export function generateIcs(opts: DocOptions): Promise<Buffer> {
   const title = icsEscape(opts.title);
-  // Line-safe the URL too: a \r/\n or special char in the operator/key URL
-  // would otherwise break out of the URL/ATTACH property value and inject a
-  // property line, the same way an unescaped memo could.
-  const url = icsEscape(opts.url);
+  // Line-safe the URL too: a \r/\n in the operator/key URL would otherwise
+  // break out of the URL/ATTACH property value and inject a property line, the
+  // same way an unescaped memo could. URI values are not TEXT, though — RFC
+  // 5545 defines no backslash escaping for them, so icsEscape would corrupt a
+  // URL containing `;`, `,` or `\` — hence percent-encoding instead.
+  const url = lineSafeUri(opts.url);
   const description = icsEscape(opts.body?.join("\\n") ?? opts.title);
   // Crypto-grade random UID. Predictable UIDs would let a target who
   // received this canary correlate it with other canaries (same generator,

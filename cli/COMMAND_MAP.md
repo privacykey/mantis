@@ -148,12 +148,12 @@ flowchart LR
 | Cloudflare | `cloudflare login` | Cache Cloudflare Access SSO token via `cloudflared` | Cloudflare local tooling |
 | Cloudflare | `cloudflare logout` | Clear cached Access credentials | Cloudflare local tooling |
 | Cloudflare | `cloudflare set-service-auth` | Store Cloudflare Access Service Auth credentials | Local keychain |
-| Cloudflare | `cloudflare status` | Show Cloudflare Access auth state | Local config/keychain |
+| Cloudflare | `cloudflare status` | Show Cloudflare Access auth state (all `cloudflare` subcommands honor the global `--profile`; `--base-url` is rejected) | Local config/keychain |
 | Keys | `new [memo]` | Create a key and optionally generate bait artifacts | Server |
 | Keys | `bulk-create` / `import-csv` | Create many keys from a CSV and write an output CSV with generated URLs | Server |
 | Keys | `list` / `ls` | List keys | Server |
 | Keys | `show <id>` | Show one key | Server |
-| Keys | `last` | Print most-recent key id | Server |
+| Keys | `last` | Print the id of the newest key created with the API key in use | Server |
 | Keys | `open [id]` | Open dashboard page or trigger URL in browser | Server for resolution |
 | Keys | `disable <id...>` | Disable one or more keys without deleting history | Server |
 | Keys | `enable <id...>` | Re-enable one or more disabled keys | Server |

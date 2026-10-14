@@ -5,11 +5,13 @@ import {
   formatTime,
   glyph,
   isJsonMode,
+  jsonText,
+  safeText,
   table,
   truncate,
 } from "../lib/out.js";
 import { parseIntervalMs, parseLimit } from "../lib/parse.js";
-import { primeHitAnchor } from "../lib/hit-anchor.js";
+import { HitTail } from "../lib/hit-anchor.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -84,18 +86,11 @@ async function followHits(
   filter: HitFilter,
   intervalMs: number,
 ): Promise<void> {
-  const seen = new Set<string>();
-  const seenOrder: string[] = [];
-
-  // A one-millisecond overlap covers hits sharing the anchor timestamp; IDs
-  // prevent reprinting them on the next poll.
+  // Each poll re-reads a window behind the watermark, so a hit that became
+  // visible late (see HIT_OVERLAP_MS) is still printed; the tail drops the
+  // repeats by id.
   const initial = await client.listRecentHits({ key_id: id, limit: 500, anchor: 1 });
-  const anchor = primeHitAnchor(initial);
-  let watermarkMs = anchor.watermarkMs;
-  for (const id of anchor.seenIds) {
-    seen.add(id);
-    seenOrder.push(id);
-  }
+  const tail = new HitTail(initial);
 
   process.stderr.write(
     c.dim(`following ${id.slice(0, 8)}; ctrl-c to stop\n`),
@@ -111,7 +106,7 @@ async function followHits(
     await new Promise((r) => setTimeout(r, intervalMs));
     if (stop) break;
     try {
-      const since = new Date(Math.max(0, watermarkMs - 1)).toISOString();
+      const since = tail.since();
       const arrived: Hit[] = [];
       let cursor: string | undefined;
       do {
@@ -119,21 +114,14 @@ async function followHits(
         arrived.push(...page.data);
         cursor = page.next_cursor ?? undefined;
       } while (cursor);
-      for (const h of arrived) {
-        watermarkMs = Math.max(watermarkMs, new Date(h.occurred_at).getTime());
-      }
       // Oldest-first so the stream reflects arrival order.
-      for (const h of arrived.reverse()) {
-        if (seen.has(h.id)) continue;
-        seen.add(h.id);
-        seenOrder.push(h.id);
+      for (const h of tail.accept(arrived)) {
         if (!filter(h)) continue;
         printFollowLine(h);
       }
-      while (seenOrder.length > 10_000) seen.delete(seenOrder.shift()!);
     } catch (err) {
       process.stderr.write(
-        c.red(`follow error: ${err instanceof Error ? err.message : String(err)}\n`),
+        c.red(`follow error: ${safeText(err instanceof Error ? err.message : String(err))}\n`),
       );
     }
   }
@@ -144,11 +132,11 @@ function printFollowLine(h: Hit): void {
   // stdout, so `mantis hits <id> --follow --json | jq -c .` works. The
   // "following…" banner stays on stderr (see followHits) and doesn't pollute it.
   if (isJsonMode()) {
-    process.stdout.write(JSON.stringify(h) + "\n");
+    process.stdout.write(jsonText(h) + "\n");
     return;
   }
   process.stdout.write(
-    `${c.dim(formatTime(h.occurred_at))} ${c.cyan(h.ip ?? "-")} ${c.dim(formatUaShort(h))}${h.bot_label ? " " + c.yellow(`bot:${h.bot_label}`) : ""}\n`,
+    `${c.dim(formatTime(h.occurred_at))} ${c.cyan(safeText(h.ip ?? "-"))} ${c.dim(formatUaShort(h))}${h.bot_label ? " " + c.yellow(`bot:${safeText(h.bot_label)}`) : ""}\n`,
   );
 }
 
@@ -165,7 +153,7 @@ function render(hits: Hit[], verbose: boolean): void {
   }
   const rows = hits.map((h) => [
     formatTime(h.occurred_at),
-    h.ip ?? null,
+    h.ip == null ? null : safeText(h.ip),
     h.host_context ? formatHostCtxShort(h.host_context) : formatUaShort(h),
     botCell(h),
     notifyCell(h),
@@ -175,39 +163,44 @@ function render(hits: Hit[], verbose: boolean): void {
   );
 }
 
+// Everything on a hit except its counters was chosen by whoever fired the key
+// (IP, user agent, referer, headers, host context) or whoever configured it
+// (destination targets), so every field goes through safeText() before it is
+// colored or truncated.
 function renderOne(h: Hit): void {
   const w = process.stdout.write.bind(process.stdout);
-  w(`${c.bold(h.id)} ${c.dim(`(${formatTime(h.occurred_at)})`)}\n`);
-  w(`  ${c.dim("at:    ")} ${h.occurred_at}\n`);
+  const s = safeText;
+  w(`${c.bold(s(h.id))} ${c.dim(`(${formatTime(h.occurred_at)})`)}\n`);
+  w(`  ${c.dim("at:    ")} ${s(h.occurred_at)}\n`);
   if (h.host_context) {
     const ctx = h.host_context;
     w(`  ${c.green("host event:")}\n`);
-    if (ctx.source) w(`    ${c.dim("source:    ")} ${c.green(ctx.source)}\n`);
-    if (ctx.user) w(`    ${c.dim("user:      ")} ${c.cyan(ctx.user)}\n`);
-    if (ctx.host) w(`    ${c.dim("host:      ")} ${c.cyan(ctx.host)}\n`);
+    if (ctx.source) w(`    ${c.dim("source:    ")} ${c.green(s(ctx.source))}\n`);
+    if (ctx.user) w(`    ${c.dim("user:      ")} ${c.cyan(s(ctx.user))}\n`);
+    if (ctx.host) w(`    ${c.dim("host:      ")} ${c.cyan(s(ctx.host))}\n`);
     if (ctx.ssh_client_ip)
-      w(`    ${c.dim("ssh ←:     ")} ${c.yellow(ctx.ssh_client_ip)}\n`);
+      w(`    ${c.dim("ssh ←:     ")} ${c.yellow(s(ctx.ssh_client_ip))}\n`);
     if (ctx.ssh_connection)
-      w(`    ${c.dim("ssh:       ")} ${ctx.ssh_connection}\n`);
-    if (ctx.tty) w(`    ${c.dim("tty:       ")} ${ctx.tty}\n`);
+      w(`    ${c.dim("ssh:       ")} ${s(ctx.ssh_connection)}\n`);
+    if (ctx.tty) w(`    ${c.dim("tty:       ")} ${s(ctx.tty)}\n`);
     if (ctx.sudo_cmd)
-      w(`    ${c.dim("sudo cmd:  ")} ${c.yellow(ctx.sudo_cmd)}\n`);
+      w(`    ${c.dim("sudo cmd:  ")} ${c.yellow(s(ctx.sudo_cmd))}\n`);
     if (ctx.network_interface)
-      w(`    ${c.dim("interface: ")} ${ctx.network_interface}\n`);
-    if (ctx.event) w(`    ${c.dim("event:     ")} ${c.green(ctx.event)}\n`);
-    if (ctx.device) w(`    ${c.dim("device:    ")} ${c.cyan(ctx.device)}\n`);
-    if (ctx.entity_id) w(`    ${c.dim("entity:    ")} ${ctx.entity_id}\n`);
-    if (ctx.automation) w(`    ${c.dim("automation:")} ${ctx.automation}\n`);
-    if (ctx.area) w(`    ${c.dim("area:      ")} ${ctx.area}\n`);
-    if (ctx.iot_mac) w(`    ${c.dim("mac:       ")} ${ctx.iot_mac}\n`);
-    if (ctx.iot_ip) w(`    ${c.dim("iot ip:    ")} ${ctx.iot_ip}\n`);
+      w(`    ${c.dim("interface: ")} ${s(ctx.network_interface)}\n`);
+    if (ctx.event) w(`    ${c.dim("event:     ")} ${c.green(s(ctx.event))}\n`);
+    if (ctx.device) w(`    ${c.dim("device:    ")} ${c.cyan(s(ctx.device))}\n`);
+    if (ctx.entity_id) w(`    ${c.dim("entity:    ")} ${s(ctx.entity_id)}\n`);
+    if (ctx.automation) w(`    ${c.dim("automation:")} ${s(ctx.automation)}\n`);
+    if (ctx.area) w(`    ${c.dim("area:      ")} ${s(ctx.area)}\n`);
+    if (ctx.iot_mac) w(`    ${c.dim("mac:       ")} ${s(ctx.iot_mac)}\n`);
+    if (ctx.iot_ip) w(`    ${c.dim("iot ip:    ")} ${s(ctx.iot_ip)}\n`);
   }
-  w(`  ${c.dim("ip:    ")} ${h.ip ?? c.dim("-")}\n`);
+  w(`  ${c.dim("ip:    ")} ${h.ip == null ? c.dim("-") : s(h.ip)}\n`);
   w(`  ${c.dim("ua:    ")} ${formatUaLong(h)}\n`);
-  if (h.bot_label) w(`  ${c.dim("bot:   ")} ${c.yellow(h.bot_label)}\n`);
+  if (h.bot_label) w(`  ${c.dim("bot:   ")} ${c.yellow(s(h.bot_label))}\n`);
   if (h.is_duplicate)
     w(`  ${c.dim("dup:   ")} ${c.dim("yes (suppressed notifications)")}\n`);
-  w(`  ${c.dim("ref:   ")} ${h.referer ?? c.dim("-")}\n`);
+  w(`  ${c.dim("ref:   ")} ${h.referer == null ? c.dim("-") : s(h.referer)}\n`);
   if (h.notifications.length > 0) {
     w(`  ${c.dim("notify:")}\n`);
     for (const n of h.notifications) {
@@ -217,7 +210,7 @@ function renderOne(h: Hit): void {
   if (h.headers && !isJsonMode()) {
     w(`  ${c.dim("headers:")}\n`);
     for (const [k, v] of Object.entries(h.headers)) {
-      w(`    ${c.dim(k + ":")} ${String(v)}\n`);
+      w(`    ${c.dim(s(k) + ":")} ${s(v)}\n`);
     }
   }
   w("\n");
@@ -225,38 +218,39 @@ function renderOne(h: Hit): void {
 
 function formatHostCtxShort(ctx: NonNullable<Hit["host_context"]>): string {
   const parts: string[] = [];
-  if (ctx.source) parts.push(c.green(ctx.source));
-  if (ctx.user) parts.push(c.cyan(ctx.user));
-  if (ctx.host) parts.push("@ " + ctx.host);
+  const s = safeText;
+  if (ctx.source) parts.push(c.green(s(ctx.source)));
+  if (ctx.user) parts.push(c.cyan(s(ctx.user)));
+  if (ctx.host) parts.push("@ " + s(ctx.host));
   if (ctx.ssh_client_ip)
-    parts.push(c.yellow(`${glyph("←", "<-")} ` + ctx.ssh_client_ip));
-  if (ctx.sudo_cmd) parts.push(c.yellow("sudo " + ctx.sudo_cmd));
-  if (ctx.network_interface) parts.push("iface=" + ctx.network_interface);
-  if (ctx.event) parts.push(c.green(ctx.event));
-  if (ctx.device) parts.push(c.cyan(ctx.device));
-  if (ctx.entity_id) parts.push(ctx.entity_id);
-  if (ctx.iot_mac) parts.push(ctx.iot_mac);
+    parts.push(c.yellow(`${glyph("←", "<-")} ` + s(ctx.ssh_client_ip)));
+  if (ctx.sudo_cmd) parts.push(c.yellow("sudo " + s(ctx.sudo_cmd)));
+  if (ctx.network_interface) parts.push("iface=" + s(ctx.network_interface));
+  if (ctx.event) parts.push(c.green(s(ctx.event)));
+  if (ctx.device) parts.push(c.cyan(s(ctx.device)));
+  if (ctx.entity_id) parts.push(s(ctx.entity_id));
+  if (ctx.iot_mac) parts.push(s(ctx.iot_mac));
   return parts.join(` ${glyph("·", "|")} `);
 }
 
 function formatUaShort(h: Hit): string {
   if (h.ua_browser) {
-    const ver = h.ua_browser_version ? ` ${h.ua_browser_version}` : "";
-    const os = h.ua_os ? ` ${glyph("·", "|")} ${h.ua_os}` : "";
-    return `${h.ua_browser}${ver}${os}`;
+    const ver = h.ua_browser_version ? ` ${safeText(h.ua_browser_version)}` : "";
+    const os = h.ua_os ? ` ${glyph("·", "|")} ${safeText(h.ua_os)}` : "";
+    return `${safeText(h.ua_browser)}${ver}${os}`;
   }
-  return truncate(h.user_agent ?? "", 50);
+  return truncate(safeText(h.user_agent), 50);
 }
 
 function formatUaLong(h: Hit): string {
   if (h.ua_browser) {
-    return `${h.ua_browser} ${h.ua_browser_version ?? ""} on ${h.ua_os ?? "?"} (${h.ua_device ?? "?"})`;
+    return `${safeText(h.ua_browser)} ${safeText(h.ua_browser_version)} on ${safeText(h.ua_os ?? "?")} (${safeText(h.ua_device ?? "?")})`;
   }
-  return h.user_agent ?? "-";
+  return safeText(h.user_agent ?? "-");
 }
 
 function botCell(h: Hit): string {
-  if (h.bot_label) return c.yellow(h.bot_label);
+  if (h.bot_label) return c.yellow(safeText(h.bot_label));
   if (h.is_duplicate) return c.dim("dup");
   return "";
 }
@@ -277,15 +271,24 @@ function notifyCell(h: Hit): string {
 }
 
 function formatNotif(n: NotificationSummary): string {
-  let status = n.status;
+  const status = safeText(n.status);
   let color = c.dim;
   if (n.status === "succeeded") color = c.green;
   else if (n.status === "failed") color = c.red;
   else if (n.status === "pending" || n.status === "in_flight") color = c.yellow;
-  const attempts = n.attempts > 0 ? c.dim(` (${n.attempts}/${n.max_attempts})`) : "";
-  const err = n.last_error ? `\n      ${c.red(n.last_error.slice(0, 80))}` : "";
+  const attempts =
+    n.attempts > 0
+      ? c.dim(` (${safeText(n.attempts)}/${safeText(n.max_attempts)})`)
+      : "";
+  // Escape before cutting, so the 80 columns are counted in visible text.
+  const err = n.last_error
+    ? `\n      ${c.red(safeText(n.last_error).slice(0, 80))}`
+    : "";
   const target =
-    n.target ??
-    (n.destination_scope === "global" ? "(global destination)" : "(destination removed)");
-  return `${color(status.padEnd(10))} ${n.channel.padEnd(8)} ${c.dim(target)}${attempts}${err}`;
+    n.target != null
+      ? safeText(n.target)
+      : n.destination_scope === "global"
+        ? "(global destination)"
+        : "(destination removed)";
+  return `${color(status.padEnd(10))} ${safeText(n.channel).padEnd(8)} ${c.dim(target)}${attempts}${err}`;
 }

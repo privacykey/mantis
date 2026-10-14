@@ -1,3 +1,4 @@
+import { safeText } from "../../../lib/out.js";
 import { scanContentForPatterns } from "../patterns.js";
 import type { Detector, Finding } from "../types.js";
 import { walkText } from "../walk.js";
@@ -31,16 +32,20 @@ export const deepDetector: Detector = {
       },
       onFile: ({ path, content }) => {
         const matches = scanContentForPatterns(content);
+        // Anyone who can get a file into $HOME (a cloned repo, an unpacked
+        // archive) picks its name. The hint is rendered line by line, so a
+        // newline in the name must not survive into it as a line of its own.
+        const shown = safeText(path);
         for (const m of matches) {
           findings.push({
             kind: m.pattern.id,
             severity: m.pattern.severity,
             path,
             line: m.line,
-            summary: `${path} contains a ${m.pattern.vendor}`,
+            summary: `${shown} contains a ${m.pattern.vendor}`,
             url: m.text,
             vendor: m.pattern.vendor,
-            removeHint: `# review ${path}:${m.line} manually`,
+            removeHint: `# review ${shown}:${m.line} manually`,
           });
         }
       },

@@ -1,5 +1,6 @@
 import {
   PDFDocument,
+  type PDFFont,
   PDFName,
   PDFString,
   PDFDict,
@@ -10,14 +11,40 @@ import {
 import { DEFAULT_BODY, type DocOptions } from "./util";
 
 /**
- * Generates a PDF combining three mantis techniques so each fires in different readers:
+ * The standard PDF fonts (Helvetica here) only cover WinAnsi, and pdf-lib
+ * throws on anything outside it — so a memo in Cyrillic or CJK, one with an
+ * emoji, or even a tab, would turn the download into a 500. Substitute rather
+ * than fail: unsupported characters draw as "?" (whitespace controls as a
+ * space). The document's metadata title still carries the original text.
+ */
+export function winAnsiSafe(font: PDFFont, text: string): string {
+  const supported = new Set(font.getCharacterSet());
+  let out = "";
+  for (const ch of text) {
+    if (supported.has(ch.codePointAt(0) ?? -1)) out += ch;
+    else out += ch === "\t" || ch === "\n" || ch === "\r" ? " " : "?";
+  }
+  return out;
+}
+
+// PDFString.of() writes a literal string verbatim, so the three characters
+// that are structural inside one have to be escaped by the caller.
+function pdfLiteral(value: string): PDFString {
+  return PDFString.of(value.replace(/[\\()]/g, "\\$&"));
+}
+
+/**
+ * Generates a PDF combining two mantis techniques so each fires in different readers:
  *
  *   1. /OpenAction → /URI: many enterprise PDF readers (Adobe Reader, Foxit, etc.) follow
  *      this on document open, sometimes with a one-time trust prompt. Doesn't work in
  *      Chrome's PDFium viewer.
  *   2. Visible clickable link annotation: covers the case where the user reads the PDF
  *      and clicks the obvious link.
- *   3. The URI shows up as plain text on the page so even copying/pasting can leak.
+ *
+ * The URL itself is deliberately NOT drawn on the page — only the footer's
+ * "View the latest version online" link text is — so copy/paste of the page
+ * text does not carry it.
  */
 export async function generatePdf(opts: DocOptions): Promise<Buffer> {
   const body = opts.body ?? DEFAULT_BODY;
@@ -35,7 +62,7 @@ export async function generatePdf(opts: DocOptions): Promise<Buffer> {
   const margin = 72;
   let y = height - margin;
 
-  page.drawText(opts.title, {
+  page.drawText(winAnsiSafe(fontBold, opts.title), {
     x: margin,
     y,
     size: 24,
@@ -49,7 +76,7 @@ export async function generatePdf(opts: DocOptions): Promise<Buffer> {
       y -= 14;
       continue;
     }
-    page.drawText(line, {
+    page.drawText(winAnsiSafe(font, line), {
       x: margin,
       y,
       size: 12,
@@ -86,7 +113,7 @@ export async function generatePdf(opts: DocOptions): Promise<Buffer> {
   const openAction = ctx.obj({
     Type: PDFName.of("Action"),
     S: PDFName.of("URI"),
-    URI: PDFString.of(opts.url),
+    URI: pdfLiteral(opts.url),
   }) as PDFDict;
   pdf.catalog.set(PDFName.of("OpenAction"), openAction);
 
@@ -104,14 +131,16 @@ export async function generatePdf(opts: DocOptions): Promise<Buffer> {
     A: ctx.obj({
       Type: PDFName.of("Action"),
       S: PDFName.of("URI"),
-      URI: PDFString.of(opts.url),
+      URI: pdfLiteral(opts.url),
     }) as PDFDict,
   }) as PDFDict;
 
+  // /Annots holds indirect references (ISO 32000-1 Table 30); readers tolerate
+  // a direct dictionary there, strict parsers and validators do not.
   const annotsRef = page.node.get(PDFName.of("Annots"));
   const existing =
     annotsRef instanceof PDFArray ? annotsRef : ctx.obj([]) as PDFArray;
-  existing.push(linkAnnotation);
+  existing.push(ctx.register(linkAnnotation));
   page.node.set(PDFName.of("Annots"), existing);
 
   const bytes = await pdf.save();

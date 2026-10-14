@@ -121,6 +121,29 @@ describe("credential stores", () => {
     expect(out).toMatch(/^machine mantis\.example\.com$/m);
   });
 
+  it("netrc keeps every comment above the first machine entry", async () => {
+    // Python's stdlib netrc (and tools built on it) raise "bad follower token"
+    // on a comment that follows an entry — a .netrc that does not parse is a
+    // tell. The bait URL lives in the header comment for that reason.
+    const lines = (await render("netrc")).split("\n");
+    const firstMachine = lines.findIndex((l) => l.startsWith("machine "));
+    const comments = lines
+      .map((l, i) => (l.startsWith("#") ? i : -1))
+      .filter((i) => i >= 0);
+    expect(firstMachine).toBeGreaterThan(0);
+    expect(comments.length).toBeGreaterThan(0);
+    expect(Math.max(...comments)).toBeLessThan(firstMachine);
+    expect(lines.slice(0, firstMachine).join("\n")).toContain(URL);
+  });
+
+  it(".env puts every bait endpoint under the trigger URL", async () => {
+    // The trigger route records <trigger URL>/<anything>; a bare-origin path
+    // such as <origin>/hooks/deploy would reach nothing.
+    const out = await render("env");
+    expect(out).toContain(`API_BASE_URL=${URL}\n`);
+    expect(out).toContain(`DEPLOY_WEBHOOK_URL=${URL}/hooks/deploy\n`);
+  });
+
   it("aws credentials point a profile's endpoint_url at the canary", async () => {
     const out = await render("aws-credentials");
     expect(out).toContain(`endpoint_url = ${URL}`);
@@ -192,6 +215,28 @@ describe("rtf", () => {
     // Non-ASCII must become a \uN escape, or the reader shows mojibake.
     expect(out).not.toContain("—");
     expect(out).toMatch(/\\u\d+\?/);
+  });
+
+  it("escapes the field URL for the field first, then for RTF", async () => {
+    // Field quoting doubles backslashes; RTF escaping must come AFTER it, or
+    // the backslashes RTF escaping emits get doubled into literal text and a
+    // brace in the URL opens or closes an RTF group.
+    const url = "https://mantis.example.com/c/aBcD1234?q={x}&p=a\\b&n=é";
+    const out = (await generateFile("rtf", { title: "t", url })).toString("utf8");
+    const field = /INCLUDEPICTURE "([^"]*)"/.exec(out)?.[1];
+    expect(field).toBe(
+      "https://mantis.example.com/c/aBcD1234?q=\\{x\\}&p=a\\\\\\\\b&n=\\u233?",
+    );
+
+    // Structure check: the only unescaped braces left are the document's own
+    // groups, and they balance.
+    const bare = out.replace(/\\[\\{}]/g, "");
+    expect(bare.split("{").length).toBe(bare.split("}").length);
+  });
+
+  it("leaves an ordinary trigger URL byte-for-byte in the field", async () => {
+    const out = await render("rtf");
+    expect(out).toContain(`INCLUDEPICTURE "${URL}" \\\\d`);
   });
 });
 

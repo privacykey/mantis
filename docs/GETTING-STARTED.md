@@ -73,7 +73,10 @@ Add `--dry-run` to see every command it would run first. See
 [`deploy/fly.toml.example`](../deploy/fly.toml.example) for the config it
 generates, and
 [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml) to
-make later pushes deploy themselves.
+make later pushes deploy themselves. That workflow deploys `main` only and
+runs in a GitHub environment named `production`: store `FLY_API_TOKEN` as a
+secret of that environment (with `main` as its only deployment branch), not as
+a repository secret, so no other branch can use the token.
 
 ## Quickstart (no server / edge)
 
@@ -98,6 +101,11 @@ run: without a database there is no idempotent re-mint (re-running issues a
 fresh set of URLs), and the worker can't remember the last hit, so vectors that
 dedupe server-side — network attach — are chattier at the edge. The stateful
 equivalent is `mantis device new`, which keeps both.
+
+Chat alerts from the edge name the canary by a short URL fragment and never
+link the trigger URL, because following it would fire the canary again. On the
+Workers Free plan a daily request quota applies to the whole account; see
+[Platform request quota](../mantis-edge/README.md#platform-request-quota).
 
 See [`mantis-edge/README.md`](../mantis-edge/README.md) for Worker deploy and
 full `mantis edge` usage.

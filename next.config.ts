@@ -54,16 +54,24 @@ const config: NextConfig = {
   // Don't advertise the framework/version on every response.
   poweredByHeader: false,
   serverExternalPackages: ["postgres"],
+  // Next's built-in `/path/` → `/path` 308 runs before the proxy and would
+  // answer `<trigger URL>/` with a redirect that curl, SDKs and other
+  // non-browser clients don't follow — so the bait never fires. src/proxy.ts
+  // takes over: trigger URLs are rewritten onto the handler, every other
+  // trailing-slash path gets the same 308 as before.
+  skipTrailingSlashRedirect: true,
   async headers() {
+    const triggerHeaders = COMMON_HEADERS.filter(
+      (h) => h.key !== "X-Frame-Options",
+    );
     return [
       // Everything except /c/* gets the dashboard headers (incl. CSP in prod).
       { source: "/((?!c/).*)", headers: DASHBOARD_HEADERS },
       // Drop X-Frame-Options on the public trigger; the canary URL is
       // sometimes embedded as a CSS background or <img>. /c sets its own CSP.
-      {
-        source: "/c/:publicId",
-        headers: COMMON_HEADERS.filter((h) => h.key !== "X-Frame-Options"),
-      },
+      { source: "/c/:publicId", headers: triggerHeaders },
+      // Same for <trigger URL>/<appended path> (src/app/c/[publicId]/[...rest]).
+      { source: "/c/:publicId/:rest+", headers: triggerHeaders },
     ];
   },
 };

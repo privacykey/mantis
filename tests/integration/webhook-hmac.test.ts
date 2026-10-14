@@ -37,6 +37,7 @@ function fakeKey(): Key {
     monitorWindowSeconds: 300,
     monitorResetAt: null,
     firstDownloadFormat: null,
+    selfOrigins: [],
     createdAt: new Date(),
     disabledAt: null,
     expiresAt: null,

@@ -3,6 +3,8 @@ import { sql } from "drizzle-orm";
 const session = vi.hoisted(() => ({ id: "" }));
 vi.mock("@/lib/session", () => ({ getSessionApiKey: async () => ({ id: session.id, isAdmin: false }) }));
 vi.mock("@/lib/log", () => ({ log: { info() {}, warn() {}, error() {}, debug() {} } }));
+// The device action records its audit rows with the caller's IP.
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 import { db } from "@/db/client";
 import { keys } from "@/db/schema";
 import { GET as listKeys } from "@/app/api/keys/route";

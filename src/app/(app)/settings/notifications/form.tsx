@@ -7,11 +7,14 @@ import {
   saveGlobalDestinationsAction,
   type GlobalDestState,
 } from "./actions";
+import { GlobalSecretReveal } from "./global-secret-reveal";
 
 export type ExistingDestination = {
   id: string;
   channel: string;
   target: string;
+  /** `first4…last4` of a webhook row's signing secret; null for other channels. */
+  signingSecretFingerprint: string | null;
   lastActivationStatus: string | null;
   lastActivationError: string | null;
 };
@@ -79,6 +82,15 @@ export function GlobalDestinationsForm({
                 </button>
               </div>
               <div className="text-xs text-neutral-600 pl-1">{meta.help}</div>
+              {saved?.signingSecretFingerprint && (
+                // Keyed by destination so a revealed secret never carries
+                // over to another row when rows are removed or reordered.
+                <GlobalSecretReveal
+                  key={saved.id}
+                  destinationId={saved.id}
+                  fingerprint={saved.signingSecretFingerprint}
+                />
+              )}
               {saved?.lastActivationStatus === "failed" && (
                 <div className="text-xs text-red-400 pl-1">
                   last test failed: {saved.lastActivationError}

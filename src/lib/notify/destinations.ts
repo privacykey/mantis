@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   keys,
   notificationDestinations,
+  notifications,
   type Key,
   type NotificationChannel,
   type NotificationDestination,
@@ -11,8 +12,42 @@ import {
 import { openSecret, sealSecret } from "@/lib/secret-box";
 import { fireActivationPing } from "./activation";
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 export function newSigningSecret(): string {
   return randomBytes(32).toString("base64");
+}
+
+/**
+ * Removing a destination withdraws it: deliveries already queued for it (or
+ * waiting on a retry) must not go out. Each notification row carries its own
+ * copy of the target, so deleting the destination alone would leave them
+ * deliverable for the rest of the retry schedule.
+ *
+ * Must run BEFORE the destination rows are deleted, in the same transaction:
+ * notifications.destination_id is ON DELETE SET NULL, so afterwards these rows
+ * can no longer be found. Clearing the claim fences a worker that already holds
+ * one — its completion writes check status and claim_token. A request that is
+ * already on the wire cannot be recalled.
+ */
+async function abortQueuedDeliveries(tx: Tx, destinationIds: string[]): Promise<void> {
+  await tx
+    .update(notifications)
+    .set({
+      status: "aborted",
+      lastError: "destination removed before delivery",
+      claimToken: null,
+      leaseUntil: null,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        inArray(notifications.destinationId, destinationIds),
+        // Spelled as an OR so each arm can use its partial index
+        // (notifications_pending_idx / notifications_lease_idx).
+        or(eq(notifications.status, "pending"), eq(notifications.status, "in_flight")),
+      ),
+    );
 }
 
 /** Returns `first4…last4` — enough to identify a secret without leaking it. */
@@ -167,6 +202,7 @@ export async function replaceDestinations(
     }
     const removed = existing.filter((row) => !retained.has(row.id)).map((row) => row.id);
     if (removed.length > 0) {
+      await abortQueuedDeliveries(tx, removed);
       await tx.delete(notificationDestinations).where(inArray(notificationDestinations.id, removed));
     }
     return rows;
@@ -266,6 +302,7 @@ export async function replaceGlobalDestinations(
     }
     const removed = existing.filter((row) => !retained.has(row.id)).map((row) => row.id);
     if (removed.length > 0) {
+      await abortQueuedDeliveries(tx, removed);
       await tx.delete(notificationDestinations).where(inArray(notificationDestinations.id, removed));
     }
     return rows;
@@ -354,6 +391,47 @@ export async function rotateSigningSecret(
     .update(notificationDestinations)
     .set({ signingSecret: sealSecret(newSigningSecret()) })
     .where(eq(notificationDestinations.id, destinationId))
+    .returning();
+  return updated ?? null;
+}
+
+// Global webhook destinations sign every key's deliveries, so whoever runs the
+// receiver needs the secret too. The per-key reveal/rotate above can never
+// match a keyId IS NULL row; these are their global counterparts. Callers must
+// be admin-gated and must audit — see settings/notifications/actions.ts.
+
+/** Plaintext signing secret of a GLOBAL webhook destination, or null if there is none. */
+export async function getGlobalSigningSecret(
+  destinationId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select()
+    .from(notificationDestinations)
+    .where(
+      and(
+        eq(notificationDestinations.id, destinationId),
+        isNull(notificationDestinations.keyId),
+      ),
+    )
+    .limit(1);
+  if (!row || row.channel !== "webhook" || !row.signingSecret) return null;
+  return openSecret(row.signingSecret);
+}
+
+/** Rotates a GLOBAL webhook destination's secret. Returns the updated row, or null if not found / not a webhook channel. */
+export async function rotateGlobalSigningSecret(
+  destinationId: string,
+): Promise<NotificationDestination | null> {
+  const [updated] = await db
+    .update(notificationDestinations)
+    .set({ signingSecret: sealSecret(newSigningSecret()) })
+    .where(
+      and(
+        eq(notificationDestinations.id, destinationId),
+        isNull(notificationDestinations.keyId),
+        eq(notificationDestinations.channel, "webhook"),
+      ),
+    )
     .returning();
   return updated ?? null;
 }

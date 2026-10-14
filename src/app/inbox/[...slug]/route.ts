@@ -35,6 +35,9 @@ async function handle(req: NextRequest, ctx: Ctx): Promise<Response> {
   const headers: Record<string, string> = {};
   for (const [k, v] of req.headers.entries()) headers[k] = v;
 
+  // pushCapture stores credential headers (cookie, authorization, …) as
+  // "[redacted]": this route shares the dashboard origin, so a browser landing
+  // here would otherwise deposit the operator's session cookie in the buffer.
   const cap = pushCapture({
     method: req.method,
     slug: slug.join("/"),

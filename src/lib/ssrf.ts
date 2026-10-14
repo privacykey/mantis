@@ -123,10 +123,35 @@ function isPrivateV6(addr: string): boolean {
 }
 
 export class UnsafeUrlError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "UnsafeUrlError";
   }
+}
+
+/**
+ * The one caller-visible message for every refused destination: private
+ * answer, no answer, or resolver error alike. The message reaches whoever
+ * created the destination (activation result, notifications.last_error) —
+ * including semi-public enrollment keys — so it must not say what this
+ * server's resolver returned, or it becomes an oracle over internal DNS.
+ * The detail rides on `Error.cause`; see causeDetail().
+ */
+export const REFUSED_DESTINATION =
+  "destination refused: it does not resolve to a public address (details are in the server log)";
+
+/**
+ * The cause chain of an outbound failure — resolved addresses, resolver
+ * errors, connect errors. For SERVER LOGS only; never return it to a caller.
+ */
+export function causeDetail(err: unknown): string | undefined {
+  const parts: string[] = [];
+  let cause = err instanceof Error ? err.cause : undefined;
+  for (let depth = 0; cause !== undefined && cause !== null && depth < 4; depth++) {
+    parts.push(cause instanceof Error ? cause.message : String(cause));
+    cause = cause instanceof Error ? cause.cause : undefined;
+  }
+  return parts.length > 0 ? parts.join(": ") : undefined;
 }
 
 function allowPrivateWebhooks(): boolean {
@@ -150,22 +175,30 @@ export async function assertSafeWebhookUrl(target: string): Promise<void> {
   }
   if (allowPrivateWebhooks()) return;
 
-  const host = u.hostname;
+  // WHATWG URL keeps the brackets on an IPv6 host ("[::1]"), which isIP()
+  // does not recognise. Strip them so the literal is judged as an address
+  // here: the connect-time safeLookup never sees literal hosts.
+  const host = u.hostname.replace(/^\[(.*)\]$/, "$1");
   if (isIP(host)) {
     if (isPrivateAddress(host)) {
-      throw new UnsafeUrlError(`${host} resolves to a private address`);
+      throw new UnsafeUrlError(REFUSED_DESTINATION, { cause: `${host} is a private address` });
     }
     return;
   }
-  const records = await lookup(host, { all: true });
+  let records: LookupAddress[];
+  try {
+    records = await lookup(host, { all: true });
+  } catch (err) {
+    throw new UnsafeUrlError(REFUSED_DESTINATION, { cause: err });
+  }
   if (records.length === 0) {
-    throw new UnsafeUrlError(`${host} did not resolve`);
+    throw new UnsafeUrlError(REFUSED_DESTINATION, { cause: `${host} did not resolve` });
   }
   for (const r of records) {
     if (isPrivateAddress(r.address)) {
-      throw new UnsafeUrlError(
-        `${host} resolves to private address ${r.address}`,
-      );
+      throw new UnsafeUrlError(REFUSED_DESTINATION, {
+        cause: `${host} resolves to private address ${r.address}`,
+      });
     }
   }
 }
@@ -198,7 +231,11 @@ export function safeLookup(
         ? records.filter((r) => r.family === familyNum)
         : records;
       if (matching.length === 0) {
-        callback(new UnsafeUrlError(`${hostname} did not resolve`), "", 0);
+        callback(
+          new UnsafeUrlError(REFUSED_DESTINATION, { cause: `${hostname} did not resolve` }),
+          "",
+          0,
+        );
         return;
       }
       // Validate every resolved address, not just the one we return, so a
@@ -207,9 +244,9 @@ export function safeLookup(
         for (const r of matching) {
           if (isPrivateAddress(r.address)) {
             callback(
-              new UnsafeUrlError(
-                `${hostname} resolves to private address ${r.address}`,
-              ),
+              new UnsafeUrlError(REFUSED_DESTINATION, {
+                cause: `${hostname} resolves to private address ${r.address}`,
+              }),
               "",
               0,
             );

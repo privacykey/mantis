@@ -5,16 +5,16 @@ import { xmlEscape } from "./util";
  * Browser bookmark export in Netscape `bookmarks.html` format — what Chrome,
  * Firefox, Edge and Safari all produce from "export bookmarks".
  *
- * Two ways this fires, which is unusual for a credential-store bait:
+ * It fires when someone follows the bait bookmark — an internal VPN portal or
+ * admin console is exactly what an intruder browses a bookmark file for. Like
+ * the other credential-store baits, merely opening the file fetches nothing:
+ * rendered as HTML, `ICON_URI` is an inert attribute on the link (checked in
+ * Chromium — the page and its favicon are the only requests).
  *
- *   1. Someone opens the file in a browser to read it. It is HTML, so the
- *      bookmark's `ICON_URI` is fetched on render.
- *   2. Someone clicks the bait bookmark — an internal VPN portal or admin
- *      console is exactly what an intruder browses a bookmark file for.
- *
- * `ICON_URI` is genuine Netscape-format syntax (browsers normally write a
- * `data:` URI there), so a remote URL in that slot is unremarkable to anyone
- * skimming the file.
+ * The URL is repeated in `ICON_URI` anyway. It is genuine Netscape-format
+ * syntax (browsers normally write a `data:` URI there), so a remote URL in that
+ * slot is unremarkable to anyone skimming the file, and a browser that imports
+ * the file may request it as the bookmark's icon — a bonus, not the trigger.
  */
 export function generateBookmarks(opts: DocOptions): Promise<Buffer> {
   const title = xmlEscape(opts.title.replace(/[\r\n]+/g, " "));
@@ -34,7 +34,7 @@ export function generateBookmarks(opts: DocOptions): Promise<Buffer> {
         `        <DT><A HREF="${xmlEscape(href)}" ADD_DATE="${added}">${xmlEscape(name)}</A>`,
     ),
     // The bait sits inside the same folder as the real-looking internal links,
-    // with the beacon in the icon slot.
+    // with the URL repeated in the icon slot.
     `        <DT><A HREF="${url}" ADD_DATE="${added}" ICON_URI="${url}">${title}</A>`,
   ].join("\n");
 

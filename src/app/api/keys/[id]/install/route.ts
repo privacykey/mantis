@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { loadOwnedKey, requireApiKeyOrSession } from "@/lib/auth";
 import { keyUrl } from "@/lib/env";
+import { homeAssistantWebhookId } from "@/lib/keys";
 import {
   ALL_INSTALL_TYPES,
   buildInstaller,
@@ -44,6 +45,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     keyId: key.id,
     memo: key.memo,
     ...(hostname ? { hostname } : {}),
+    ...(type === "homeassistant-receiver"
+      ? { webhookId: homeAssistantWebhookId(key.id) }
+      : {}),
   });
 
   // Two modes: ?format=json returns the full installer metadata; default returns

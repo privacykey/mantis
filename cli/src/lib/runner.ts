@@ -2,7 +2,7 @@ import { ApiError, RequestTimeoutError } from "./api.js";
 import { MantisClient } from "./api.js";
 import { AuthError, listProfiles, resolveAuth } from "./config.js";
 import { listEdgeKeyWorkers } from "./edge-key.js";
-import { c, ExitCode, fail, isDebug } from "./out.js";
+import { c, ExitCode, fail, isDebug, safeBlock } from "./out.js";
 import { ResolveError } from "./resolve.js";
 
 /** A bad flag/argument value — exits with ExitCode.Usage. */
@@ -44,7 +44,9 @@ export async function withClient<T>(
           : "auth=env/keychain";
       const detail =
         err instanceof Error && err.stack ? err.stack : String(err);
-      process.stderr.write(c.dim(`[debug] ${target}\n[debug] ${detail}\n`));
+      process.stderr.write(
+        c.dim(`[debug] ${safeBlock(target)}\n[debug] ${safeBlock(detail)}\n`),
+      );
     }
     if (err instanceof UsageError) return fail(err.message, ExitCode.Usage);
     if (err instanceof AuthError) {

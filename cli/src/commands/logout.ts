@@ -6,7 +6,7 @@ import {
   listProfiles,
   removeProfile,
 } from "../lib/config.js";
-import { c, fail } from "../lib/out.js";
+import { c, fail, safeText } from "../lib/out.js";
 
 export async function logoutCmd(opts: {
   profile?: string;
@@ -32,10 +32,10 @@ export async function logoutCmd(opts: {
   if (!result.removed) return fail(`profile '${target}' not found`);
   const tail = result.wasCurrent
     ? result.newCurrent
-      ? c.dim(` (current → ${result.newCurrent})`)
+      ? c.dim(` (current → ${safeText(result.newCurrent)})`)
       : ""
     : "";
   process.stderr.write(
-    `${c.green("✓")} removed profile ${c.bold(target)}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
+    `${c.green("✓")} removed profile ${c.bold(safeText(target))}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
   );
 }

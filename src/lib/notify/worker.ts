@@ -4,6 +4,7 @@ import { type NotificationChannel } from "@/db/schema";
 import { log } from "@/lib/log";
 import { runRetentionSweep } from "@/lib/retention";
 import { openSecretOrNull } from "@/lib/secret-box";
+import { causeDetail } from "@/lib/ssrf";
 import { loadSendContext, send } from "./senders";
 
 const IDLE_POLL_MS = 5_000;
@@ -77,6 +78,7 @@ export async function processBatch(limit: number): Promise<number> {
   const claimed = await db.execute<{
     id: string;
     hit_id: string;
+    destination_id: string | null;
     channel: NotificationChannel;
     target: string;
     signing_secret: string | null;
@@ -97,7 +99,7 @@ export async function processBatch(limit: number): Promise<number> {
       limit ${limit}
       for update skip locked
     )
-    returning id, hit_id, channel, target, signing_secret, attempts, max_attempts, claim_token
+    returning id, hit_id, destination_id, channel, target, signing_secret, attempts, max_attempts, claim_token
   `);
 
   if (claimed.length === 0) return 0;
@@ -109,6 +111,7 @@ export async function processBatch(limit: number): Promise<number> {
 type Claimed = {
   id: string;
   hit_id: string;
+  destination_id: string | null;
   channel: NotificationChannel;
   target: string;
   signing_secret: string | null;
@@ -127,6 +130,13 @@ async function processOne(c: Claimed): Promise<void> {
     }
     if (ctx.key.disabledAt !== null) {
       await markAborted(c, "key disabled before delivery");
+      return;
+    }
+    // Every enqueued row names its destination, and deleting that destination
+    // nulls the reference. Removal aborts the rows it can see; this catches a
+    // row whose hit was still committing at that moment.
+    if (c.destination_id === null) {
+      await markAborted(c, "destination removed before delivery");
       return;
     }
 
@@ -151,16 +161,19 @@ async function processOne(c: Claimed): Promise<void> {
 
     await markSucceeded(c, nextAttempt);
   } catch (err) {
+    // `message` is stored as last_error and shown with the hit; the cause
+    // (resolved address, resolver or connect error) stays in this log.
     const message = err instanceof Error ? err.message : String(err);
+    const cause = causeDetail(err);
     if (nextAttempt >= c.max_attempts) {
       if (await markFailed(c, nextAttempt, message)) log.warn(
-        { id: c.id, channel: c.channel, target: c.target, attempts: nextAttempt },
+        { id: c.id, channel: c.channel, target: c.target, attempts: nextAttempt, cause },
         `notification permanently failed: ${message}`,
       );
     } else {
       const backoffMs = backoffMillis(nextAttempt);
       if (await scheduleRetry(c, nextAttempt, backoffMs, message)) log.info(
-        { id: c.id, channel: c.channel, attempts: nextAttempt, retryInMs: backoffMs },
+        { id: c.id, channel: c.channel, attempts: nextAttempt, retryInMs: backoffMs, cause },
         `notification will retry: ${message}`,
       );
     }

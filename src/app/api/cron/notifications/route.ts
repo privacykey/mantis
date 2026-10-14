@@ -4,6 +4,7 @@ import { log } from "@/lib/log";
 import { processBatch } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { extractIp } from "@/lib/request-info";
+import { runRetentionSweepIfDue } from "@/lib/retention";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,6 +12,9 @@ export const maxDuration = 60;
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const UNAUTH_RATE_LIMIT = { limit: 10, windowMs: 60_000 } as const;
+// Don't START a retention sweep once the drain has used this much of
+// maxDuration; the hourly slot is left unclaimed, so the next call picks it up.
+const SWEEP_LATEST_START_MS = 40_000;
 
 function authorized(req: NextRequest): boolean {
   if (!CRON_SECRET) return false; // fail closed when no shared secret is set
@@ -59,11 +63,26 @@ async function handle(req: NextRequest): Promise<Response> {
     Math.max(1, Number(url.searchParams.get("max") ?? "200")),
   );
 
+  const startedAt = Date.now();
   let processed = 0;
-  while (processed < max) {
-    const batch = await processBatch(Math.min(25, max - processed));
-    if (batch === 0) break;
-    processed += batch;
+  try {
+    while (processed < max) {
+      const batch = await processBatch(Math.min(25, max - processed));
+      if (batch === 0) break;
+      processed += batch;
+    }
+  } finally {
+    // With the in-process worker off (Vercel, RUN_NOTIFY_WORKER=0) this
+    // endpoint is the only periodic entry point, so MANTIS_*_RETENTION_DAYS
+    // and the rate_limits TTL are applied from here too — throttled to about
+    // hourly, and never allowed to change the delivery outcome.
+    if (Date.now() - startedAt < SWEEP_LATEST_START_MS) {
+      try {
+        await runRetentionSweepIfDue();
+      } catch (err) {
+        log.error({ err }, "retention sweep failed");
+      }
+    }
   }
 
   return NextResponse.json({ processed });

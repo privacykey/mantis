@@ -1,10 +1,14 @@
 "use server";
 
+import { headers } from "next/headers";
 import { db } from "@/db/client";
 import { keys } from "@/db/schema";
+import { audit } from "@/lib/audit";
 import { newPublicId } from "@/lib/keys";
+import { clientIpFromHeaders } from "@/lib/request-info";
 import { getSessionApiKey } from "@/lib/session";
 import { getPreset, isPresetId } from "@/lib/presets";
+import { hasControlChars } from "@/lib/validators";
 
 export type BulkState = {
   error?: string;
@@ -42,6 +46,9 @@ export async function bulkCreateAction(
   if (tooLong) {
     return { error: `name too long (max 500): "${tooLong.slice(0, 40)}…"` };
   }
+  if (names.some(hasControlChars)) {
+    return { error: "names must not contain control characters" };
+  }
   // Duplicate memos would produce indistinguishable keys — the exact thing
   // one-key-per-use-case is meant to avoid.
   const dupe = names.find((n, i) => names.indexOf(n) !== i);
@@ -63,6 +70,26 @@ export async function bulkCreateAction(
     return {
       error: err instanceof Error ? err.message : "failed to create keys",
     };
+  }
+
+  const h = await headers();
+  const ip = clientIpFromHeaders((n) => h.get(n));
+  for (const r of inserted) {
+    await audit({
+      type: "key.created",
+      actorApiKeyId: session.id,
+      actorLabel: session.name,
+      subjectKind: "key",
+      subjectId: r.id,
+      metadata: {
+        memo: r.memo,
+        response_kind: r.responseKind,
+        destination_count: 0,
+        destination_channels: [],
+        via: "dashboard",
+      },
+      ip,
+    });
   }
 
   // No per-key destinations are attached: bulk minting exists to be fast, and

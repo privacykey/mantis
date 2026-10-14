@@ -36,6 +36,7 @@ const key: Key = {
   monitorWindowSeconds: 300,
   monitorResetAt: null,
   firstDownloadFormat: null,
+  selfOrigins: [],
   createdAt: new Date("2026-05-17T00:00:00Z"),
   disabledAt: null,
   expiresAt: null,
