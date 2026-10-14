@@ -43,9 +43,23 @@ allowBuilds:
 #                      both Windows-only dev-server issues. Pulled in transitively via vitest; we
 #                      never run the vite dev server (Next.js serves the app), so not exploitable
 #                      here — pinned for hygiene / to clear the alerts. Test-time devDep only.
-#   sharp <0.35.4    → inherited libvips heap overflows / OOB reads (GHSA-f88m-g3jw-g9cj:
+#   sharp <0.35.5    → inherited libvips heap overflows / OOB reads (GHSA-f88m-g3jw-g9cj:
 #                      CVE-2026-33327/33328/35590/35591) and libheif vulnerabilities
 #                      (GHSA-rgj7-g3m4-5g8c); optional dep of next, so forced here.
+#                      The floor moved 0.35.4 → 0.35.5 for the bundled librsvg memory
+#                      bug (GHSA-wq5f-xc86-pv6w, CVE-2026-96889; possible RCE on glibc).
+#                      Not reachable here: sharp only uses librsvg to decode SVG, and
+#                      next's image optimizer rejects SVG while dangerouslyAllowSVG is
+#                      unset (and serves it untouched when set), never via sharp; we
+#                      use neither next/image nor images.remotePatterns, and the server
+#                      image is musl (node:26-alpine). Pinned to clear the audit.
+#   source-map-js <1.2.2 → event-loop denial of service via unvalidated per-section
+#                      offset lines in indexed source maps (GHSA-68fv-2mgg-jv7q,
+#                      CVE-2026-93749). Pulled in via @tailwindcss/postcss →
+#                      @tailwindcss/node and postcss (next, vite, tailwind), plus
+#                      magicast via @vitest/coverage-v8. Only parses source maps of our
+#                      own CSS at build/test time, never request input, so not
+#                      reachable at runtime — pinned to clear the audit.
 #   undici@7 <7.29.1 → BalancedPool TLS validation bypass (GHSA-w293-vg96-wgc3) and
 #                      the 7.x HTTP-cache/cookie/retry cluster: private-cache directive
 #                      crash + cross-user disclosure (GHSA-4cwx-7wf7-3272, high),
@@ -63,7 +77,8 @@ allowBuilds:
 overrides:
   nanoid@3: ^3.3.18
   undici@7: ^7.29.1
-  sharp: ^0.35.4
+  sharp: ^0.35.5
+  source-map-js: ^1.2.2
   postcss: ^8.5.10
   esbuild: ^0.28.1
   joi: ^17.13.8
