@@ -11,6 +11,7 @@ import {
   maskSecretUrl,
   safeText,
   termWidth,
+  withoutRepeat,
   wrapProse,
 } from "./out.js";
 
@@ -39,12 +40,13 @@ export function destinationLines(destinations: DestinationLine[]): string[] {
     const word =
       state === "ok" ? "activated" : state === "pending" ? "not activated yet" : "activation failed";
     const target = fitMiddle(maskSecretUrl(s(d.target)), room - (word.length + 2));
-    const wordStyled = state === "fail" ? c.red(word) : c.dim(word);
+    const wordStyled = state === "fail" ? c.red(word) : word;
     lines.push(`${mark(state)} ${s(d.channel).padEnd(channelWidth)}  ${target}  ${wordStyled}`);
     if (state === "fail" && d.last_activation_error) {
-      // The reason wraps under the target on a terminal, whole on a pipe.
+      // The reason wraps under the target on a terminal, whole on a pipe,
+      // and does not repeat the target the row above names.
       const pad = " ".repeat(2 + channelWidth + 2);
-      const reason = s(d.last_activation_error);
+      const reason = withoutRepeat(s(d.last_activation_error), d.target);
       const avail = termWidth() - (2 + KV_LABEL_WIDTH + 1) - pad.length;
       const wrapped = process.stdout.isTTY ? wrapProse(reason, Math.max(20, avail)) : [reason];
       for (const line of wrapped) lines.push(`${pad}${c.red(line)}`);

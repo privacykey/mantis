@@ -53,8 +53,8 @@ export async function listCmd(opts: ListOpts): Promise<void> {
           return row;
         });
         const columns = wide
-          ? ["id", "memo", "url", "age", "dest", "status"]
-          : ["id", "memo", "age", "dest", "status"];
+          ? ["id", "memo", "url", "age", "notify", "status"]
+          : ["id", "memo", "age", "notify", "status"];
         const numeric = wide ? [3, 4] : [2, 3];
         const align = columns.map((_, i) =>
           numeric.includes(i) ? ("right" as const) : ("left" as const),

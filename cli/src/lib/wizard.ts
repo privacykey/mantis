@@ -118,7 +118,7 @@ export async function askYesNo(
   const prompt = promptText(label, defaultYes ? "Y/n" : "y/N", "");
   const ans = (await p.ask(prompt)).toLowerCase();
   if (!ans) {
-    echoAccepted(prompt, defaultYes ? "yes" : "no");
+    echoAccepted(prompt, defaultYes ? "y" : "n");
     return defaultYes;
   }
   if (ans === "y" || ans === "yes") return true;

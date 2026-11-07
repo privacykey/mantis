@@ -437,9 +437,9 @@ export function mark(kind: Mark): string {
   return color(glyph(unicodeMark, asciiMark));
 }
 
-/** `⚠ tripped`: the alarm, the loudest thing the CLI prints. */
+/** `● tripped`: the alarm, the loudest thing the CLI prints. ⚠ is a warning. */
 export function tripped(text = "tripped"): string {
-  return c.alarm(`${glyph("⚠", "!")} ${text}`);
+  return c.alarm(`${glyph("●", "!")} ${text}`);
 }
 
 export const arrow = {
@@ -521,7 +521,7 @@ export function wrapProse(text: string, width: number): string[] {
 export function hintLines(text: string, indent = ""): string {
   const width = proseWidth(process.stderr) - indent.length;
   return wrapProse(text, width)
-    .map((line) => `${indent}${prose(line, c.dim)}\n`)
+    .map((line) => `${indent}${prose(line)}\n`)
     .join("");
 }
 
@@ -577,7 +577,7 @@ export function heading(main: string, aside?: string): string {
 export type KvRow = [label: string, value: string | string[]];
 
 /** Width of the `label:` column in every label and value block. */
-export const KV_LABEL_WIDTH = 13;
+export const KV_LABEL_WIDTH = 12;
 
 /**
  * The one label and value block: dim `label:` in a fixed column, the value
@@ -632,12 +632,32 @@ export function maskSecretUrl(target: string): string {
     return target;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return target;
-  const segments = url.pathname.split("/").filter(Boolean);
+  const path = url.pathname.replace(/\/+$/, "");
+  const segments = path.split("/").filter(Boolean);
   const tokenLike = (seg: string) =>
     seg.length >= 20 || (seg.length >= 8 && /\d/.test(seg) && !/[-_.]/.test(seg));
-  if (!segments.some(tokenLike)) return target;
-  const path = url.pathname.replace(/\/+$/, "");
+  if (!segments.some(tokenLike)) return `${url.host}${path}${url.search}`;
   return `${url.host}/${glyph("…", "...")}${path.slice(-6)}`;
+}
+
+/**
+ * A failure reason without the target the row above already names:
+ * `HTTP 403 from siem.example (signature rejected)` → `HTTP 403 (signature
+ * rejected)`; `relay access denied for ops@example` → `relay access denied`.
+ */
+export function withoutRepeat(reason: string, target: string): string {
+  let host = "";
+  try {
+    host = new URL(target).host;
+  } catch {
+    // not a URL: the target itself is the only candidate
+  }
+  let out = reason;
+  for (const t of [target, host].filter(Boolean)) {
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`\\s(?:for|to|from|at)\\s${esc}(?=[\\s).,;:]|$)`), "");
+  }
+  return out;
 }
 
 /** Terminal width for layout that should use the room it has. */

@@ -12,6 +12,8 @@ import {
   resolveAuth,
 } from "../lib/config.js";
 import {
+  glyph,
+  dot,
   arrow,
   c,
   emit,
@@ -77,7 +79,13 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   if (baseUrl) {
     const storedKey = opts.key ?? getKey(baseUrl);
     if (storedKey) {
-      add("ok", "api key", `${storedKey.slice(0, 12)}...`);
+      add(
+        "ok",
+        "api key",
+        `${storedKey.slice(0, 12)}...`,
+        undefined,
+        `${storedKey.slice(0, 12)}${glyph("…", "...")}${storedKey.slice(-4)}`,
+      );
     } else {
       add(
         "fail",
@@ -171,7 +179,13 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
           samplePublicOrigin = detected;
         }
         if (detected && detected !== client.baseUrl) {
-          add("ok", "split hosts", `${client.baseUrl} private, ${detected} public`);
+          add(
+            "ok",
+            "split hosts",
+            `${client.baseUrl} private, ${detected} public`,
+            undefined,
+            `private ${hostOf(client.baseUrl)} ${dot()} public ${hostOf(detected)}`,
+          );
         } else if (page.data.length === 0 && !samplePublicOrigin) {
           add(
             "warn",
@@ -298,8 +312,8 @@ function addPublicOnlyCheck(
       "warn",
       name,
       result.message,
-      `Check DNS and the tunnel for ${host}`,
-      `no answer from ${tried} (${networkReason(result.code, result.message)})`,
+      `Check DNS and the tunnel for ${host}, then rerun \`mantis doctor\``,
+      `no answer from ${hostOf(tried)} (${networkReason(result.code, result.message)})`,
     );
     return;
   }
@@ -345,6 +359,16 @@ async function fetchPublic(
     };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** A URL without its scheme, for a terminal row that already says what it is. */
+function hostOf(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname.replace(/\/+$/, "")}${u.search}`;
+  } catch {
+    return url;
   }
 }
 

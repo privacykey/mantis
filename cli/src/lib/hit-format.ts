@@ -20,6 +20,7 @@ import {
   safeText,
   table,
   termWidth,
+  withoutRepeat,
   wrapProse,
 } from "./out.js";
 
@@ -157,8 +158,9 @@ export function hitsTable(hits: Hit[]): string {
   const tags = hits.map(tagCell);
   const showTag = tags.some(Boolean);
   const rows = hits.map((h, i) => {
+    const failed = h.notifications.some((n) => n.status === "failed");
     const row = [
-      formatTime(h.occurred_at),
+      failed ? c.red(formatTime(h.occurred_at)) : formatTime(h.occurred_at),
       h.ip == null ? mark("none") : safeText(h.ip),
       hitWho(h, { omitFrom: h.ip }),
     ];
@@ -182,12 +184,18 @@ export function deliveryLegend(hits: Hit[]): string {
     if (h.is_duplicate) continue;
     for (const n of h.notifications) seen.add(NOTIFY_MARK[n.status]);
   }
-  // Rows of plain ✓ need no legend; once a ✗ or … appears, explain all three.
-  if (!seen.has("fail") && !seen.has("pending")) return "";
   const parts: string[] = [];
-  if (seen.has("ok")) parts.push(`${mark("ok")} ${c.dim("delivered")}`);
-  if (seen.has("fail")) parts.push(`${mark("fail")} ${c.dim("failed")}`);
-  if (seen.has("pending")) parts.push(`${mark("pending")} ${c.dim("pending")}`);
+  // Rows of plain ✓ need no legend; once a ✗ or … appears, explain all three.
+  if (seen.has("fail") || seen.has("pending")) {
+    if (seen.has("ok")) parts.push(`${mark("ok")} ${c.dim("delivered")}`);
+    if (seen.has("fail")) parts.push(`${mark("fail")} ${c.dim("failed")}`);
+    if (seen.has("pending")) parts.push(`${mark("pending")} ${c.dim("pending")}`);
+  }
+  // The arrow appears only when the ssh client is not the reporting address.
+  const arrowShown = hits.some(
+    (h) => h.host_context?.ssh_client_ip && h.host_context.ssh_client_ip !== h.ip,
+  );
+  if (arrowShown) parts.push(`${arrow.left()} ${c.dim("ssh client address")}`);
   return parts.join("  ");
 }
 
@@ -236,14 +244,14 @@ export function deliveryLines(
           : "(destination removed)";
     const lead = `${mark(NOTIFY_MARK[n.status] ?? "none")} ${safeText(n.channel).padEnd(channelWidth)}  `;
     const used = 2 + channelWidth + 2 + 2 + state.length;
-    const stateColor = n.status === "failed" ? c.red : c.dim;
     lines.push(
-      `${lead}${fitMiddle(target, room - used)}  ${stateColor(state)}`,
+      `${lead}${fitMiddle(target, room - used)}  ${n.status === "failed" ? c.red(state) : state}`,
     );
     if (n.last_error) {
-      // The reason wraps under the target on a terminal, whole on a pipe.
+      // The reason wraps under the target on a terminal, whole on a pipe,
+      // and does not repeat the target the row above names.
       const pad = " ".repeat(2 + channelWidth + 2);
-      const reason = safeText(n.last_error);
+      const reason = withoutRepeat(safeText(n.last_error), n.target ?? "");
       const wrapped = process.stdout.isTTY
         ? wrapProse(reason, Math.max(20, room - pad.length))
         : [reason];

@@ -61,6 +61,7 @@ export async function hitsCmd(id: string, opts: HitsOpts): Promise<void> {
           ref: id,
           keyId: fullId,
           key: resolved.key,
+          more: page.next_cursor != null,
         }),
       { data: filtered, next_cursor: page.next_cursor },
     );
@@ -170,13 +171,15 @@ type RenderCtx = {
   keyId: string;
   /** Known when the reference was symbolic (a prefix or `last`). */
   key?: Key;
+  /** Whether the page was cut by --limit, so the count is not the total. */
+  more?: boolean;
 };
 
 /** `8 hits on 3f9ad0c7  AWS creds honeytoken`: what the list below is. */
 function contextLine(count: number, ctx: RenderCtx): string {
   const noun = count === 1 ? "hit" : "hits";
   const shortId = safeText(ctx.keyId).slice(0, 8);
-  const lead = c.bold(`${count} ${noun} on ${shortId}`);
+  const lead = c.bold(`${ctx.more ? "Latest " : ""}${count} ${noun} on ${shortId}`);
   return ctx.key ? `${lead}  ${safeText(ctx.key.memo)}` : lead;
 }
 
@@ -231,7 +234,7 @@ function renderOne(h: Hit): void {
 
   const rows: KvRow[] = [
     ["at", formatStamp(h.occurred_at, { seconds: true })],
-    ["hit id", s(h.id)],
+    ["hit id", c.dim(s(h.id))],
   ];
   if (ctx) {
     if (ctx.source) rows.push(["source", s(ctx.source)]);
@@ -264,7 +267,7 @@ function renderOne(h: Hit): void {
     // x-mantis-* headers are the host context, already drawn as fields above.
     const lines = Object.entries(h.headers)
       .filter(([k]) => !(ctx && k.toLowerCase().startsWith("x-mantis-")))
-      .map(([k, v]) => `${c.dim(`${s(k)}:`)} ${s(v)}`);
+      .map(([k, v]) => c.dim(`${s(k)}: ${s(v)}`));
     if (lines.length > 0) rows.push(["headers", lines]);
   }
   w(kv(rows));

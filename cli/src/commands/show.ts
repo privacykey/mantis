@@ -65,6 +65,12 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
           ["status", key.disabled ? c.dim("disabled") : "active"],
           ["created", stamp(key.created_at)],
         ];
+        rows.push([
+          "notify",
+          key.destinations.length > 0
+            ? destinationLines(key.destinations)
+            : c.dim("none, hits are logged only"),
+        ]);
         if (key.expires_at) rows.push(["expires", stamp(key.expires_at)]);
         rows.push(["response", s(key.response_kind)]);
         rows.push(["kind", s(key.kind)]);
@@ -78,12 +84,6 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
               : `${mark("warn")} ${c.yellow("no clipboard command available")}`,
           ]);
         }
-        rows.push([
-          "destinations",
-          key.destinations.length > 0
-            ? destinationLines(key.destinations)
-            : c.dim("none, hits are logged only"),
-        ]);
         w(kv(rows));
         if (qr) w("\n" + qr);
       },

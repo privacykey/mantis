@@ -138,7 +138,7 @@ async function detail(
           const at = formatStamp(explained.windowExpiresAt.toISOString());
           rows.push([
             "clears",
-            `${when} ${c.dim(`${dot()} ${at}, when the oldest hit leaves the window`)}`,
+            `${when} ${c.dim(`${dot()} ${at}`)}`,
           ]);
         }
       }

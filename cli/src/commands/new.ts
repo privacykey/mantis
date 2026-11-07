@@ -9,7 +9,6 @@ import {
   type InstallType,
 } from "@mantis/core/installers";
 import {
-  maskSecretUrl,
   arrow,
   c,
   emit,
@@ -413,7 +412,7 @@ async function runWizard(opts: NewOpts): Promise<WizardResult> {
     await confirmLoop(
       p,
       () => printNewSummary(state),
-      ["memo", "installer", "response", "destinations", "expires", "clipboard"],
+      ["memo", "installer", "response", "notify", "expires", "clipboard"],
       (field) => editField(p, state, opts, field),
     );
 
@@ -508,7 +507,7 @@ async function askInstallerSubtree(
   if (!state.responseKind && isInstallType(state.install)) {
     state.responseKind = RESPONSE_FOR_INSTALL[state.install];
     note(
-      `${arrow.right()} Response set to ${state.responseKind}, which suits ${state.install}. Edit the key later to change it.`,
+      `${arrow.right()} Response set to ${state.responseKind}, which suits ${state.install} installers.`,
       "  ",
     );
   }
@@ -535,6 +534,7 @@ async function askDestinationsLoop(
 
   // First destination — "Add ...?" with default yes (most users want at least one).
   for (let i = 0; ; i++) {
+    if (i === 0) process.stderr.write("\n");
     const prompt = i === 0 ? "Add a notification destination?" : "Add another destination?";
     const yes = await askYesNo(p, prompt, i === 0);
     if (!yes) return;
@@ -604,6 +604,7 @@ async function askExpiry(
   state: WizardResult,
 ): Promise<void> {
   if (state.expiresAt !== undefined) return;
+  process.stderr.write("\n");
   const ans = (
     await askText(p, "Expires (ISO date)", { blank: "never" })
   ).trim();
@@ -628,13 +629,17 @@ function printNewSummary(state: WizardResult): void {
   }
   rows.push(["response", state.responseKind ?? "gif"]);
   if (state.destinations.length === 0) {
-    rows.push(["destinations", "none, so hits will only be logged"]);
+    rows.push(["notify", "none, so hits will only be logged"]);
   } else {
-    const width = Math.max(...state.destinations.map((d) => d.channel.length));
     rows.push([
-      "destinations",
-      state.destinations.map(
-        (d) => `${d.channel.padEnd(width)}  ${maskSecretUrl(d.target)}`,
+      "notify",
+      destinationLines(
+        state.destinations.map((d) => ({
+          channel: d.channel,
+          target: d.target,
+          last_activation_status: null,
+          last_activation_error: null,
+        })),
       ),
     ]);
   }
@@ -665,6 +670,7 @@ async function editField(
       state.responseKind = undefined;
       await askResponseKindPrompt(p, state);
       break;
+    case "notify":
     case "destinations":
       state.destinations = [];
       await askDestinationsLoop(p, state, opts);
