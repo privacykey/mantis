@@ -342,7 +342,7 @@ function padLeft(s: string, width: number): string {
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
-function stripAnsi(s: string): string {
+export function stripAnsi(s: string): string {
   // intentionally narrow: only strips the CSI sequences we emit. Any other
   // control byte is counted as visible, which is what it becomes once
   // truncate() / table() have escaped it.
@@ -554,11 +554,22 @@ export function formatStamp(
 /** formatTime() as a phrase: `4m ago`, `in 5m`, `now`. */
 export function formatAgo(iso: string | null | undefined): string {
   if (!iso) return "-";
-  const t = formatAge(iso);
-  return /^\d+[smhd]( \d+s)?$/.test(t) ? `${t} ago` : t;
+  const t = formatTime(iso);
+  if (!/^\d+[smhd]$/.test(t)) return t;
+  // In prose the seconds read as words: `3m 40s ago`, and a round `4m ago`.
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs >= 60_000 && diffMs < 600_000) {
+    const m = Math.floor(diffMs / 60_000);
+    const sec = Math.floor((diffMs % 60_000) / 1000);
+    return sec ? `${m}m ${sec}s ago` : `${m}m ago`;
+  }
+  return `${t} ago`;
 }
 
-/** formatTime() with seconds under ten minutes (`3m 40s`), for table cells. */
+/**
+ * formatTime() with seconds under ten minutes, in one fixed shape (`4m00s`,
+ * `3m40s`) so hits seconds apart differ and a column keeps one format.
+ */
 export function formatAge(iso: string | null | undefined): string {
   if (!iso) return "-";
   const t = formatTime(iso);
@@ -567,7 +578,7 @@ export function formatAge(iso: string | null | undefined): string {
   if (diffMs >= 60_000 && diffMs < 600_000) {
     const m = Math.floor(diffMs / 60_000);
     const sec = Math.floor((diffMs % 60_000) / 1000);
-    return sec ? `${m}m ${sec}s` : `${m}m`;
+    return `${m}m${String(sec).padStart(2, "0")}s`;
   }
   return t;
 }

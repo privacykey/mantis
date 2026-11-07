@@ -401,7 +401,7 @@ async function runWizard(opts: NewOpts): Promise<WizardResult> {
 
   const p = createPrompter();
   try {
-    process.stderr.write(c.bold("Create a new mantis key\n\n"));
+    process.stderr.write(`${c.bold("Create a new")} ${c.bold(c.green("mantis"))} ${c.bold("key")}\n\n`);
 
     await askMemo(p, state);
     await askInstallerOrResponse(p, state);

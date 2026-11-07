@@ -1,5 +1,6 @@
 import type { Hit, Key, MantisClient } from "../lib/api.js";
 import {
+  stripAnsi,
   heading,
   arrow,
   c,
@@ -198,7 +199,10 @@ function render(hits: Hit[], ctx: RenderCtx): void {
   if (hits.length === 0) {
     w(`${titled("No hits yet", ctx)}\n`);
     process.stderr.write(
-      hintLines(`Trigger the key URL, or watch with \`mantis hits ${ref} --follow\`.`),
+      hintLines(
+        `${arrow.right()} Trigger the key URL, or watch with \`mantis hits ${ref} --follow\`.`,
+        "  ",
+      ),
     );
     return;
   }
@@ -235,18 +239,20 @@ function renderOne(h: Hit): void {
   const lead = ctx
     ? hitWho({ ...h, host_context: { ...ctx, source: null } })
     : `${h.ip == null ? "unknown address" : c.bold(s(h.ip))} ${dot()} ${agentShort(h)}`;
-  w(`${lead} ${c.dim(`${dot()} ${formatAgo(h.occurred_at)} ${dot()} ${s(h.id).slice(0, 8)}`)}\n`);
+  const suffix = `${dot()} ${formatAgo(h.occurred_at)} ${dot()} ${s(h.id).slice(0, 8)}`;
+  // A duplicate's whole headline steps back, as its row does in the tables.
+  w(h.is_duplicate ? c.dim(`${stripAnsi(lead)} ${suffix}\n`) : `${lead} ${c.dim(suffix)}\n`);
 
   const rows: KvRow[] = [["at", formatStamp(h.occurred_at, { seconds: true })]];
-  if (ctx?.source) rows.push(["source", s(ctx.source)]);
-  if (ctx?.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
-  // Whether anyone was told comes before the rest of the context.
+  // Whether anyone was told comes right after when.
   if (h.is_duplicate) {
     rows.push(["duplicate", c.dim("yes, notifications suppressed")]);
   } else if (h.notifications.length > 0) {
     const room = termWidth() - (2 + KV_LABEL_WIDTH + 1);
     rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
+  if (ctx?.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
+  if (ctx?.source) rows.push(["source", s(ctx.source)]);
   if (ctx) {
     if (ctx.tty) rows.push(["tty", s(ctx.tty)]);
     if (ctx.sudo_cmd) rows.push(["sudo", s(ctx.sudo_cmd)]);

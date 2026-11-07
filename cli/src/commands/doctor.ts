@@ -306,8 +306,8 @@ function addPublicOnlyCheck(
       "warn",
       name,
       result.message,
-      `Public host: fix DNS or the tunnel, rerun \`mantis doctor\``,
-      `no answer from ${hostOnly(tried)} (${networkReason(result.code, result.message)})`,
+      `Both checks: fix DNS or the tunnel, rerun \`mantis doctor\``,
+      `${hostOnly(tried)}: ${networkReason(result.code, result.message)}`,
     );
     return;
   }

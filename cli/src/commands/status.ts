@@ -383,7 +383,7 @@ function explainTrip(
     }
     return {
       relevantHits: inWindow,
-      hitsLabel: `in the last ${formatDuration(key.monitor_window_seconds)}`,
+      hitsLabel: "in the window",
       emptyLabel: `No hits in the last ${formatDuration(key.monitor_window_seconds)}.`,
       windowExpiresAt,
     };

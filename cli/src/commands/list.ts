@@ -1,6 +1,7 @@
 import {
+  glyph,
+  arrow,
   cap,
-  mark,
   c,
   emit,
   fail,
@@ -31,7 +32,9 @@ export async function listCmd(opts: ListOpts): Promise<void> {
       () => {
         if (items.length === 0) {
           process.stdout.write("No keys yet.\n");
-          process.stderr.write(hintLines('Create one with `mantis new "first canary"`.'));
+          process.stderr.write(
+            hintLines(`${arrow.right()} Create one with \`mantis new "first canary"\`.`, "  "),
+          );
           return;
         }
         if (opts.idOnly) {
@@ -45,7 +48,7 @@ export async function listCmd(opts: ListOpts): Promise<void> {
         // The memo is whatever the key's creator typed — on an admin listing
         // that includes other API keys' holders — so escape it before cutting.
         // A key that notifies nobody only logs its hits, so its 0 is flagged.
-        const dest = (n: number) => (n > 0 ? String(n) : `${mark("warn")} 0`);
+        const dest = (n: number) => (n > 0 ? String(n) : c.warning(`${glyph("⚠", "!")} 0`));
         const status = (disabled: boolean) => (disabled ? "disabled" : "active");
         const wide = isWideMode();
         const rows = items.map((t) => {

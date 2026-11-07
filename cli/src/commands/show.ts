@@ -74,8 +74,7 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
         if (key.expires_at) rows.push(["expires", stamp(key.expires_at)]);
         rows.push(["response", c.dim(s(key.response_kind))]);
         rows.push(["kind", c.dim(s(key.kind))]);
-        rows.push(["id", c.dim(s(key.id))]);
-        rows.push(["public id", c.dim(s(key.public_id))]);
+        rows.push(["id", c.dim(`${s(key.id)} ${dot()} public ${s(key.public_id)}`)]);
         if (copied !== null) {
           rows.push([
             "clipboard",
