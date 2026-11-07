@@ -8,9 +8,10 @@ import {
   fitMiddle,
   KV_LABEL_WIDTH,
   mark,
+  maskSecretUrl,
   safeText,
   termWidth,
-  truncate,
+  wrapProse,
 } from "./out.js";
 
 export type DestinationLine = Pick<
@@ -34,18 +35,19 @@ export function destinationLines(destinations: DestinationLine[]): string[] {
         : d.last_activation_status === "failed"
           ? "fail"
           : "pending";
-    const note = state === "pending" ? `  ${c.dim("not activated yet")}` : "";
-    const target = fitMiddle(s(d.target), room - (note ? 19 : 0));
-    lines.push(`${mark(state)} ${s(d.channel).padEnd(channelWidth)}  ${target}${note}`);
+    // Every row ends in a state word, so the glyph never stands alone.
+    const word =
+      state === "ok" ? "activated" : state === "pending" ? "not activated yet" : "activation failed";
+    const target = fitMiddle(maskSecretUrl(s(d.target)), room - (word.length + 2));
+    const wordStyled = state === "fail" ? c.red(word) : c.dim(word);
+    lines.push(`${mark(state)} ${s(d.channel).padEnd(channelWidth)}  ${target}  ${wordStyled}`);
     if (state === "fail" && d.last_activation_error) {
+      // The reason wraps under the target on a terminal, whole on a pipe.
       const pad = " ".repeat(2 + channelWidth + 2);
-      // Cut to the line on a terminal; piped output keeps the whole reason.
-      const reason = `activation failed: ${s(d.last_activation_error)}`;
+      const reason = s(d.last_activation_error);
       const avail = termWidth() - (2 + KV_LABEL_WIDTH + 1) - pad.length;
-      const fitted = process.stdout.isTTY
-        ? truncate(reason, Math.max(20, avail))
-        : reason;
-      lines.push(`${pad}${c.red(fitted)}`);
+      const wrapped = process.stdout.isTTY ? wrapProse(reason, Math.max(20, avail)) : [reason];
+      for (const line of wrapped) lines.push(`${pad}${c.red(line)}`);
     }
   }
   return lines;

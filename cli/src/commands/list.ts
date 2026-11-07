@@ -5,7 +5,6 @@ import {
   formatTime,
   hintLines,
   isWideMode,
-  prose,
   safeText,
   table,
 } from "../lib/out.js";
@@ -29,9 +28,8 @@ export async function listCmd(opts: ListOpts): Promise<void> {
     emit(
       () => {
         if (items.length === 0) {
-          process.stdout.write(
-            prose('No keys yet. Create one with `mantis new "first canary"`.') + "\n",
-          );
+          process.stdout.write("No keys yet.\n");
+          process.stderr.write(hintLines('Create one with `mantis new "first canary"`.'));
           return;
         }
         if (opts.idOnly) {

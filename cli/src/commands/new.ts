@@ -9,6 +9,7 @@ import {
   type InstallType,
 } from "@mantis/core/installers";
 import {
+  maskSecretUrl,
   arrow,
   c,
   emit,
@@ -604,7 +605,7 @@ async function askExpiry(
 ): Promise<void> {
   if (state.expiresAt !== undefined) return;
   const ans = (
-    await askText(p, "Expires at, ISO timestamp", { blank: "never" })
+    await askText(p, "Expires (ISO date)", { blank: "never" })
   ).trim();
   if (ans) state.expiresAt = ans;
 }
@@ -632,7 +633,9 @@ function printNewSummary(state: WizardResult): void {
     const width = Math.max(...state.destinations.map((d) => d.channel.length));
     rows.push([
       "destinations",
-      state.destinations.map((d) => `${d.channel.padEnd(width)}  ${d.target}`),
+      state.destinations.map(
+        (d) => `${d.channel.padEnd(width)}  ${maskSecretUrl(d.target)}`,
+      ),
     ]);
   }
   rows.push(["expires", state.expiresAt ?? "never"]);

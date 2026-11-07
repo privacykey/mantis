@@ -142,15 +142,17 @@ export async function askChoice<T extends string>(
   for (;;) {
     const first = !choicesShown.has(label);
     choicesShown.add(label);
+    // Shown with hyphens (`home-assistant`); typed either way.
+    const shown = (x: string) => x.replace(/_/g, "-");
     const prompt = first
-      ? `${label} ${c.dim(`(${choices.join(", ")}) [${def}]`)}: `
-      : promptText(label, def);
-    const ans = (await p.ask(prompt)).toLowerCase();
-    if (!ans) echoAccepted(prompt, def);
+      ? `${label} ${c.dim(`(${choices.map(shown).join(", ")}) [${shown(def)}]`)}: `
+      : promptText(label, shown(def));
+    const ans = (await p.ask(prompt)).toLowerCase().replace(/-/g, "_");
+    if (!ans) echoAccepted(prompt, shown(def));
     const v = (ans || def) as T;
     if ((choices as readonly string[]).includes(v)) return v;
     choicesShown.delete(label);
-    warn(`Pick one of: ${choices.join(", ")}.`, indent);
+    warn(`Pick one of: ${choices.map(shown).join(", ")}.`, indent);
   }
 }
 

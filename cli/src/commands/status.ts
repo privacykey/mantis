@@ -152,7 +152,7 @@ async function detail(
         ]);
       }
       if (key.monitor_status_url) {
-        rows.push(["status URL", c.cyan(safeText(key.monitor_status_url))]);
+        rows.push(["status url", c.cyan(safeText(key.monitor_status_url))]);
       }
       w(kv(rows));
 
@@ -253,7 +253,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
     emit(
       () => {
         process.stdout.write(
-          `${mark("ok")} ${c.green("no monitored keys currently tripped")}\n`,
+          `${mark("ok")} ${c.bold("no monitored keys currently tripped")}\n`,
         );
       },
       { keys: [] },
@@ -280,7 +280,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
           ? tripped(`${trippedCount} of ${total} monitored ${keysWord} tripped`)
           : failed.length === total
             ? `${mark("warn")} ${c.yellow(`could not read the state of ${total} monitored ${keysWord}`)}`
-            : `${mark("ok")} ${c.green(total === 1 ? "the 1 monitored key is ok" : `all ${total} monitored keys are ok`)}`;
+            : `${mark("ok")} ${c.bold(total === 1 ? "the 1 monitored key is ok" : `all ${total} monitored keys are ok`)}`;
       process.stdout.write(`${verdict}\n\n`);
 
       const rows = ordered.map(({ key, status }) => {
@@ -409,7 +409,7 @@ function formatMode(key: Key): string {
 /** The state for a table cell: a mark and a word, nothing that can be cut. */
 function formatState(status: ResolvedStatus): string {
   if (status.status === "tripped") return tripped();
-  if (status.status === "ok") return `${mark("ok")} ${c.green("ok")}`;
+  if (status.status === "ok") return `${mark("ok")} ok`;
   if (status.status === "off") return `${mark("none")} ${c.dim("not monitored")}`;
   if (status.status === "error") {
     return `${mark("warn")} ${c.yellow(`unavailable: ${safeText(status.error)}`)}`;

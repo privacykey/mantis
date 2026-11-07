@@ -39,6 +39,8 @@ export const c = {
   magenta: wrap(35),
   cyan: wrap(36),
   alarm: wrap("1;31"),
+  /** Table headers: quiet and underlined, so the rows lead. */
+  header: wrap("2;4"),
 };
 
 /** Whether styled output is on for this emission (flag, env, then TTY). */
@@ -282,7 +284,7 @@ export function table(
         return i === last && !right ? fitted.trimEnd() : fitted;
       })
       .join("  ");
-  const header = headers ? c.bold(fmt(columns)) : "";
+  const header = headers ? fmt(columns.map((name) => c.header(name))) : "";
   const body = bodyRows
     .map((row, i) => {
       const style = opts.rowStyle?.(i);
@@ -485,7 +487,7 @@ export function proseWidth(
   stream: { isTTY?: boolean; columns?: number } = process.stdout,
 ): number {
   if (!stream.isTTY) return Number.MAX_SAFE_INTEGER;
-  return Math.max(40, Math.min(stream.columns ?? 80, 80));
+  return Math.max(40, Math.min(stream.columns ?? 80, 100));
 }
 
 /**
@@ -613,6 +615,29 @@ export function fitMiddle(s: string, max: number): string {
   const tail = Math.min(6, Math.floor((max - ell.length) / 3));
   const head = max - ell.length - tail;
   return `${plain.slice(0, head)}${ell}${plain.slice(plain.length - tail)}`;
+}
+
+/**
+ * A destination target with its secret hidden, on a terminal: the host and
+ * the last six characters of a path that carries a token
+ * (`hooks.slack.com/…6Lw0Zs`). A target without a token-like path segment
+ * stays whole, and so does every target when output is piped or --json.
+ */
+export function maskSecretUrl(target: string): string {
+  if (!process.stdout.isTTY) return target;
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return target;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return target;
+  const segments = url.pathname.split("/").filter(Boolean);
+  const tokenLike = (seg: string) =>
+    seg.length >= 20 || (seg.length >= 8 && /\d/.test(seg) && !/[-_.]/.test(seg));
+  if (!segments.some(tokenLike)) return target;
+  const path = url.pathname.replace(/\/+$/, "");
+  return `${url.host}/${glyph("…", "...")}${path.slice(-6)}`;
 }
 
 /** Terminal width for layout that should use the room it has. */

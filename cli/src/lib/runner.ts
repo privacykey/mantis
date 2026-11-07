@@ -120,6 +120,11 @@ export async function withClient<T>(
 /** "fetch failed" in the operator's terms: which server, and why. */
 function unreachable(server: string, err: unknown, message: string): string {
   const code = err instanceof RequestNetworkError ? err.code : undefined;
+  return `cannot reach ${server} (${networkReason(code, message)})`;
+}
+
+/** A system error code in the operator's words; the raw message otherwise. */
+export function networkReason(code: string | undefined, fallback: string): string {
   const reasons: Record<string, string> = {
     ECONNREFUSED: "connection refused",
     ENOTFOUND: "host not found",
@@ -127,8 +132,7 @@ function unreachable(server: string, err: unknown, message: string): string {
     ETIMEDOUT: "timed out",
     ECONNRESET: "connection reset",
   };
-  const why = (code && reasons[code]) ?? code ?? message;
-  return `cannot reach ${server} (${why})`;
+  return (code && reasons[code]) ?? code ?? fallback;
 }
 
 function apiExitCode(status: number): number {
@@ -178,7 +182,7 @@ function apiHint(err: ApiError): string {
 
 function genericHint(message: string): string {
   if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET/i.test(message)) {
-    return ". Check `mantis whoami`, pass --base-url, or verify the server is reachable";
+    return ". Check `mantis whoami`, pass `--base-url`, or verify the server is reachable";
   }
   if (/cloudflared|Cloudflare Access/i.test(message)) {
     return ". Run `mantis cloudflare status` for auth details";

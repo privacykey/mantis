@@ -19,7 +19,7 @@ import {
   mark,
   safeText,
 } from "../lib/out.js";
-import type { GlobalOpts } from "../lib/runner.js";
+import { networkReason, type GlobalOpts } from "../lib/runner.js";
 import { CLI_VERSION } from "../version.js";
 
 export type DoctorOpts = GlobalOpts & {
@@ -34,7 +34,7 @@ type Check = {
 };
 
 /** A check plus wording that only the terminal view uses; --json omits it. */
-type ShownCheck = Check & { shown?: string };
+type ShownCheck = Check & { shown?: string; skipped?: boolean };
 
 export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   const checks: ShownCheck[] = [];
@@ -45,6 +45,9 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
     hint?: string,
     shown?: string,
   ) => checks.push({ status, name, detail, hint, shown });
+  // Nothing to check here: still "ok" to --json, drawn as skipped on a terminal.
+  const skip = (name: string, detail: string) =>
+    checks.push({ status: "ok", name, detail, skipped: true });
 
   const selectedProfile = opts.baseUrl
     ? undefined
@@ -115,7 +118,7 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
       }
     }
   } else {
-    add("ok", "cloudflare access", "not configured for this profile");
+    skip("cloudflare access", "not configured for this profile");
   }
 
   let samplePublicOrigin = normalizeUrl(opts.publicUrl);
@@ -145,7 +148,9 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             `cli ${CLI_VERSION}, server ${health.version}`,
             health.version === CLI_VERSION
               ? undefined
-              : "Upgrade the older side when convenient",
+              : compareVersions(CLI_VERSION, health.version) < 0
+                ? "The CLI is older: `brew upgrade mantis` or `npm i -g @mantis/cli`"
+                : "The server is older: upgrade it when convenient",
           );
         }
       } catch (err) {
@@ -205,10 +210,14 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
       const nameWidth = Math.max(...checks.map((ch) => ch.name.length));
       const under = " ".repeat(2 + nameWidth + 2);
       checks.forEach((check, i) => {
-        const kind = check.status === "ok" ? "ok" : check.status;
         // Details quote the server (health fields, error strings) and config.
         const detail = safeText(check.shown ?? check.detail);
         const name = safeText(check.name).padEnd(nameWidth);
+        if (check.skipped) {
+          w(`${mark("none")} ${c.dim(name)}  ${c.dim(`skipped: ${detail}`)}\n`);
+          return;
+        }
+        const kind = check.status === "ok" ? "ok" : check.status;
         w(`${mark(kind)} ${check.status === "ok" ? name : c.bold(name)}  ${detail}\n`);
         // Checks that fail the same way share one hint, under the last of them.
         if (check.hint && checks[i + 1]?.hint !== check.hint) {
@@ -216,16 +225,19 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
         }
       });
       const count = (status: Check["status"]) =>
-        checks.filter((ch) => ch.status === status).length;
+        checks.filter((ch) => ch.status === status && !ch.skipped).length;
       const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
       const failed = count("fail");
       const warned = count("warn");
+      const skipped = checks.filter((ch) => ch.skipped).length;
       const parts = [`${count("ok")} passed`];
+      if (skipped) parts.push(`${skipped} skipped`);
       if (warned) parts.push(plural(warned, "warning"));
       if (failed) parts.push(`${failed} failed`);
       const verdict = parts.join(", ");
-      const color = failed ? c.red : warned ? c.yellow : c.green;
-      w(`\n${mark(failed ? "fail" : warned ? "warn" : "ok")} ${c.bold(color(verdict))}\n`);
+      // The mark carries the colour; a failure is the alarm and stays red.
+      const styled = failed ? c.alarm(verdict) : c.bold(verdict);
+      w(`\n${mark(failed ? "fail" : warned ? "warn" : "ok")} ${styled}\n`);
     },
     {
       ok,
@@ -272,16 +284,22 @@ function addPublicOnlyCheck(
     shown?: string,
   ) => number,
   name: string,
-  result: { ok: true; status: number } | { ok: false; message: string },
+  result: { ok: true; status: number } | { ok: false; message: string; code?: string },
   tried: string,
 ): void {
   if (!result.ok) {
+    let host = tried;
+    try {
+      host = new URL(tried).host;
+    } catch {
+      // keep the URL as typed
+    }
     add(
       "warn",
       name,
       result.message,
-      "Could not verify the public-only host",
-      `no answer from ${tried} (${result.message})`,
+      `Check DNS and the tunnel for ${host}`,
+      `no answer from ${tried} (${networkReason(result.code, result.message)})`,
     );
     return;
   }
@@ -301,7 +319,9 @@ async function fetchPublic(
   origin: string,
   path: string,
   timeoutMs = 5000,
-): Promise<{ ok: true; status: number } | { ok: false; message: string }> {
+): Promise<
+  { ok: true; status: number } | { ok: false; message: string; code?: string }
+> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -311,13 +331,32 @@ async function fetchPublic(
     });
     return { ok: true, status: res.status };
   } catch (err) {
+    const cause = (err as { cause?: { code?: unknown } }).cause;
+    const code =
+      err instanceof Error && err.name === "AbortError"
+        ? "ETIMEDOUT"
+        : typeof cause?.code === "string"
+          ? cause.code
+          : undefined;
     return {
       ok: false,
       message: err instanceof Error ? err.message : String(err),
+      code,
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Numeric compare of `x.y.z` strings: negative when a is older than b. */
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => v.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const [pa, pb] = [parse(a), parse(b)];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 function normalizeUrl(raw: string | undefined): string | undefined {

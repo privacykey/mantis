@@ -13,12 +13,14 @@ import {
   dot,
   fitMiddle,
   formatTime,
+  glyph,
   mark,
   type Mark,
+  maskSecretUrl,
   safeText,
   table,
   termWidth,
-  truncate,
+  wrapProse,
 } from "./out.js";
 
 type HostCtx = NonNullable<Hit["host_context"]>;
@@ -38,12 +40,13 @@ function identity(ctx: HostCtx): string | null {
  * `deploy@bastion-01 ← 203.0.113.57 (shell)`. The identity is the part to
  * read first, so it is the only bold part.
  */
-export function hitWho(h: Hit): string {
+export function hitWho(h: Hit, opts: { omitFrom?: string | null } = {}): string {
   const ctx = h.host_context;
   if (!ctx) return agentShort(h);
   const who = identity(ctx);
   const parts: string[] = [];
-  if (ctx.ssh_client_ip) {
+  // `omitFrom` is an address shown beside this cell already (the ip column).
+  if (ctx.ssh_client_ip && ctx.ssh_client_ip !== opts.omitFrom) {
     parts.push(`${arrow.left()} ${safeText(ctx.ssh_client_ip)}`);
   }
   const facts: string[] = [];
@@ -76,9 +79,31 @@ export function agentShort(h: Hit): string {
   const ua = safeText(h.user_agent);
   if (h.bot_label) {
     const token = botToken(ua, safeText(h.bot_label));
-    if (token) return token;
+    if (token) return productForm(token) ?? token;
   }
-  return ua ? truncate(ua, 48) : c.dim("unknown");
+  if (!ua) return c.dim(glyph("–", "-"));
+  return productForm(ua) ?? cutOnWord(ua, 48);
+}
+
+/**
+ * `aws-cli/2.31.4 md/awscrt#0.27.6 ua/2.1 os/linux#6.8 …` as
+ * `aws-cli 2.31.4 · linux`, the form browsers already take; null when the
+ * agent does not open with a product token (or opens with `Mozilla/5.0`).
+ */
+function productForm(ua: string): string | null {
+  const product = /^([A-Za-z][\w.-]*)\/(\d[\w.-]*)/.exec(ua);
+  if (!product || product[1]!.toLowerCase() === "mozilla") return null;
+  const os = /(?:^|\s)os\/([A-Za-z]+)/.exec(ua)?.[1];
+  return `${product[1]} ${product[2]}${os ? ` ${dot()} ${os}` : ""}`;
+}
+
+/** Cut a long string at a word boundary, with an ellipsis. */
+function cutOnWord(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const ell = glyph("…", "...");
+  const space = s.lastIndexOf(" ", max - ell.length);
+  const cut = space > max / 2 ? space : max - ell.length;
+  return `${s.slice(0, cut)}${ell}`;
 }
 
 /** The caller's software in full, for one hit's detail. */
@@ -108,26 +133,16 @@ const NOTIFY_MARK: Record<NotificationSummary["status"], Mark> = {
   aborted: "none",
 };
 
-const NOTIFY_WORD: Record<NotificationSummary["status"], string> = {
-  succeeded: "delivered",
-  failed: "failed",
-  pending: "pending",
-  in_flight: "sending",
-  aborted: "aborted",
-};
-
 /** Delivery of one hit's notifications as counts: `✓2 ✗1 …1`. */
 export function deliveryCell(h: Hit): string {
-  if (h.is_duplicate) return c.dim("suppressed");
-  if (h.notifications.length === 0) return c.dim("none");
+  // A duplicate is tagged in its own column; nothing was sent for it.
+  if (h.is_duplicate || h.notifications.length === 0) return mark("none");
   const count = (kind: Mark) =>
     h.notifications.filter((n) => NOTIFY_MARK[n.status] === kind).length;
   const parts: string[] = [];
   for (const kind of ["ok", "fail", "pending"] as const) {
     const n = count(kind);
-    if (!n) continue;
-    const color = kind === "ok" ? c.green : kind === "fail" ? c.red : c.yellow;
-    parts.push(`${mark(kind)}${color(String(n))}`);
+    if (n) parts.push(`${mark(kind)}${n}`);
   }
   return parts.join(" ") || c.dim("aborted");
 }
@@ -144,8 +159,8 @@ export function hitsTable(hits: Hit[]): string {
   const rows = hits.map((h, i) => {
     const row = [
       formatTime(h.occurred_at),
-      h.ip == null ? c.dim("unknown") : safeText(h.ip),
-      hitWho(h),
+      h.ip == null ? mark("none") : safeText(h.ip),
+      hitWho(h, { omitFrom: h.ip }),
     ];
     if (showTag) row.push(tags[i]!);
     row.push(deliveryCell(h));
@@ -167,10 +182,35 @@ export function deliveryLegend(hits: Hit[]): string {
     if (h.is_duplicate) continue;
     for (const n of h.notifications) seen.add(NOTIFY_MARK[n.status]);
   }
+  // Rows of plain ✓ need no legend; once a ✗ or … appears, explain all three.
+  if (!seen.has("fail") && !seen.has("pending")) return "";
   const parts: string[] = [];
+  if (seen.has("ok")) parts.push(`${mark("ok")} ${c.dim("delivered")}`);
   if (seen.has("fail")) parts.push(`${mark("fail")} ${c.dim("failed")}`);
   if (seen.has("pending")) parts.push(`${mark("pending")} ${c.dim("pending")}`);
   return parts.join("  ");
+}
+
+/** `delivered on attempt 1`, `failed after 5 attempts`, `pending, attempt 2 of 5`. */
+function deliveryState(n: NotificationSummary): string {
+  const a = n.attempts;
+  const m = n.max_attempts;
+  const ofMax = a > 0 && m > 0 ? `, attempt ${a} of ${m}` : "";
+  switch (n.status) {
+    case "succeeded":
+      return a > 0 ? `delivered on attempt ${a}` : "delivered";
+    case "failed":
+      if (a > 0 && m > 0 && a >= m) return `failed after ${a} attempt${a === 1 ? "" : "s"}`;
+      return `failed${ofMax}`;
+    case "pending":
+      return `pending${ofMax}`;
+    case "in_flight":
+      return `sending${ofMax}`;
+    case "aborted":
+      return "aborted";
+    default:
+      return safeText(n.status);
+  }
 }
 
 /**
@@ -187,15 +227,10 @@ export function deliveryLines(
   );
   const lines: string[] = [];
   for (const n of notifications) {
-    const word = NOTIFY_WORD[n.status] ?? safeText(n.status);
-    const attempts =
-      n.attempts > 0
-        ? `, attempt ${safeText(n.attempts)} of ${safeText(n.max_attempts)}`
-        : "";
-    const state = `${word}${attempts}`;
+    const state = deliveryState(n);
     const target =
       n.target != null
-        ? safeText(n.target)
+        ? maskSecretUrl(safeText(n.target))
         : n.destination_scope === "global"
           ? "(global destination)"
           : "(destination removed)";
@@ -206,13 +241,13 @@ export function deliveryLines(
       `${lead}${fitMiddle(target, room - used)}  ${stateColor(state)}`,
     );
     if (n.last_error) {
+      // The reason wraps under the target on a terminal, whole on a pipe.
       const pad = " ".repeat(2 + channelWidth + 2);
-      // Cut to the line on a terminal; piped output keeps the whole reason.
       const reason = safeText(n.last_error);
-      const fitted = process.stdout.isTTY
-        ? truncate(reason, Math.max(20, room - pad.length))
-        : reason;
-      lines.push(`${pad}${c.red(fitted)}`);
+      const wrapped = process.stdout.isTTY
+        ? wrapProse(reason, Math.max(20, room - pad.length))
+        : [reason];
+      for (const line of wrapped) lines.push(`${pad}${c.red(line)}`);
     }
   }
   return lines;

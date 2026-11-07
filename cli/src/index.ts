@@ -134,7 +134,7 @@ function commandRows(rows: [command: string, what: string][]): string {
   return rows
     .map(
       ([command, what]) =>
-        `  ${cmd(command)}${" ".repeat(width - command.length)}   ${c.dim(what)}\n`,
+        `  ${cmd(command)}${" ".repeat(width - command.length)}   ${what}\n`,
     )
     .join("");
 }

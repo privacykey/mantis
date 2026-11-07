@@ -62,7 +62,7 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
           `${formatStamp(iso)} ${c.dim(`${dot()} ${formatAgo(iso)}`)}`;
         const rows: KvRow[] = [
           ["url", c.cyan(s(key.url))],
-          ["status", key.disabled ? `${mark("none")} disabled` : `${mark("ok")} active`],
+          ["status", key.disabled ? c.dim("disabled") : "active"],
           ["created", stamp(key.created_at)],
         ];
         if (key.expires_at) rows.push(["expires", stamp(key.expires_at)]);

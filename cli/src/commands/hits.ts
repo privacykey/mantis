@@ -182,11 +182,11 @@ function contextLine(count: number, ctx: RenderCtx): string {
 
 function render(hits: Hit[], ctx: RenderCtx): void {
   const w = process.stdout.write.bind(process.stdout);
-  const ref = safeText(ctx.ref);
+  // Footers name the resolved short id, whatever the operator typed.
+  const ref = safeText(ctx.keyId).slice(0, 8);
   if (hits.length === 0) {
-    const shortId = safeText(ctx.keyId).slice(0, 8);
     const memo = ctx.key ? `  ${safeText(ctx.key.memo)}` : "";
-    w(`No hits yet on ${c.bold(shortId)}${memo}\n`);
+    w(`No hits yet on ${c.bold(ref)}${memo}\n`);
     process.stderr.write(
       hintLines(
         `Trigger the key URL, or watch for the first one with \`mantis hits ${ref} --follow\`.`,
@@ -235,7 +235,7 @@ function renderOne(h: Hit): void {
   ];
   if (ctx) {
     if (ctx.source) rows.push(["source", s(ctx.source)]);
-    if (ctx.ssh_connection) rows.push(["ssh", sshRoute(ctx.ssh_connection)]);
+    if (ctx.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
     if (ctx.tty) rows.push(["tty", s(ctx.tty)]);
     if (ctx.sudo_cmd) rows.push(["sudo", s(ctx.sudo_cmd)]);
     if (ctx.network_interface) rows.push(["interface", s(ctx.network_interface)]);
@@ -261,9 +261,10 @@ function renderOne(h: Hit): void {
     rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
   if (h.headers && !isJsonMode()) {
-    const lines = Object.entries(h.headers).map(
-      ([k, v]) => `${c.dim(`${s(k)}:`)} ${s(v)}`,
-    );
+    // x-mantis-* headers are the host context, already drawn as fields above.
+    const lines = Object.entries(h.headers)
+      .filter(([k]) => !(ctx && k.toLowerCase().startsWith("x-mantis-")))
+      .map(([k, v]) => `${c.dim(`${s(k)}:`)} ${s(v)}`);
     if (lines.length > 0) rows.push(["headers", lines]);
   }
   w(kv(rows));
