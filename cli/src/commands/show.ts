@@ -72,8 +72,8 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
             : c.dim("none, hits are logged only"),
         ]);
         if (key.expires_at) rows.push(["expires", stamp(key.expires_at)]);
-        rows.push(["response", s(key.response_kind)]);
-        rows.push(["kind", s(key.kind)]);
+        rows.push(["response", c.dim(s(key.response_kind))]);
+        rows.push(["kind", c.dim(s(key.kind))]);
         rows.push(["id", c.dim(s(key.id))]);
         rows.push(["public id", c.dim(s(key.public_id))]);
         if (copied !== null) {

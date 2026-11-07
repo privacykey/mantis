@@ -297,7 +297,8 @@ describe("hostile API strings stay inert in human output", () => {
       expect(out).toContain("x-evil\\u001b[0m:");
       expect(out).toContain("rm -rf /\\u001b[1A");
     } else {
-      expect(out).toContain("shell\\u001bc");
+      // The bot tag takes the tag column, so the table shows the host, not the source.
+      expect(out).toContain("root@web-01\\u009b2J");
     }
   });
 

@@ -247,12 +247,10 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
       const skipped = checks.filter((ch) => ch.skipped).length;
       const parts = [`${count("ok")} passed`];
       if (skipped) parts.push(`${skipped} skipped`);
-      if (warned) parts.push(plural(warned, "warning"));
-      if (failed) parts.push(`${failed} failed`);
-      const verdict = parts.join(", ");
-      // The mark carries the colour; a failure is the alarm and stays red.
-      const styled = failed ? c.alarm(verdict) : c.bold(verdict);
-      w(`\n${mark(failed ? "fail" : warned ? "warn" : "ok")} ${styled}\n`);
+      // The counts that need acting on carry the colour; the rest stay quiet.
+      if (warned) parts.push(c.warning(plural(warned, "warning")));
+      if (failed) parts.push(c.alarm(`${failed} failed`));
+      w(`\n${mark(failed ? "fail" : warned ? "warn" : "ok")} ${parts.join(", ")}\n`);
     },
     {
       ok,
@@ -307,7 +305,7 @@ function addPublicOnlyCheck(
       "warn",
       name,
       result.message,
-      `Check DNS and the tunnel, then rerun \`mantis doctor\``,
+      `Public host: check DNS and the tunnel, then rerun \`mantis doctor\``,
       `no answer from ${hostOnly(tried)} (${networkReason(result.code, result.message)})`,
     );
     return;

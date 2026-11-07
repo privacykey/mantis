@@ -39,6 +39,8 @@ export const c = {
   magenta: wrap(35),
   cyan: wrap(36),
   alarm: wrap("1;31"),
+  /** A warning count that must be seen: bold yellow. */
+  warning: wrap("1;33"),
   /** Table headers: quiet and underlined, so the rows lead. */
   header: wrap("2;4"),
 };
@@ -678,6 +680,14 @@ export function withoutRepeat(reason: string, target: string): string {
     out = out.replace(new RegExp(`\\s(?:for|to|from|at)\\s${esc}(?=[\\s).,;:]|$)`), "");
   }
   return out;
+}
+
+/**
+ * A table cell cut to `max` on a terminal, so one long value does not push
+ * every column to the right; piped output keeps the whole value.
+ */
+export function cap(s: string, max: number): string {
+  return process.stdout.isTTY ? truncate(s, max) : s;
 }
 
 /** Terminal width for layout that should use the room it has. */

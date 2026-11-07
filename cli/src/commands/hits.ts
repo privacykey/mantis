@@ -1,5 +1,6 @@
 import type { Hit, Key, MantisClient } from "../lib/api.js";
 import {
+  heading,
   arrow,
   c,
   dot,
@@ -178,9 +179,16 @@ type RenderCtx = {
 /** `8 hits on 3f9ad0c7  AWS creds honeytoken`: what the list below is. */
 function contextLine(count: number, ctx: RenderCtx): string {
   const noun = count === 1 ? "hit" : "hits";
+  const lead = `${ctx.more ? "Latest " : ""}${count} ${noun}`;
+  return titled(lead, ctx);
+}
+
+/** `8 hits · <memo>  <id>`: the same heading show and status use, after a plain prefix. */
+function titled(lead: string, ctx: RenderCtx): string {
   const shortId = safeText(ctx.keyId).slice(0, 8);
-  const lead = c.bold(`${ctx.more ? "Latest " : ""}${count} ${noun} on ${shortId}`);
-  return ctx.key ? `${lead}  ${safeText(ctx.key.memo)}` : lead;
+  return ctx.key
+    ? `${lead} ${dot()} ${heading(safeText(ctx.key.memo), shortId)}`
+    : `${lead} on ${c.bold(shortId)}`;
 }
 
 function render(hits: Hit[], ctx: RenderCtx): void {
@@ -188,12 +196,9 @@ function render(hits: Hit[], ctx: RenderCtx): void {
   // Footers name the resolved short id, whatever the operator typed.
   const ref = safeText(ctx.keyId).slice(0, 8);
   if (hits.length === 0) {
-    const memo = ctx.key ? `  ${safeText(ctx.key.memo)}` : "";
-    w(`No hits yet on ${c.bold(ref)}${memo}\n`);
+    w(`${titled("No hits yet", ctx)}\n`);
     process.stderr.write(
-      hintLines(
-        `Trigger the key URL, or watch for the first one with \`mantis hits ${ref} --follow\`.`,
-      ),
+      hintLines(`Trigger the key URL, or watch with \`mantis hits ${ref} --follow\`.`),
     );
     return;
   }
@@ -237,7 +242,7 @@ function renderOne(h: Hit): void {
   if (ctx?.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
   // Whether anyone was told comes before the rest of the context.
   if (h.is_duplicate) {
-    rows.push(["duplicate", "yes, notifications suppressed"]);
+    rows.push(["duplicate", c.dim("yes, notifications suppressed")]);
   } else if (h.notifications.length > 0) {
     const room = termWidth() - (2 + KV_LABEL_WIDTH + 1);
     rows.push(["delivery", deliveryLines(h.notifications, room)]);

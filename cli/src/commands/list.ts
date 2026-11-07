@@ -1,4 +1,5 @@
 import {
+  cap,
   mark,
   c,
   emit,
@@ -48,7 +49,7 @@ export async function listCmd(opts: ListOpts): Promise<void> {
         const status = (disabled: boolean) => (disabled ? "disabled" : "active");
         const wide = isWideMode();
         const rows = items.map((t) => {
-          const row = [wide ? safeText(t.id) : safeText(t.id).slice(0, 8), safeText(t.memo)];
+          const row = [wide ? safeText(t.id) : safeText(t.id).slice(0, 8), cap(safeText(t.memo), 40)];
           if (wide) row.push(safeText(t.url));
           row.push(formatTime(t.created_at), dest(t.destinations.length), status(t.disabled));
           return row;

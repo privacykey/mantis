@@ -111,6 +111,8 @@ export async function askUrl(
       if (ans) echoMasked(prompt, maskSecretUrl(v));
       return v;
     }
+    // A rejected answer steps back before the ✗ line explains why.
+    if (ans) echoMasked(prompt, c.dim(ans));
     warn("The URL must start with https://", indent);
   }
 }
@@ -145,10 +147,6 @@ export async function askYesNo(
   return defaultYes;
 }
 
-// A list of choices is spelled out the first time it is asked for; a repeat
-// of the same question (a second destination) only needs the default.
-const choicesShown = new Set<string>();
-
 /** Choice from a fixed list. Re-prompts on invalid input. */
 export async function askChoice<T extends string>(
   p: Prompter,
@@ -157,19 +155,17 @@ export async function askChoice<T extends string>(
   def: T,
 ): Promise<T> {
   const indent = /^\s*/.exec(label)![0];
+  // Shown with hyphens (`home-assistant`); typed either way.
+  const shown = (x: string) => x.replace(/_/g, "-");
   for (;;) {
-    const first = !choicesShown.has(label);
-    choicesShown.add(label);
-    // Shown with hyphens (`home-assistant`); typed either way.
-    const shown = (x: string) => x.replace(/_/g, "-");
-    const prompt = first
-      ? `${label} ${c.dim(`(${choices.map(shown).join(", ")}) [${shown(def)}]`)}: `
-      : promptText(label, shown(def));
+    // The choices sit on their own dim line, so the prompt reads the same
+    // every time it is asked and never runs wide.
+    process.stderr.write(`${indent}${c.dim(`one of: ${choices.map(shown).join(", ")}`)}\n`);
+    const prompt = promptText(label, shown(def));
     const ans = (await p.ask(prompt)).toLowerCase().replace(/-/g, "_");
     if (!ans) echoAccepted(prompt, shown(def));
     const v = (ans || def) as T;
     if ((choices as readonly string[]).includes(v)) return v;
-    choicesShown.delete(label);
     warn(`Pick one of: ${choices.map(shown).join(", ")}.`, indent);
   }
 }

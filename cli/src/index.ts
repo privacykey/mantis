@@ -261,7 +261,7 @@ program
       ["mantis status", "which keys have tripped"],
       ["mantis list", "every key"],
       ["mantis hits last --follow", "hits on your newest key, as they arrive"],
-      ['mantis new "my first key"', "create a key"],
+      ['mantis new "first canary"', "create a key"],
     ];
     if (hasEdge) rows.push(["mantis edge mint", "create a stateless edge URL"]);
     rows.push(["mantis doctor", "check the server and your login"]);

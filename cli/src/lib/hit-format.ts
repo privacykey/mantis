@@ -41,7 +41,10 @@ function identity(ctx: HostCtx): string | null {
  * `deploy@bastion-01 ← 203.0.113.57 (shell)`. The identity is the part to
  * read first, so it is the only bold part.
  */
-export function hitWho(h: Hit, opts: { omitFrom?: string | null } = {}): string {
+export function hitWho(
+  h: Hit,
+  opts: { omitFrom?: string | null; omitSource?: boolean } = {},
+): string {
   const ctx = h.host_context;
   if (!ctx) return agentShort(h);
   const who = identity(ctx);
@@ -58,7 +61,7 @@ export function hitWho(h: Hit, opts: { omitFrom?: string | null } = {}): string 
   if (ctx.iot_mac) facts.push(safeText(ctx.iot_mac));
   const lead = [who ? c.bold(who) : "", ...parts].filter(Boolean).join(" ");
   const body = [lead, ...facts].filter(Boolean).join(` ${dot()} `);
-  const source = ctx.source ? c.dim(`(${safeText(ctx.source)})`) : "";
+  const source = ctx.source && !opts.omitSource ? c.dim(`(${safeText(ctx.source)})`) : "";
   return [body, source].filter(Boolean).join(" ") || agentShort(h);
 }
 
@@ -123,7 +126,9 @@ function tagCell(h: Hit): string {
     const named = botToken(safeText(h.user_agent), label) !== null;
     return named ? "bot" : `bot: ${label}`;
   }
-  return h.is_duplicate ? "duplicate" : "";
+  if (h.is_duplicate) return "duplicate";
+  // In a table the source is a tag, so the who cell stays short.
+  return h.host_context?.source ? safeText(h.host_context.source) : "";
 }
 
 const NOTIFY_MARK: Record<NotificationSummary["status"], Mark> = {
@@ -158,11 +163,12 @@ export function hitsTable(hits: Hit[]): string {
   const tags = hits.map(tagCell);
   const showTag = tags.some(Boolean);
   const rows = hits.map((h, i) => {
+    // A failed delivery is flagged at the row's left edge, mark and colour.
     const failed = h.notifications.some((n) => n.status === "failed");
     const row = [
-      failed ? c.red(formatTime(h.occurred_at)) : formatTime(h.occurred_at),
+      failed ? `${mark("fail")} ${c.red(formatTime(h.occurred_at))}` : formatTime(h.occurred_at),
       h.ip == null ? mark("none") : safeText(h.ip),
-      hitWho(h, { omitFrom: h.ip }),
+      hitWho(h, { omitFrom: h.ip, omitSource: true }),
     ];
     if (showTag) row.push(tags[i]!);
     row.push(deliveryCell(h));
