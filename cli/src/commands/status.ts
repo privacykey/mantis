@@ -1,5 +1,6 @@
 import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
 import {
+  memoWidth,
   formatAge,
   cap,
   c,
@@ -288,7 +289,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
       const rows = ordered.map(({ key, status }) => {
         const loud = status.status === "tripped";
         const id = shortId(key.id);
-        const memo = cap(safeText(key.memo), 40);
+        const memo = cap(safeText(key.memo), memoWidth(44));
         return [
           loud ? c.bold(id) : id,
           loud ? c.bold(memo) : memo,

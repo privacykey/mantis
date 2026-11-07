@@ -1,4 +1,6 @@
 import {
+  memoWidth,
+  mark,
   glyph,
   arrow,
   cap,
@@ -49,10 +51,14 @@ export async function listCmd(opts: ListOpts): Promise<void> {
         // that includes other API keys' holders — so escape it before cutting.
         // A key that notifies nobody only logs its hits, so its 0 is flagged.
         const dest = (n: number) => (n > 0 ? String(n) : c.warning(`${glyph("⚠", "!")} 0`));
-        const status = (disabled: boolean) => (disabled ? "disabled" : "active");
+        const status = (disabled: boolean) =>
+          disabled ? `${mark("none")} disabled` : `${mark("ok")} active`;
         const wide = isWideMode();
         const rows = items.map((t) => {
-          const row = [wide ? safeText(t.id) : safeText(t.id).slice(0, 8), cap(safeText(t.memo), 40)];
+          const row = [
+            wide ? safeText(t.id) : safeText(t.id).slice(0, 8),
+            cap(safeText(t.memo), memoWidth(wide ? 80 : 40)),
+          ];
           if (wide) row.push(safeText(t.url));
           row.push(formatTime(t.created_at), dest(t.destinations.length), status(t.disabled));
           return row;

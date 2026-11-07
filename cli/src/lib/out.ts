@@ -554,21 +554,13 @@ export function formatStamp(
 /** formatTime() as a phrase: `4m ago`, `in 5m`, `now`. */
 export function formatAgo(iso: string | null | undefined): string {
   if (!iso) return "-";
-  const t = formatTime(iso);
-  if (!/^\d+[smhd]$/.test(t)) return t;
-  // In prose the seconds read as words: `3m 40s ago`, and a round `4m ago`.
-  const diffMs = Date.now() - new Date(iso).getTime();
-  if (diffMs >= 60_000 && diffMs < 600_000) {
-    const m = Math.floor(diffMs / 60_000);
-    const sec = Math.floor((diffMs % 60_000) / 1000);
-    return sec ? `${m}m ${sec}s ago` : `${m}m ago`;
-  }
-  return `${t} ago`;
+  const t = formatAge(iso);
+  return /^\d+[smhd](\d+s)?$/.test(t) ? `${t} ago` : t;
 }
 
 /**
- * formatTime() with seconds under ten minutes, in one fixed shape (`4m00s`,
- * `3m40s`) so hits seconds apart differ and a column keeps one format.
+ * formatTime() with seconds under ten minutes (`3m40s`; a round `4m`), one
+ * spelling for cells and prose, so hits seconds apart can be told apart.
  */
 export function formatAge(iso: string | null | undefined): string {
   if (!iso) return "-";
@@ -578,9 +570,17 @@ export function formatAge(iso: string | null | undefined): string {
   if (diffMs >= 60_000 && diffMs < 600_000) {
     const m = Math.floor(diffMs / 60_000);
     const sec = Math.floor((diffMs % 60_000) / 1000);
-    return `${m}m${String(sec).padStart(2, "0")}s`;
+    return sec ? `${m}m${sec}s` : `${m}m`;
   }
   return t;
+}
+
+/**
+ * Width for a memo column: what the terminal leaves after the fixed
+ * columns, between 38 and 60, so a wide terminal shows memos whole.
+ */
+export function memoWidth(fixedColumns: number): number {
+  return Math.min(60, Math.max(38, termWidth() - fixedColumns));
 }
 
 /** A server named for identification, not for opening: no scheme. */
@@ -683,7 +683,8 @@ export function maskSecretUrl(target: string): string {
   const tokenLike = (seg: string) =>
     seg.length >= 20 || (seg.length >= 8 && /\d/.test(seg) && !/[-_.]/.test(seg));
   if (!segments.some(tokenLike)) return `${url.host}${path}${url.search}`;
-  return `${url.host}/${glyph("…", "...")}${path.slice(-6)}`;
+  // A masked target keeps its scheme, so it still reads as the URL it is.
+  return `${url.protocol}//${url.host}/${glyph("…", "...")}${path.slice(-6)}`;
 }
 
 /**

@@ -8,6 +8,7 @@
 
 import type { Hit, NotificationSummary } from "./api.js";
 import {
+  stripAnsi,
   arrow,
   c,
   dot,
@@ -142,7 +143,7 @@ const NOTIFY_MARK: Record<NotificationSummary["status"], Mark> = {
 /** Delivery of one hit's notifications as counts: `✓2 ✗1 …1`. */
 export function deliveryCell(h: Hit): string {
   if (h.is_duplicate) return c.dim("suppressed");
-  if (h.notifications.length === 0) return c.dim("none");
+  if (h.notifications.length === 0) return c.dim("no destinations");
   const count = (kind: Mark) =>
     h.notifications.filter((n) => NOTIFY_MARK[n.status] === kind).length;
   const parts: string[] = [];
@@ -165,22 +166,31 @@ export function hitsTable(hits: Hit[]): string {
   const rows = hits.map((h, i) => {
     // A failed delivery is flagged at the row's left edge, mark and colour.
     const failed = h.notifications.some((n) => n.status === "failed");
+    // On an ssh row the ip column carries the client address, marked with
+    // the arrow the legend explains, so the who cell stays short.
+    const sshFrom = h.host_context?.ssh_client_ip;
+    const ip =
+      sshFrom && sshFrom !== h.ip
+        ? `${arrow.left()} ${safeText(sshFrom)}`
+        : h.ip == null
+          ? mark("none")
+          : safeText(h.ip);
     const row = [
       failed ? `${mark("fail")} ${c.red(formatAge(h.occurred_at))}` : formatAge(h.occurred_at),
-      h.ip == null ? mark("none") : safeText(h.ip),
-      hitWho(h, { omitFrom: h.ip, omitSource: true }),
+      ip,
+      hitWho(h, { omitFrom: sshFrom ?? h.ip, omitSource: true }),
     ];
     if (showTag) row.push(tags[i]!);
-    row.push(deliveryCell(h));
-    return row;
+    // A crawler or a repeat steps back, except for what happened to its delivery.
+    const quiet = isQuiet(h);
+    const styled = quiet ? row.map((cell) => c.dim(stripAnsi(cell))) : row;
+    styled.push(deliveryCell(h));
+    return styled;
   });
   const columns = ["when", "ip", "who"];
   if (showTag) columns.push("tag");
   columns.push("delivery");
-  return table(columns, rows, {
-    align: ["right"],
-    rowStyle: (i) => (isQuiet(hits[i]!) ? c.dim : undefined),
-  });
+  return table(columns, rows, { align: ["right"] });
 }
 
 /** What the delivery marks mean, for the marks that need saying. */
@@ -240,19 +250,26 @@ export function deliveryLines(
     ...notifications.map((n) => safeText(n.channel).length),
   );
   const lines: string[] = [];
-  for (const n of notifications) {
-    const state = deliveryState(n);
-    const target =
-      n.target != null
-        ? maskSecretUrl(safeText(n.target))
-        : n.destination_scope === "global"
-          ? "(global destination)"
-          : "(destination removed)";
+  const targets = notifications.map((n) =>
+    n.target != null
+      ? maskSecretUrl(safeText(n.target))
+      : n.destination_scope === "global"
+        ? "(global destination)"
+        : "(destination removed)",
+  );
+  const states = notifications.map(deliveryState);
+  // Results line up in one column when the widest row still fits.
+  const targetWidth = Math.max(...targets.map((t) => t.length));
+  const stateWidth = Math.max(...states.map((t) => t.length));
+  const aligned = 2 + channelWidth + 2 + targetWidth + 2 + stateWidth <= room;
+  notifications.forEach((n, i) => {
+    const state = states[i]!;
     const lead = `${mark(NOTIFY_MARK[n.status] ?? "none")} ${safeText(n.channel).padEnd(channelWidth)}  `;
     const used = 2 + channelWidth + 2 + 2 + state.length;
-    lines.push(
-      `${lead}${fitMiddle(target, room - used)}  ${n.status === "failed" ? c.red(state) : state}`,
-    );
+    const target = aligned
+      ? targets[i]!.padEnd(targetWidth)
+      : fitMiddle(targets[i]!, room - used);
+    lines.push(`${lead}${target}  ${n.status === "failed" ? c.red(state) : state}`);
     if (n.last_error) {
       // The reason wraps under the target on a terminal, whole on a pipe,
       // and does not repeat the target the row above names.
@@ -263,6 +280,6 @@ export function deliveryLines(
         : [reason];
       for (const line of wrapped) lines.push(`${pad}${c.red(line)}`);
     }
-  }
+  });
   return lines;
 }

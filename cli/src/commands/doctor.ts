@@ -159,7 +159,7 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             health.version === CLI_VERSION
               ? undefined
               : compareVersions(CLI_VERSION, health.version) < 0
-                ? `CLI is older: \`${upgradeCommand()}\``
+                ? `CLI is older: ${upgradeCommand()}`
                 : "Server is older: upgrade it when convenient",
           );
         }
@@ -359,7 +359,9 @@ async function fetchPublic(
 /** The upgrade command for the way this CLI was installed (Homebrew or npm). */
 function upgradeCommand(): string {
   const here = fileURLToPath(import.meta.url);
-  return /\/(Cellar|homebrew)\//.test(here) ? "brew upgrade mantis" : "npm i -g @mantis/cli";
+  return /\/(Cellar|homebrew)\//.test(here)
+    ? "`brew upgrade mantis`"
+    : "`npm i -g @mantis/cli` or `brew upgrade mantis`";
 }
 
 /** Numeric compare of `x.y.z` strings: negative when a is older than b. */

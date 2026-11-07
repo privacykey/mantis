@@ -108,8 +108,8 @@ export async function askUrl(
       continue;
     }
     if (URL_RE.test(v)) {
-      // The echo keeps the scheme the line above asked for.
-      if (ans) echoMasked(prompt, c.bold(`${/^https?:\/\//i.exec(v)?.[0] ?? ""}${maskSecretUrl(v)}`));
+      // The masked form keeps the scheme the line above asked for.
+      if (ans) echoMasked(prompt, c.bold(maskSecretUrl(v)));
       return v;
     }
     // A rejected answer steps back before the ✗ line explains why.
