@@ -27,11 +27,28 @@ allowBuilds:
 #   esbuild <0.28.1  → Deno binary-integrity RCE (GHSA-gv7w-rqvm-qjhr); also clears the
 #                      Windows dev-server path traversal (GHSA-g7r4-m6w7-qqqr) and the older
 #                      dev-server CORS bypass (GHSA-67mh-4wv8-2f99). Build-time devDep only.
-#   joi <17.13.8     → isoDate() regular-expression denial of service (GHSA-6h2x-m376-mqjq),
+#   joi <17.13.9     → isoDate() regular-expression denial of service (GHSA-6h2x-m376-mqjq),
 #                      uncaught RangeError on deep recursive link() schemas (GHSA-q7cg-457f-vx79)
 #                      and prototype pollution in custom messages/rename() (GHSA-6w3j-5fw6-r9vr,
 #                      GHSA-gg4h-3hg2-grpc); pulled in via passkit-generator. ^17.x stays off
-#                      the separate 18.0.0–18.2.0 vulnerable branch.
+#                      the separate 18.0.0–18.2.0 vulnerable branch. The floor moved
+#                      17.13.8 → 17.13.9 for the quadratic-time split in
+#                      string().email({ multiple: true }) (GHSA-4528-x5fx-h6hg). passkit-generator
+#                      only runs joi over the pass.json fields and certificate options we
+#                      build ourselves, never over request input — pinned to clear the audit.
+#   node-forge <=1.4.0 → RSA PKCS#1 v1.5 verification accepting extra nested DigestAlgorithm
+#                      elements (GHSA-86w9-cpqp-85rv), pem.decode regular-expression denial of
+#                      service (GHSA-7wch-p9px-956x), PKCS#12 MAC forgery / constant-key PBE via
+#                      a zero iteration count (GHSA-jc66-7q78-782g), TLS record-processing
+#                      denial of service (GHSA-8hrf-8g6f-7xwp, GHSA-hqq3-7jhf-c5jx) and an X.509
+#                      basicConstraints bypass in verifyCertificateChain() (GHSA-5x38-2vff-x55p).
+#                      Pulled in via passkit-generator, which uses it to read the admin-uploaded
+#                      Apple signer bundle and the bundled WWDR PEM and to build the PKCS#7
+#                      signature over our own pass manifest. It never sees unauthenticated
+#                      request input and never runs node-forge TLS or chain verification, so
+#                      the only exposed surface is the operator's own certificate material.
+#                      passkit-generator 3.5.7 still specs node-forge ^1.3.2, so the floor is
+#                      forced here. Pinned to clear the audit.
 #   ws <8.20.1       → uninitialized memory disclosure via close() reason TypedArray
 #                      (GHSA-58qx-3vcg-4xpx); pulled in via miniflare's exact 8.18.0 pin
 #   uuid <11.1.1     → v3/v5/v6 missing output-buffer bounds check (GHSA-w5hq-g745-h8pq);
@@ -68,7 +85,7 @@ allowBuilds:
 #                      attribute injection (GHSA-v3r7-h72x-cjcm) and blob `type` CRLF
 #                      injection (GHSA-m8rv-5g2x-5cg5). NOTE the `undici@7` key: the
 #                      app's own dependency is undici ^8, which these advisories cover
-#                      separately (the root spec floor is now ^8.10.2), so
+#                      separately (the root spec floor is now ^8.12.2), so
 #                      a bare `undici:` override would drag the app back onto the 7.x
 #                      line. Keying on the 7 range patches every 7.x consumer while
 #                      leaving 8.x alone — today that is miniflare's exact 7.28.0 pin
@@ -81,7 +98,8 @@ overrides:
   source-map-js: ^1.2.2
   postcss: ^8.5.10
   esbuild: ^0.28.1
-  joi: ^17.13.8
+  joi: ^17.13.9
+  node-forge: ^1.4.1
   ws: ^8.20.1
   uuid: ^11.1.1
   form-data: ^4.0.6
