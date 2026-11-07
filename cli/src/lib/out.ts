@@ -215,13 +215,18 @@ export type FailOpts = {
   hint?: string;
   /** The `error` string for --json, when it differs from `message`. */
   json?: string;
+  /**
+   * `message` with the CLI's own styling (an echoed value in bold). Untrusted
+   * text in it must already be safeText()'d; only SGR codes survive the escape.
+   */
+  styled?: string;
 };
 
 export function fail(message: string, code = 1, opts: FailOpts = {}): never {
   if (isJsonMode()) {
     process.stderr.write(jsonText({ error: opts.json ?? message }) + "\n");
   } else {
-    process.stderr.write(formatError(message, opts.hint));
+    process.stderr.write(formatError(opts.styled ?? message, opts.hint, Boolean(opts.styled)));
   }
   process.exit(code);
 }
@@ -231,12 +236,13 @@ export function fail(message: string, code = 1, opts: FailOpts = {}): never {
  * written in back-ticks are rendered as commands. Messages routinely embed
  * server or filesystem text (API errors, paths), so everything is escaped.
  */
-export function formatError(message: string, hint?: string): string {
+export function formatError(message: string, hint?: string, styled = false): string {
   const label = "error:";
   const pad = " ".repeat(label.length + 1);
   const width = Math.max(20, proseWidth(process.stderr) - pad.length);
   const lines: string[] = [];
-  for (const raw of safeBlock(message).split("\n")) {
+  const safe = styled ? keepOnlySgr(message) : safeBlock(message);
+  for (const raw of safe.split("\n")) {
     // A line the caller indented is laid out already (a list, a snippet).
     if (/^\s/.test(raw)) lines.push(raw);
     else lines.push(...wrapProse(raw, width));
@@ -429,8 +435,8 @@ export type Mark = "ok" | "fail" | "warn" | "pending" | "none";
 const MARKS: Record<Mark, [string, string, (s: string) => string]> = {
   ok: ["✓", "+", c.green],
   fail: ["✗", "x", c.red],
-  warn: ["⚠", "!", c.yellow],
-  pending: ["…", "~", c.yellow],
+  warn: ["⚠", "!", c.warning],
+  pending: ["…", "~", c.warning],
   none: ["–", "-", c.dim],
 };
 
@@ -548,15 +554,22 @@ export function formatStamp(
 /** formatTime() as a phrase: `4m ago`, `in 5m`, `now`. */
 export function formatAgo(iso: string | null | undefined): string {
   if (!iso) return "-";
+  const t = formatAge(iso);
+  return /^\d+[smhd]( \d+s)?$/.test(t) ? `${t} ago` : t;
+}
+
+/** formatTime() with seconds under ten minutes (`3m 40s`), for table cells. */
+export function formatAge(iso: string | null | undefined): string {
+  if (!iso) return "-";
   const t = formatTime(iso);
   if (!/^\d+[smhd]$/.test(t)) return t;
   const diffMs = Date.now() - new Date(iso).getTime();
   if (diffMs >= 60_000 && diffMs < 600_000) {
     const m = Math.floor(diffMs / 60_000);
     const sec = Math.floor((diffMs % 60_000) / 1000);
-    return sec ? `${m}m ${sec}s ago` : `${m}m ago`;
+    return sec ? `${m}m ${sec}s` : `${m}m`;
   }
-  return `${t} ago`;
+  return t;
 }
 
 /** A server named for identification, not for opening: no scheme. */

@@ -85,6 +85,7 @@ export async function withClient<T>(
       return fail(err.short, ExitCode.NotFound, {
         hint: err.hint,
         json: err.message,
+        styled: err.styled,
       });
     }
     if (err instanceof RequestTimeoutError) {

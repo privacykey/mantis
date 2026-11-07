@@ -23,6 +23,7 @@ import {
   safeText,
 } from "../lib/out.js";
 import { networkReason, type GlobalOpts } from "../lib/runner.js";
+import { fileURLToPath } from "node:url";
 import { CLI_VERSION } from "../version.js";
 
 export type DoctorOpts = GlobalOpts & {
@@ -158,7 +159,7 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             health.version === CLI_VERSION
               ? undefined
               : compareVersions(CLI_VERSION, health.version) < 0
-                ? "CLI is older: `brew upgrade mantis` or `npm i -g @mantis/cli`"
+                ? `CLI is older: \`${upgradeCommand()}\``
                 : "Server is older: upgrade it when convenient",
           );
         }
@@ -305,7 +306,7 @@ function addPublicOnlyCheck(
       "warn",
       name,
       result.message,
-      `Public host: check DNS and the tunnel, then rerun \`mantis doctor\``,
+      `Public host: fix DNS or the tunnel, rerun \`mantis doctor\``,
       `no answer from ${hostOnly(tried)} (${networkReason(result.code, result.message)})`,
     );
     return;
@@ -353,6 +354,12 @@ async function fetchPublic(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The upgrade command for the way this CLI was installed (Homebrew or npm). */
+function upgradeCommand(): string {
+  const here = fileURLToPath(import.meta.url);
+  return /\/(Cellar|homebrew)\//.test(here) ? "brew upgrade mantis" : "npm i -g @mantis/cli";
 }
 
 /** Numeric compare of `x.y.z` strings: negative when a is older than b. */

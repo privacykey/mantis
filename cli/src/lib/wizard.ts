@@ -108,7 +108,7 @@ export async function askUrl(
       continue;
     }
     if (URL_RE.test(v)) {
-      if (ans) echoMasked(prompt, maskSecretUrl(v));
+      if (ans) echoMasked(prompt, c.bold(maskSecretUrl(v)));
       return v;
     }
     // A rejected answer steps back before the ✗ line explains why.

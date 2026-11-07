@@ -1,5 +1,6 @@
 import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
 import {
+  formatAge,
   cap,
   c,
   dot,
@@ -294,7 +295,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
           formatMode(key),
           formatState(status),
           status.status === "tripped" && status.tripped_at
-            ? formatAgo(status.tripped_at)
+            ? formatAge(status.tripped_at)
             : "",
         ];
       });

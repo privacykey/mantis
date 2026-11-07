@@ -59,8 +59,8 @@ describe("monitor failure recovery", () => {
       : state("tripped", "2026-10-01T00:00:00Z"));
     await statusCmd(undefined, { ...auth, trippedOnly: true });
     expect(output.join("")).toContain("tripped");
-    // The table says how long ago; the timestamp itself is in `status <id>`.
-    expect(output.join("")).toMatch(/tripped\s+\d+d ago/);
+    // The since column says how long ago; the timestamp itself is in `status <id>`.
+    expect(output.join("")).toMatch(/tripped\s+\d+d\b/);
     expect(output.join("")).not.toContain("unavailable");
     expect(process.exitCode ?? 0).toBe(0);
   });

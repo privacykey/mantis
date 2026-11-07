@@ -12,10 +12,13 @@ const PREFIX_RE = /^[0-9a-f]{4,}$/i;
 export class ResolveError extends Error {
   readonly short: string;
   readonly hint?: string;
-  constructor(short: string, hint?: string) {
+  /** `short` with the echoed value styled, for the terminal only. */
+  readonly styled?: string;
+  constructor(short: string, hint?: string, styled?: string) {
     super(hint ? `${short}. ${hint}` : short);
     this.short = short;
     this.hint = hint;
+    this.styled = styled;
   }
 }
 
@@ -124,6 +127,7 @@ export async function resolveKeyRefDetailed(
     throw new ResolveError(
       `no key matches prefix ${ref}`,
       "Run `mantis list` to see configured keys.",
+      `no key matches prefix ${c.bold(safeText(ref))}`,
     );
   }
   if (matches.length > 1) {

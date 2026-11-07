@@ -235,7 +235,7 @@ function renderOne(h: Hit): void {
   const lead = ctx
     ? hitWho({ ...h, host_context: { ...ctx, source: null } })
     : `${h.ip == null ? "unknown address" : c.bold(s(h.ip))} ${dot()} ${agentShort(h)}`;
-  w(`${lead} ${c.dim(`${dot()} ${formatAgo(h.occurred_at)}`)}\n`);
+  w(`${lead} ${c.dim(`${dot()} ${formatAgo(h.occurred_at)} ${dot()} ${s(h.id).slice(0, 8)}`)}\n`);
 
   const rows: KvRow[] = [["at", formatStamp(h.occurred_at, { seconds: true })]];
   if (ctx?.source) rows.push(["source", s(ctx.source)]);
@@ -269,7 +269,6 @@ function renderOne(h: Hit): void {
     const room = termWidth() - (2 + KV_LABEL_WIDTH + 1);
     rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
-  rows.push(["hit id", c.dim(s(h.id))]);
   if (h.headers && !isJsonMode()) {
     // x-mantis-* headers are the host context, already drawn as fields above,
     // and a bare `accept` says nothing; --json keeps every header.

@@ -12,7 +12,7 @@ import {
   c,
   dot,
   fitMiddle,
-  formatTime,
+  formatAge,
   glyph,
   mark,
   type Mark,
@@ -166,7 +166,7 @@ export function hitsTable(hits: Hit[]): string {
     // A failed delivery is flagged at the row's left edge, mark and colour.
     const failed = h.notifications.some((n) => n.status === "failed");
     const row = [
-      failed ? `${mark("fail")} ${c.red(formatTime(h.occurred_at))}` : formatTime(h.occurred_at),
+      failed ? `${mark("fail")} ${c.red(formatAge(h.occurred_at))}` : formatAge(h.occurred_at),
       h.ip == null ? mark("none") : safeText(h.ip),
       hitWho(h, { omitFrom: h.ip, omitSource: true }),
     ];
