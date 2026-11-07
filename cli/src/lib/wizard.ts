@@ -7,9 +7,12 @@
 
 import type { Prompter } from "./prompt.js";
 import {
+  prose,
+  wrapProse,
+  proseWidth,
+  maskSecretUrl,
   c,
   colorOn,
-  hintLines,
   kv,
   type KvRow,
   mark,
@@ -104,9 +107,24 @@ export async function askUrl(
       warn("A value is required.", indent);
       continue;
     }
-    if (URL_RE.test(v)) return v;
+    if (URL_RE.test(v)) {
+      if (ans) echoMasked(prompt, maskSecretUrl(v));
+      return v;
+    }
     warn("The URL must start with https://", indent);
   }
+}
+
+/**
+ * Redraw an accepted answer in a safer form (a masked webhook), at default
+ * weight. Terminal only, and only when the line fits.
+ */
+function echoMasked(prompt: string, shown: string): void {
+  if (!colorOn() || !process.stderr.isTTY) return;
+  if (process.env.TERM === "dumb") return;
+  const cols = process.stderr.columns ?? 80;
+  if (visibleLength(prompt) + shown.length >= cols) return;
+  process.stderr.write(`\x1b[1A\r\x1b[2K${prompt}${shown}\n`);
 }
 
 /** Yes/no with a typed default. `default: true` shows `[Y/n]`. */
@@ -234,5 +252,8 @@ export function warn(msg: string, indent = ""): void {
 
 /** Something the wizard decided on the operator's behalf: dim, wrapped. */
 export function note(msg: string, indent = ""): void {
-  process.stderr.write(hintLines(msg, indent));
+  const width = proseWidth(process.stderr) - indent.length;
+  for (const line of wrapProse(msg, width)) {
+    process.stderr.write(`${indent}${prose(line, c.dim)}\n`);
+  }
 }

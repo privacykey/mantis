@@ -425,7 +425,7 @@ async function runWizard(opts: NewOpts): Promise<WizardResult> {
 async function askMemo(p: Prompter, state: WizardResult): Promise<void> {
   for (;;) {
     const ans = (
-      await askText(p, "Memo", { default: state.memo })
+      await askText(p, state.memo ? "Memo" : "Memo (what this key guards)", { default: state.memo })
     ).trim();
     if (ans) {
       state.memo = ans;

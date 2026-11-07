@@ -232,13 +232,17 @@ function renderOne(h: Hit): void {
     : `${h.ip == null ? "unknown address" : c.bold(s(h.ip))} ${dot()} ${agentShort(h)}`;
   w(`${lead} ${c.dim(`${dot()} ${formatAgo(h.occurred_at)}`)}\n`);
 
-  const rows: KvRow[] = [
-    ["at", formatStamp(h.occurred_at, { seconds: true })],
-    ["hit id", c.dim(s(h.id))],
-  ];
+  const rows: KvRow[] = [["at", formatStamp(h.occurred_at, { seconds: true })]];
+  if (ctx?.source) rows.push(["source", s(ctx.source)]);
+  if (ctx?.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
+  // Whether anyone was told comes before the rest of the context.
+  if (h.is_duplicate) {
+    rows.push(["duplicate", "yes, notifications suppressed"]);
+  } else if (h.notifications.length > 0) {
+    const room = termWidth() - (2 + KV_LABEL_WIDTH + 1);
+    rows.push(["delivery", deliveryLines(h.notifications, room)]);
+  }
   if (ctx) {
-    if (ctx.source) rows.push(["source", s(ctx.source)]);
-    if (ctx.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
     if (ctx.tty) rows.push(["tty", s(ctx.tty)]);
     if (ctx.sudo_cmd) rows.push(["sudo", s(ctx.sudo_cmd)]);
     if (ctx.network_interface) rows.push(["interface", s(ctx.network_interface)]);
@@ -256,17 +260,17 @@ function renderOne(h: Hit): void {
   rows.push(["agent", agentLong(h)]);
   if (h.bot_label) rows.push(["bot", s(h.bot_label)]);
   if (h.referer != null) rows.push(["referer", s(h.referer)]);
-  if (h.is_duplicate) {
-    rows.push(["duplicate", "yes, notifications suppressed"]);
-  }
-  if (h.notifications.length > 0) {
+  if (h.is_duplicate && h.notifications.length > 0) {
     const room = termWidth() - (2 + KV_LABEL_WIDTH + 1);
     rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
+  rows.push(["hit id", c.dim(s(h.id))]);
   if (h.headers && !isJsonMode()) {
-    // x-mantis-* headers are the host context, already drawn as fields above.
+    // x-mantis-* headers are the host context, already drawn as fields above,
+    // and a bare `accept` says nothing; --json keeps every header.
     const lines = Object.entries(h.headers)
       .filter(([k]) => !(ctx && k.toLowerCase().startsWith("x-mantis-")))
+      .filter(([k]) => k.toLowerCase() !== "accept")
       .map(([k, v]) => c.dim(`${s(k)}: ${s(v)}`));
     if (lines.length > 0) rows.push(["headers", lines]);
   }

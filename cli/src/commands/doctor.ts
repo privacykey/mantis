@@ -12,6 +12,7 @@ import {
   resolveAuth,
 } from "../lib/config.js";
 import {
+  hostOnly,
   glyph,
   dot,
   arrow,
@@ -63,7 +64,7 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
       "profile",
       `${selectedProfile} -> ${profile.baseUrl}`,
       undefined,
-      `${selectedProfile} ${arrow.right()} ${profile.baseUrl}`,
+      `${selectedProfile} ${arrow.right()} ${hostOnly(profile.baseUrl)}`,
     );
   } else if (opts.baseUrl) {
     add("ok", "profile", "using --base-url override");
@@ -157,8 +158,8 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             health.version === CLI_VERSION
               ? undefined
               : compareVersions(CLI_VERSION, health.version) < 0
-                ? "The CLI is older: `brew upgrade mantis` or `npm i -g @mantis/cli`"
-                : "The server is older: upgrade it when convenient",
+                ? "CLI is older: `brew upgrade mantis` or `npm i -g @mantis/cli`"
+                : "Server is older: upgrade it when convenient",
           );
         }
       } catch (err) {
@@ -184,7 +185,7 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             "split hosts",
             `${client.baseUrl} private, ${detected} public`,
             undefined,
-            `private ${hostOf(client.baseUrl)} ${dot()} public ${hostOf(detected)}`,
+            `private ${hostOnly(client.baseUrl)} ${dot()} public ${hostOnly(detected)}`,
           );
         } else if (page.data.length === 0 && !samplePublicOrigin) {
           add(
@@ -302,18 +303,12 @@ function addPublicOnlyCheck(
   tried: string,
 ): void {
   if (!result.ok) {
-    let host = tried;
-    try {
-      host = new URL(tried).host;
-    } catch {
-      // keep the URL as typed
-    }
     add(
       "warn",
       name,
       result.message,
-      `Check DNS and the tunnel for ${host}, then rerun \`mantis doctor\``,
-      `no answer from ${hostOf(tried)} (${networkReason(result.code, result.message)})`,
+      `Check DNS and the tunnel, then rerun \`mantis doctor\``,
+      `no answer from ${hostOnly(tried)} (${networkReason(result.code, result.message)})`,
     );
     return;
   }
@@ -359,16 +354,6 @@ async function fetchPublic(
     };
   } finally {
     clearTimeout(timer);
-  }
-}
-
-/** A URL without its scheme, for a terminal row that already says what it is. */
-function hostOf(url: string): string {
-  try {
-    const u = new URL(url);
-    return `${u.host}${u.pathname.replace(/\/+$/, "")}${u.search}`;
-  } catch {
-    return url;
   }
 }
 

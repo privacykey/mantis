@@ -62,7 +62,7 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
           `${formatStamp(iso)} ${c.dim(`${dot()} ${formatAgo(iso)}`)}`;
         const rows: KvRow[] = [
           ["url", c.cyan(s(key.url))],
-          ["status", key.disabled ? c.dim("disabled") : "active"],
+          ["status", key.disabled ? `${mark("none")} ${c.dim("disabled")}` : `${mark("ok")} active`],
           ["created", stamp(key.created_at)],
         ];
         rows.push([
@@ -74,8 +74,8 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
         if (key.expires_at) rows.push(["expires", stamp(key.expires_at)]);
         rows.push(["response", s(key.response_kind)]);
         rows.push(["kind", s(key.kind)]);
-        rows.push(["id", s(key.id)]);
-        rows.push(["public id", s(key.public_id)]);
+        rows.push(["id", c.dim(s(key.id))]);
+        rows.push(["public id", c.dim(s(key.public_id))]);
         if (copied !== null) {
           rows.push([
             "clipboard",

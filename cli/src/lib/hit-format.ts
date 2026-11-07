@@ -136,8 +136,8 @@ const NOTIFY_MARK: Record<NotificationSummary["status"], Mark> = {
 
 /** Delivery of one hit's notifications as counts: `✓2 ✗1 …1`. */
 export function deliveryCell(h: Hit): string {
-  // A duplicate is tagged in its own column; nothing was sent for it.
-  if (h.is_duplicate || h.notifications.length === 0) return mark("none");
+  if (h.is_duplicate) return c.dim("suppressed");
+  if (h.notifications.length === 0) return c.dim("none");
   const count = (kind: Mark) =>
     h.notifications.filter((n) => NOTIFY_MARK[n.status] === kind).length;
   const parts: string[] = [];

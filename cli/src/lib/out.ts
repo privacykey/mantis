@@ -247,7 +247,7 @@ export function formatError(message: string, hint?: string): string {
   });
   if (hint) {
     for (const line of wrapProse(safeBlock(hint), width)) {
-      out += `${pad}${prose(line, c.dim)}\n`;
+      out += `${pad}${prose(line)}\n`;
     }
   }
   return out;
@@ -537,14 +537,34 @@ export function formatStamp(
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return safeText(iso);
   const text = d.toISOString();
-  return `${text.slice(0, 10)} ${text.slice(11, opts.seconds ? 19 : 16)} UTC`;
+  const time = `${text.slice(11, opts.seconds ? 19 : 16)} UTC`;
+  // A stamp from today (UTC) needs no date; the relative age beside it says so.
+  const today = new Date().toISOString().slice(0, 10);
+  return text.slice(0, 10) === today ? time : `${text.slice(0, 10)} ${time}`;
 }
 
 /** formatTime() as a phrase: `4m ago`, `in 5m`, `now`. */
 export function formatAgo(iso: string | null | undefined): string {
   if (!iso) return "-";
   const t = formatTime(iso);
-  return /^\d+[smhd]$/.test(t) ? `${t} ago` : t;
+  if (!/^\d+[smhd]$/.test(t)) return t;
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs >= 60_000 && diffMs < 600_000) {
+    const m = Math.floor(diffMs / 60_000);
+    const sec = Math.floor((diffMs % 60_000) / 1000);
+    return sec ? `${m}m ${sec}s ago` : `${m}m ago`;
+  }
+  return `${t} ago`;
+}
+
+/** A server named for identification, not for opening: no scheme. */
+export function hostOnly(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname.replace(/\/+$/, "")}${u.search}`;
+  } catch {
+    return url;
+  }
 }
 
 /** A length of time in the largest units that fit: `1h`, `15m`, `1h 30m`. */

@@ -44,6 +44,7 @@ import { CLI_VERSION } from "./version.js";
 import { type CliDefaults, getDefaults, readConfig } from "./lib/config.js";
 import { listEdgeKeyWorkers } from "./lib/edge-key.js";
 import {
+  hostOnly,
   arrow,
   c,
   cmd,
@@ -248,7 +249,7 @@ program
     const entry = stored!.profiles[profileName];
     out(banner());
     out(
-      `${c.dim("Logged in as")} ${c.bold(safeText(profileName))} ${c.dim(arrow.right())} ${safeText(entry?.baseUrl ?? "?")}\n`,
+      `${c.dim("Logged in as")} ${c.bold(safeText(profileName))} ${c.dim(arrow.right())} ${safeText(hostOnly(entry?.baseUrl ?? "?"))}\n`,
     );
     if (hasEdge) {
       out(
