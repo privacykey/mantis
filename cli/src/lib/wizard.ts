@@ -6,7 +6,15 @@
 // inference rules or prompt UX lands once and applies everywhere.
 
 import type { Prompter } from "./prompt.js";
-import { c } from "./out.js";
+import {
+  c,
+  colorOn,
+  hintLines,
+  kv,
+  type KvRow,
+  mark,
+  visibleLength,
+} from "./out.js";
 
 export const URL_RE = /^https?:\/\/.+/;
 
@@ -60,24 +68,44 @@ export function webhookPromptLabel(channel: string): string {
 // Primitive prompts
 // ---------------------------------------------------------------------------
 
+/** `Label [default]: ` with the default dimmed, so the question leads. */
+function promptText(label: string, def?: string, sep = ":"): string {
+  return def ? `${label} ${c.dim(`[${def}]`)}${sep} ` : `${label}${sep} `;
+}
+
+/**
+ * After Enter on an empty line, write the accepted default where the answer
+ * would be, so the transcript shows what was chosen. Terminal only, and only
+ * when the prompt fits on one line (the line is redrawn in place).
+ */
+function echoAccepted(prompt: string, value: string): void {
+  if (!value || !colorOn() || !process.stderr.isTTY) return;
+  if (process.env.TERM === "dumb") return;
+  const cols = process.stderr.columns ?? 80;
+  if (visibleLength(prompt) + value.length >= cols) return;
+  process.stderr.write(`\x1b[1A\r\x1b[2K${prompt}${c.dim(value)}\n`);
+}
+
 /** Re-prompt loop for a value that must start with https:// (or http://). */
 export async function askUrl(
   p: Prompter,
   label: string,
   opts: { default?: string; allowEmpty?: boolean } = {},
 ): Promise<string | undefined> {
+  const indent = /^\s*/.exec(label)![0];
   for (;;) {
     const def = opts.default ?? "";
-    const prompt = def ? `${label} [${def}]: ` : `${label}: `;
+    const prompt = promptText(label, def);
     const ans = await p.ask(prompt);
+    if (!ans) echoAccepted(prompt, def);
     const v = ans || def;
     if (!v) {
       if (opts.allowEmpty) return undefined;
-      writeWarn("a value is required.");
+      warn("A value is required.", indent);
       continue;
     }
     if (URL_RE.test(v)) return v;
-    writeWarn("must start with https:// — try again.");
+    warn("The URL must start with https://", indent);
   }
 }
 
@@ -87,14 +115,21 @@ export async function askYesNo(
   label: string,
   defaultYes: boolean,
 ): Promise<boolean> {
-  const suffix = defaultYes ? "[Y/n]" : "[y/N]";
-  const ans = (await p.ask(`${label} ${suffix}: `)).toLowerCase();
-  if (!ans) return defaultYes;
+  const prompt = promptText(label, defaultYes ? "Y/n" : "y/N", "");
+  const ans = (await p.ask(prompt)).toLowerCase();
+  if (!ans) {
+    echoAccepted(prompt, defaultYes ? "yes" : "no");
+    return defaultYes;
+  }
   if (ans === "y" || ans === "yes") return true;
   if (ans === "n" || ans === "no") return false;
   // Anything else → treat as the default (matches typical CLI conventions).
   return defaultYes;
 }
+
+// A list of choices is spelled out the first time it is asked for; a repeat
+// of the same question (a second destination) only needs the default.
+const choicesShown = new Set<string>();
 
 /** Choice from a fixed list. Re-prompts on invalid input. */
 export async function askChoice<T extends string>(
@@ -103,26 +138,36 @@ export async function askChoice<T extends string>(
   choices: readonly T[],
   def: T,
 ): Promise<T> {
-  const choiceText = choices.join(" / ");
+  const indent = /^\s*/.exec(label)![0];
   for (;;) {
-    const ans = (
-      await p.ask(`${label} (${choiceText}) [${def}]: `)
-    ).toLowerCase();
+    const first = !choicesShown.has(label);
+    choicesShown.add(label);
+    const prompt = first
+      ? `${label} ${c.dim(`(${choices.join(", ")}) [${def}]`)}: `
+      : promptText(label, def);
+    const ans = (await p.ask(prompt)).toLowerCase();
+    if (!ans) echoAccepted(prompt, def);
     const v = (ans || def) as T;
     if ((choices as readonly string[]).includes(v)) return v;
-    writeWarn(`must be one of ${choices.join(", ")}.`);
+    choicesShown.delete(label);
+    warn(`Pick one of: ${choices.join(", ")}.`, indent);
   }
 }
 
-/** Free-text prompt with optional default. Blank input returns default (or empty). */
+/**
+ * Free-text prompt with optional default. Blank input returns default (or
+ * empty). `blank` names what an empty answer means when there is no default
+ * value to show (`never`, `stdout`).
+ */
 export async function askText(
   p: Prompter,
   label: string,
-  opts: { default?: string } = {},
+  opts: { default?: string; blank?: string } = {},
 ): Promise<string> {
   const def = opts.default ?? "";
-  const prompt = def ? `${label} [${def}]: ` : `${label}: `;
+  const prompt = promptText(label, def || opts.blank);
   const ans = await p.ask(prompt);
+  if (!ans) echoAccepted(prompt, def || opts.blank || "");
   return ans || def;
 }
 
@@ -130,16 +175,11 @@ export async function askText(
 // Summary table + confirm/edit loop
 // ---------------------------------------------------------------------------
 
-export type SummaryRow = [label: string, value: string];
+export type SummaryRow = KvRow;
 
-/** Print "Summary:" followed by an aligned label / value table. */
+/** Print "Summary" followed by the shared label and value block. */
 export function printSummary(rows: readonly SummaryRow[]): void {
-  process.stderr.write(`\n${c.bold("Summary:")}\n`);
-  const w = rows.reduce((max, [k]) => Math.max(max, k.length), 0);
-  for (const [k, v] of rows) {
-    process.stderr.write(`  ${c.dim(k.padEnd(w))}  ${v}\n`);
-  }
-  process.stderr.write("\n");
+  process.stderr.write(`\n${c.bold("Summary")}\n${kv([...rows])}\n`);
 }
 
 /**
@@ -155,34 +195,42 @@ export async function confirmLoop(
 ): Promise<void> {
   for (;;) {
     printCurrent();
-    const ans = (await p.ask("Proceed? [Y/n/edit]: ")).toLowerCase();
+    const ans = (
+      await p.ask(`${c.bold("Proceed?")} ${c.dim("[Y/n/edit]")} `)
+    ).toLowerCase();
     if (ans === "" || ans === "y" || ans === "yes") return;
     if (ans === "n" || ans === "no") {
-      process.stderr.write(`${c.yellow("aborted.")}\n`);
+      process.stderr.write(`${mark("none")} Stopped. Nothing was created.\n`);
       process.exit(0);
     }
     if (ans === "edit" || ans === "e") {
       const which = (
         await p.ask(
-          `Which field? [${fields.join("/")}] (blank to cancel): `,
+          `Which field? ${c.dim(`(${fields.join(", ")}; blank to cancel)`)}: `,
         )
       ).toLowerCase();
       if (!which) continue;
       if (!fields.includes(which)) {
-        writeWarn(`unknown field. Pick one of: ${fields.join(", ")}.`);
+        warn(`Unknown field. Pick one of: ${fields.join(", ")}.`);
         continue;
       }
       await edit(which);
       continue;
     }
-    writeWarn("answer y, n, or edit.");
+    warn("Answer y, n, or edit.");
   }
 }
 
 // ---------------------------------------------------------------------------
-// Internal
+// Lines the wizards print between prompts
 // ---------------------------------------------------------------------------
 
-function writeWarn(msg: string): void {
-  process.stderr.write(`  ${c.red("!")} ${msg}\n`);
+/** A rejected answer: red, with the failure mark, at the prompt's indent. */
+export function warn(msg: string, indent = ""): void {
+  process.stderr.write(`${indent}${mark("fail")} ${c.red(msg)}\n`);
+}
+
+/** Something the wizard decided on the operator's behalf: dim, wrapped. */
+export function note(msg: string, indent = ""): void {
+  process.stderr.write(hintLines(msg, indent));
 }

@@ -1,4 +1,4 @@
-import { c, emit } from "../lib/out.js";
+import { c, emit, mark } from "../lib/out.js";
 import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -10,7 +10,7 @@ export async function resetCmd(id: string, opts: GlobalOpts): Promise<void> {
       () => {
         const w = process.stdout.write.bind(process.stdout);
         const state = key.monitor_state ?? "off";
-        w(`${c.green("✓")} monitor reset\n`);
+        w(`${mark("ok")} monitor reset\n`);
         w(
           `  ${c.dim("current:")} ${
             state === "tripped"

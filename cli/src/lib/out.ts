@@ -19,9 +19,16 @@ function colorEnabled(): boolean {
   return Boolean(process.stdout.isTTY);
 }
 
-const wrap = (open: number) => (s: string) =>
+const wrap = (open: number | string) => (s: string) =>
   colorEnabled() ? `\x1b[${open}m${s}\x1b[0m` : s;
 
+// Each color has one job across the CLI, so a glance at the color is a glance
+// at the meaning:
+//   red     tripped or failed          green   ok
+//   yellow  warning or pending         cyan    something to run or open
+//   bold    the thing to read first    dim     labels, hints, quiet rows
+// A style ends with a full reset, so never nest a longer string inside
+// another style — compose side by side, or use prose() for sentences.
 export const c = {
   dim: wrap(2),
   bold: wrap(1),
@@ -31,7 +38,13 @@ export const c = {
   blue: wrap(34),
   magenta: wrap(35),
   cyan: wrap(36),
+  alarm: wrap("1;31"),
 };
+
+/** Whether styled output is on for this emission (flag, env, then TTY). */
+export function colorOn(): boolean {
+  return colorEnabled();
+}
 
 // Text written by another principal (memos, destination targets, user agents,
 // headers, host context, server error strings) or read from the filesystem
@@ -193,19 +206,65 @@ export function emit(human: () => void, jsonValue?: unknown): void {
   human();
 }
 
-export function fail(message: string, code = 1): never {
+export type FailOpts = {
+  /** One sentence on what to do next, printed dim under the error. */
+  hint?: string;
+  /** The `error` string for --json, when it differs from `message`. */
+  json?: string;
+};
+
+export function fail(message: string, code = 1, opts: FailOpts = {}): never {
   if (isJsonMode()) {
-    process.stderr.write(jsonText({ error: message }) + "\n");
+    process.stderr.write(jsonText({ error: opts.json ?? message }) + "\n");
   } else {
-    // Messages routinely embed server or filesystem text (API errors, paths).
-    process.stderr.write(`${c.red("error:")} ${safeBlock(message)}\n`);
+    process.stderr.write(formatError(message, opts.hint));
   }
   process.exit(code);
 }
 
+/**
+ * `error: <message>` with an optional dim hint line underneath. Commands
+ * written in back-ticks are rendered as commands. Messages routinely embed
+ * server or filesystem text (API errors, paths), so everything is escaped.
+ */
+export function formatError(message: string, hint?: string): string {
+  const label = "error:";
+  const pad = " ".repeat(label.length + 1);
+  const width = Math.max(20, proseWidth(process.stderr) - pad.length);
+  const lines: string[] = [];
+  for (const raw of safeBlock(message).split("\n")) {
+    // A line the caller indented is laid out already (a list, a snippet).
+    if (/^\s/.test(raw)) lines.push(raw);
+    else lines.push(...wrapProse(raw, width));
+  }
+  let out = "";
+  lines.forEach((line, i) => {
+    const text = prose(line);
+    if (i === 0) out += `${c.alarm(label)} ${text}\n`;
+    else out += `${/^\s/.test(line) ? "" : pad}${text}\n`;
+  });
+  if (hint) {
+    for (const line of wrapProse(safeBlock(hint), width)) {
+      out += `${pad}${prose(line, c.dim)}\n`;
+    }
+  }
+  return out;
+}
+
+export type TableOpts = {
+  /** Per-column alignment; numbers and ages read best right-aligned. */
+  align?: ("left" | "right")[];
+  /**
+   * Style for a whole row (a dim duplicate, a quiet disabled key). The row's
+   * own cell colors are dropped so the style holds across the line.
+   */
+  rowStyle?: (rowIndex: number) => ((s: string) => string) | undefined;
+};
+
 export function table(
   columns: string[],
   rows: (string | number | null | undefined)[][],
+  opts: TableOpts = {},
 ): string {
   const bodyRows = rows.map((r) => r.map(formatCell));
   const all = headers ? [columns, ...bodyRows] : bodyRows;
@@ -213,15 +272,29 @@ export function table(
     Math.max(...all.map((row) => visibleLength(row[i] ?? ""))),
   );
   fitColumns(widths);
+  const last = columns.length - 1;
   const fmt = (row: string[]) =>
-    row.map((cell, i) => fitCell(cell, widths[i] ?? 0)).join("  ");
+    row
+      .map((cell, i) => {
+        const right = opts.align?.[i] === "right";
+        const fitted = fitCell(cell, widths[i] ?? 0, right);
+        // No trailing padding on the last column: nothing follows it.
+        return i === last && !right ? fitted.trimEnd() : fitted;
+      })
+      .join("  ");
   const header = headers ? c.bold(fmt(columns)) : "";
-  const body = bodyRows.map(fmt).join("\n");
+  const body = bodyRows
+    .map((row, i) => {
+      const style = opts.rowStyle?.(i);
+      return style ? style(stripAnsi(fmt(row))) : fmt(row);
+    })
+    .join("\n");
   return [header, body].filter(Boolean).join("\n");
 }
 
-function fitCell(s: string, width: number): string {
-  return visibleLength(s) > width ? truncate(s, width) : padRight(s, width);
+function fitCell(s: string, width: number, right = false): string {
+  if (visibleLength(s) > width) return truncate(s, width);
+  return right ? padLeft(s, width) : padRight(s, width);
 }
 
 // Shrink the widest column(s) until the laid-out row fits the terminal — only
@@ -251,6 +324,10 @@ function formatCell(v: string | number | null | undefined): string {
 
 function padRight(s: string, width: number): string {
   return s + " ".repeat(Math.max(0, width - visibleLength(s)));
+}
+
+function padLeft(s: string, width: number): string {
+  return " ".repeat(Math.max(0, width - visibleLength(s))) + s;
 }
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -332,4 +409,213 @@ export function formatTime(iso: string | null): string {
     }
   }
   return safeText(iso);
+}
+
+// ---------------------------------------------------------------------------
+// Shared vocabulary. Every command draws state, time, labels and commands
+// with the helpers below, so the same thing looks the same everywhere.
+// ---------------------------------------------------------------------------
+
+/**
+ * The one set of status marks. Each is a single cell wide and has an ASCII
+ * stand-in; a mark always sits beside a word or a count, never alone.
+ */
+export type Mark = "ok" | "fail" | "warn" | "pending" | "none";
+
+const MARKS: Record<Mark, [string, string, (s: string) => string]> = {
+  ok: ["✓", "+", c.green],
+  fail: ["✗", "x", c.red],
+  warn: ["⚠", "!", c.yellow],
+  pending: ["…", "~", c.yellow],
+  none: ["–", "-", c.dim],
+};
+
+export function mark(kind: Mark): string {
+  const [unicodeMark, asciiMark, color] = MARKS[kind];
+  return color(glyph(unicodeMark, asciiMark));
+}
+
+/** `⚠ tripped`: the alarm, the loudest thing the CLI prints. */
+export function tripped(text = "tripped"): string {
+  return c.alarm(`${glyph("⚠", "!")} ${text}`);
+}
+
+export const arrow = {
+  right: () => glyph("→", "->"),
+  left: () => glyph("←", "<-"),
+};
+
+/** The separator between facts on one line. */
+export function dot(): string {
+  return glyph("·", "|");
+}
+
+/** A command the reader can run: cyan, or back-ticked when color is off. */
+export function cmd(text: string): string {
+  return colorEnabled() ? c.cyan(text) : `\`${text}\``;
+}
+
+/**
+ * Style a sentence whose commands are written in back-ticks: the commands
+ * become cmd(), the rest takes `base` (c.dim for hints). Use this instead of
+ * wrapping a whole sentence in one style, which a nested style would cut off.
+ */
+export function prose(
+  text: string,
+  base: (s: string) => string = (s) => s,
+): string {
+  return text
+    .split(/(`[^`\n]+`)/g)
+    .map((part) => {
+      if (!part) return "";
+      if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
+        return cmd(part.slice(1, -1));
+      }
+      return base(part);
+    })
+    .join("");
+}
+
+/**
+ * Width to wrap prose to: the terminal's, capped at 80 so lines stay
+ * readable. Piped or redirected text is not wrapped at all, so one message
+ * stays one line for whatever reads it next.
+ */
+export function proseWidth(
+  stream: { isTTY?: boolean; columns?: number } = process.stdout,
+): number {
+  if (!stream.isTTY) return Number.MAX_SAFE_INTEGER;
+  return Math.max(40, Math.min(stream.columns ?? 80, 80));
+}
+
+/**
+ * Wrap plain prose on word boundaries. A back-ticked command is kept whole,
+ * and measured the way prose() will draw it. Returns the lines, unstyled.
+ */
+export function wrapProse(text: string, width: number): string[] {
+  const out: string[] = [];
+  const ticks = colorEnabled() ? 2 : 0;
+  for (const paragraph of text.split("\n")) {
+    const words = paragraph.match(/`[^`\n]+`\S*|\S+/g) ?? [];
+    let line = "";
+    let lineWidth = 0;
+    for (const word of words) {
+      const w = word.length - (word.startsWith("`") ? ticks : 0);
+      if (line && lineWidth + 1 + w > width) {
+        out.push(line);
+        line = word;
+        lineWidth = w;
+      } else {
+        line = line ? `${line} ${word}` : word;
+        lineWidth += (lineWidth ? 1 : 0) + w;
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/** Print a dim hint (stderr), wrapped, with its commands drawn as commands. */
+export function hintLines(text: string, indent = ""): string {
+  const width = proseWidth(process.stderr) - indent.length;
+  return wrapProse(text, width)
+    .map((line) => `${indent}${prose(line, c.dim)}\n`)
+    .join("");
+}
+
+/**
+ * The one absolute time format: `2026-11-06 02:26 UTC`. Seconds only where
+ * two events have to be told apart (one hit in full). JSON keeps ISO.
+ */
+export function formatStamp(
+  iso: string | null | undefined,
+  opts: { seconds?: boolean } = {},
+): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return safeText(iso);
+  const text = d.toISOString();
+  return `${text.slice(0, 10)} ${text.slice(11, opts.seconds ? 19 : 16)} UTC`;
+}
+
+/** formatTime() as a phrase: `4m ago`, `in 5m`, `now`. */
+export function formatAgo(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const t = formatTime(iso);
+  return /^\d+[smhd]$/.test(t) ? `${t} ago` : t;
+}
+
+/** A length of time in the largest units that fit: `1h`, `15m`, `1h 30m`. */
+export function formatDuration(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+    return safeText(totalSeconds);
+  }
+  const units: [number, string][] = [
+    [86_400, "d"],
+    [3_600, "h"],
+    [60, "m"],
+    [1, "s"],
+  ];
+  const parts: string[] = [];
+  let rest = Math.round(totalSeconds);
+  for (const [size, suffix] of units) {
+    if (rest >= size && parts.length < 2) {
+      parts.push(`${Math.floor(rest / size)}${suffix}`);
+      rest %= size;
+    }
+  }
+  return parts.join(" ") || "0s";
+}
+
+/** Heading of a detail view: the name to read first, then a quiet aside. */
+export function heading(main: string, aside?: string): string {
+  return aside ? `${c.bold(main)}  ${c.dim(aside)}` : c.bold(main);
+}
+
+export type KvRow = [label: string, value: string | string[]];
+
+/** Width of the `label:` column in every label and value block. */
+export const KV_LABEL_WIDTH = 13;
+
+/**
+ * The one label and value block: dim `label:` in a fixed column, the value
+ * beside it, continuation lines under the value. Returns text ending in a
+ * newline, or "" when there are no rows.
+ */
+export function kv(rows: KvRow[], opts: { indent?: number } = {}): string {
+  const indent = " ".repeat(opts.indent ?? 2);
+  const width = Math.max(
+    KV_LABEL_WIDTH,
+    ...rows.map(([label]) => label.length + 1),
+  );
+  const under = " ".repeat(width + 1);
+  let out = "";
+  for (const [label, value] of rows) {
+    const lines = Array.isArray(value) ? value : value.split("\n");
+    lines.forEach((line, i) => {
+      const lead = i === 0 ? `${c.dim(`${label}:`.padEnd(width))} ` : under;
+      out += `${indent}${lead}${line}`.trimEnd() + "\n";
+    });
+  }
+  return out;
+}
+
+/**
+ * Cut a long value in the middle, keeping both ends (a URL's host and its
+ * tail). Only on a terminal: piped output is never shortened.
+ */
+export function fitMiddle(s: string, max: number): string {
+  if (!process.stdout.isTTY) return s;
+  const text = keepOnlySgr(s);
+  if (max < 8 || visibleLength(text) <= max) return text;
+  const plain = stripAnsi(text);
+  const ell = unicodeEnabled() ? "…" : "...";
+  const tail = Math.min(6, Math.floor((max - ell.length) / 3));
+  const head = max - ell.length - tail;
+  return `${plain.slice(0, head)}${ell}${plain.slice(plain.length - tail)}`;
+}
+
+/** Terminal width for layout that should use the room it has. */
+export function termWidth(): number {
+  return process.stdout.isTTY ? (process.stdout.columns ?? 80) : 80;
 }

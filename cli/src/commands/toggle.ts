@@ -1,4 +1,4 @@
-import { c, emit, isJsonMode, safeText } from "../lib/out.js";
+import { c, emit, isJsonMode, safeText, mark } from "../lib/out.js";
 import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import type { MutationResult } from "./rm.js";
@@ -26,7 +26,7 @@ async function toggle(
   disabled: boolean,
 ): Promise<void> {
   const action = disabled ? "disabled" : "enabled";
-  const tick = disabled ? c.yellow("✓") : c.green("✓");
+  const tick = disabled ? c.yellow("✓") : mark("ok");
   await withClient(opts, async (client) => {
     const results: MutationResult[] = [];
     let failed = 0;
@@ -43,7 +43,7 @@ async function toggle(
         const error = err instanceof Error ? err.message : String(err);
         results.push({ ref, ok: false, error });
         if (!isJsonMode()) {
-          process.stderr.write(`${c.red("✗")} ${safeText(ref)}: ${safeText(error)}\n`);
+          process.stderr.write(`${mark("fail")} ${safeText(ref)}: ${safeText(error)}\n`);
         }
       }
     }

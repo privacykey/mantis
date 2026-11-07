@@ -107,25 +107,33 @@ export async function clearConfig(): Promise<void> {
 }
 
 export function getKey(baseUrl: string): string | null {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     return new Entry(KEYCHAIN_SERVICE, baseUrl).getPassword();
   } catch {
     return null;
+  } finally {
+    eraseNotice?.();
   }
 }
 
 export function setKey(baseUrl: string, key: string): void {
-  maybeEmitKeychainNotice();
-  new Entry(KEYCHAIN_SERVICE, baseUrl).setPassword(key);
+  const eraseNotice = maybeEmitKeychainNotice();
+  try {
+    new Entry(KEYCHAIN_SERVICE, baseUrl).setPassword(key);
+  } finally {
+    eraseNotice?.();
+  }
 }
 
 export function deleteKey(baseUrl: string): void {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     new Entry(KEYCHAIN_SERVICE, baseUrl).deletePassword();
   } catch {
     /* nonexistent entries throw on some platforms; ignore */
+  } finally {
+    eraseNotice?.();
   }
 }
 
@@ -137,7 +145,7 @@ export type CloudflareServiceAuth = {
 export function getCloudflareServiceAuth(
   baseUrl: string,
 ): CloudflareServiceAuth | null {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     const raw = new Entry(KEYCHAIN_SERVICE_CF, baseUrl).getPassword();
     if (!raw) return null;
@@ -151,6 +159,8 @@ export function getCloudflareServiceAuth(
     return parsed;
   } catch {
     return null;
+  } finally {
+    eraseNotice?.();
   }
 }
 
@@ -158,16 +168,22 @@ export function setCloudflareServiceAuth(
   baseUrl: string,
   creds: CloudflareServiceAuth,
 ): void {
-  maybeEmitKeychainNotice();
-  new Entry(KEYCHAIN_SERVICE_CF, baseUrl).setPassword(JSON.stringify(creds));
+  const eraseNotice = maybeEmitKeychainNotice();
+  try {
+    new Entry(KEYCHAIN_SERVICE_CF, baseUrl).setPassword(JSON.stringify(creds));
+  } finally {
+    eraseNotice?.();
+  }
 }
 
 export function deleteCloudflareServiceAuth(baseUrl: string): void {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     new Entry(KEYCHAIN_SERVICE_CF, baseUrl).deletePassword();
   } catch {
     /* ignore */
+  } finally {
+    eraseNotice?.();
   }
 }
 

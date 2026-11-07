@@ -4,25 +4,33 @@ import { maybeEmitKeychainNotice } from "./keychain-notice.js";
 const KEYCHAIN_SERVICE = "mantis-cli-edge";
 
 export function getEdgeKey(workerUrl: string): string | null {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     return new Entry(KEYCHAIN_SERVICE, workerUrl).getPassword();
   } catch {
     return null;
+  } finally {
+    eraseNotice?.();
   }
 }
 
 export function setEdgeKey(workerUrl: string, key: string): void {
-  maybeEmitKeychainNotice();
-  new Entry(KEYCHAIN_SERVICE, workerUrl).setPassword(key);
+  const eraseNotice = maybeEmitKeychainNotice();
+  try {
+    new Entry(KEYCHAIN_SERVICE, workerUrl).setPassword(key);
+  } finally {
+    eraseNotice?.();
+  }
 }
 
 export function deleteEdgeKey(workerUrl: string): void {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     new Entry(KEYCHAIN_SERVICE, workerUrl).deletePassword();
   } catch {
     /* nonexistent entries throw on some platforms; ignore */
+  } finally {
+    eraseNotice?.();
   }
 }
 
@@ -33,11 +41,13 @@ export function deleteEdgeKey(workerUrl: string): void {
  * Secret Service) — callers should treat "empty" as "unknown".
  */
 export async function listEdgeKeyWorkers(): Promise<string[]> {
-  maybeEmitKeychainNotice();
+  const eraseNotice = maybeEmitKeychainNotice();
   try {
     const credentials = await findCredentialsAsync(KEYCHAIN_SERVICE);
     return credentials.map((c) => c.account);
   } catch {
     return [];
+  } finally {
+    eraseNotice?.();
   }
 }

@@ -1,18 +1,32 @@
-import type { Hit, MantisClient, NotificationSummary } from "../lib/api.js";
+import type { Hit, Key, MantisClient } from "../lib/api.js";
 import {
+  arrow,
   c,
+  dot,
   emit,
+  formatAgo,
+  formatStamp,
   formatTime,
-  glyph,
+  hintLines,
   isJsonMode,
   jsonText,
+  kv,
+  type KvRow,
+  KV_LABEL_WIDTH,
   safeText,
-  table,
-  truncate,
+  termWidth,
 } from "../lib/out.js";
+import {
+  agentLong,
+  agentShort,
+  deliveryLegend,
+  deliveryLines,
+  hitWho,
+  hitsTable,
+} from "../lib/hit-format.js";
 import { parseIntervalMs, parseLimit } from "../lib/parse.js";
 import { HitTail } from "../lib/hit-anchor.js";
-import { resolveKeyRef } from "../lib/resolve.js";
+import { resolveKeyRefDetailed } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type HitsOpts = GlobalOpts & {
@@ -28,7 +42,8 @@ export type HitsOpts = GlobalOpts & {
 export async function hitsCmd(id: string, opts: HitsOpts): Promise<void> {
   const intervalMs = opts.follow ? parseIntervalMs(opts.interval, 3) : undefined;
   await withClient(opts, async (client) => {
-    const fullId = await resolveKeyRef(client, id);
+    const resolved = await resolveKeyRefDetailed(client, id);
+    const fullId = resolved.id;
     const limit = parseLimit(opts.limit);
     const filter = buildFilter(opts);
 
@@ -40,7 +55,13 @@ export async function hitsCmd(id: string, opts: HitsOpts): Promise<void> {
     const page = await client.listHits(fullId, { limit });
     const filtered = page.data.filter(filter);
     emit(
-      () => render(filtered, Boolean(opts.verbose)),
+      () =>
+        render(filtered, {
+          verbose: Boolean(opts.verbose),
+          ref: id,
+          keyId: fullId,
+          key: resolved.key,
+        }),
       { data: filtered, next_cursor: page.next_cursor },
     );
   });
@@ -135,160 +156,115 @@ function printFollowLine(h: Hit): void {
     process.stdout.write(jsonText(h) + "\n");
     return;
   }
+  const ip = h.ip == null ? c.dim("unknown") : safeText(h.ip);
+  const tag = h.bot_label ? ` ${c.dim(`bot: ${safeText(h.bot_label)}`)}` : "";
   process.stdout.write(
-    `${c.dim(formatTime(h.occurred_at))} ${c.cyan(safeText(h.ip ?? "-"))} ${c.dim(formatUaShort(h))}${h.bot_label ? " " + c.yellow(`bot:${safeText(h.bot_label)}`) : ""}\n`,
+    `${c.dim(formatTime(h.occurred_at))} ${ip} ${hitWho(h)}${tag}\n`,
   );
 }
 
-function render(hits: Hit[], verbose: boolean): void {
+type RenderCtx = {
+  verbose: boolean;
+  /** The reference the operator typed, echoed back in the next-step hints. */
+  ref: string;
+  keyId: string;
+  /** Known when the reference was symbolic (a prefix or `last`). */
+  key?: Key;
+};
+
+/** `8 hits on 3f9ad0c7  AWS creds honeytoken`: what the list below is. */
+function contextLine(count: number, ctx: RenderCtx): string {
+  const noun = count === 1 ? "hit" : "hits";
+  const shortId = safeText(ctx.keyId).slice(0, 8);
+  const lead = c.bold(`${count} ${noun} on ${shortId}`);
+  return ctx.key ? `${lead}  ${safeText(ctx.key.memo)}` : lead;
+}
+
+function render(hits: Hit[], ctx: RenderCtx): void {
+  const w = process.stdout.write.bind(process.stdout);
+  const ref = safeText(ctx.ref);
   if (hits.length === 0) {
-    process.stdout.write(
-      c.dim("no hits — trigger the key URL to generate one. Or `mantis hits <id> --follow` to watch live.\n"),
+    const shortId = safeText(ctx.keyId).slice(0, 8);
+    const memo = ctx.key ? `  ${safeText(ctx.key.memo)}` : "";
+    w(`No hits yet on ${c.bold(shortId)}${memo}\n`);
+    process.stderr.write(
+      hintLines(
+        `Trigger the key URL, or watch for the first one with \`mantis hits ${ref} --follow\`.`,
+      ),
     );
     return;
   }
-  if (verbose) {
-    for (const h of hits) renderOne(h);
+  w(`${contextLine(hits.length, ctx)}\n\n`);
+  if (ctx.verbose) {
+    hits.forEach((h, i) => {
+      if (i) w("\n");
+      renderOne(h);
+    });
     return;
   }
-  const rows = hits.map((h) => [
-    formatTime(h.occurred_at),
-    h.ip == null ? null : safeText(h.ip),
-    h.host_context ? formatHostCtxShort(h.host_context) : formatUaShort(h),
-    botCell(h),
-    notifyCell(h),
-  ]);
-  process.stdout.write(
-    table(["when", "ip", "who", "tag", "notify"], rows) + "\n",
+  w(hitsTable(hits) + "\n");
+  const legend = deliveryLegend(hits);
+  const next = `\`mantis hits ${ref} --verbose\` shows each hit in full.`;
+  process.stderr.write(
+    "\n" + (legend ? `${legend}\n` : "") + hintLines(next),
   );
 }
 
-// Everything on a hit except its counters was chosen by whoever fired the key
-// (IP, user agent, referer, headers, host context) or whoever configured it
-// (destination targets), so every field goes through safeText() before it is
-// colored or truncated.
+/** `203.0.113.57:51514 → 10.20.0.5:22` from an SSH_CONNECTION value. */
+function sshRoute(raw: string): string {
+  const parts = raw.trim().split(/\s+/);
+  if (parts.length !== 4) return safeText(raw);
+  const [fromIp, fromPort, toIp, toPort] = parts.map(safeText);
+  return `${fromIp}:${fromPort} ${arrow.right()} ${toIp}:${toPort}`;
+}
+
+// One hit in full: the who, from where and when first, then the detail in
+// the shared label block. Empty fields are left out.
 function renderOne(h: Hit): void {
   const w = process.stdout.write.bind(process.stdout);
   const s = safeText;
-  w(`${c.bold(s(h.id))} ${c.dim(`(${formatTime(h.occurred_at)})`)}\n`);
-  w(`  ${c.dim("at:    ")} ${s(h.occurred_at)}\n`);
-  if (h.host_context) {
-    const ctx = h.host_context;
-    w(`  ${c.green("host event:")}\n`);
-    if (ctx.source) w(`    ${c.dim("source:    ")} ${c.green(s(ctx.source))}\n`);
-    if (ctx.user) w(`    ${c.dim("user:      ")} ${c.cyan(s(ctx.user))}\n`);
-    if (ctx.host) w(`    ${c.dim("host:      ")} ${c.cyan(s(ctx.host))}\n`);
-    if (ctx.ssh_client_ip)
-      w(`    ${c.dim("ssh ←:     ")} ${c.yellow(s(ctx.ssh_client_ip))}\n`);
-    if (ctx.ssh_connection)
-      w(`    ${c.dim("ssh:       ")} ${s(ctx.ssh_connection)}\n`);
-    if (ctx.tty) w(`    ${c.dim("tty:       ")} ${s(ctx.tty)}\n`);
-    if (ctx.sudo_cmd)
-      w(`    ${c.dim("sudo cmd:  ")} ${c.yellow(s(ctx.sudo_cmd))}\n`);
-    if (ctx.network_interface)
-      w(`    ${c.dim("interface: ")} ${s(ctx.network_interface)}\n`);
-    if (ctx.event) w(`    ${c.dim("event:     ")} ${c.green(s(ctx.event))}\n`);
-    if (ctx.device) w(`    ${c.dim("device:    ")} ${c.cyan(s(ctx.device))}\n`);
-    if (ctx.entity_id) w(`    ${c.dim("entity:    ")} ${s(ctx.entity_id)}\n`);
-    if (ctx.automation) w(`    ${c.dim("automation:")} ${s(ctx.automation)}\n`);
-    if (ctx.area) w(`    ${c.dim("area:      ")} ${s(ctx.area)}\n`);
-    if (ctx.iot_mac) w(`    ${c.dim("mac:       ")} ${s(ctx.iot_mac)}\n`);
-    if (ctx.iot_ip) w(`    ${c.dim("iot ip:    ")} ${s(ctx.iot_ip)}\n`);
+  const ctx = h.host_context;
+  const lead = ctx
+    ? hitWho({ ...h, host_context: { ...ctx, source: null } })
+    : `${h.ip == null ? "unknown address" : c.bold(s(h.ip))} ${dot()} ${agentShort(h)}`;
+  w(`${lead} ${c.dim(`${dot()} ${formatAgo(h.occurred_at)}`)}\n`);
+
+  const rows: KvRow[] = [
+    ["at", formatStamp(h.occurred_at, { seconds: true })],
+    ["hit id", s(h.id)],
+  ];
+  if (ctx) {
+    if (ctx.source) rows.push(["source", s(ctx.source)]);
+    if (ctx.ssh_connection) rows.push(["ssh", sshRoute(ctx.ssh_connection)]);
+    if (ctx.tty) rows.push(["tty", s(ctx.tty)]);
+    if (ctx.sudo_cmd) rows.push(["sudo", s(ctx.sudo_cmd)]);
+    if (ctx.network_interface) rows.push(["interface", s(ctx.network_interface)]);
+    if (ctx.event) rows.push(["event", s(ctx.event)]);
+    if (ctx.device) rows.push(["device", s(ctx.device)]);
+    if (ctx.entity_id) rows.push(["entity", s(ctx.entity_id)]);
+    if (ctx.automation) rows.push(["automation", s(ctx.automation)]);
+    if (ctx.area) rows.push(["area", s(ctx.area)]);
+    if (ctx.iot_mac) rows.push(["mac", s(ctx.iot_mac)]);
+    if (ctx.iot_ip) rows.push(["device ip", s(ctx.iot_ip)]);
   }
-  w(`  ${c.dim("ip:    ")} ${h.ip == null ? c.dim("-") : s(h.ip)}\n`);
-  w(`  ${c.dim("ua:    ")} ${formatUaLong(h)}\n`);
-  if (h.bot_label) w(`  ${c.dim("bot:   ")} ${c.yellow(s(h.bot_label))}\n`);
-  if (h.is_duplicate)
-    w(`  ${c.dim("dup:   ")} ${c.dim("yes (suppressed notifications)")}\n`);
-  w(`  ${c.dim("ref:   ")} ${h.referer == null ? c.dim("-") : s(h.referer)}\n`);
+  // The request's address, unless the line above already says it.
+  if (h.ip != null && h.ip !== ctx?.ssh_client_ip) rows.push(["ip", s(h.ip)]);
+  if (h.ip == null && !ctx) rows.push(["ip", c.dim("unknown")]);
+  rows.push(["agent", agentLong(h)]);
+  if (h.bot_label) rows.push(["bot", s(h.bot_label)]);
+  if (h.referer != null) rows.push(["referer", s(h.referer)]);
+  if (h.is_duplicate) {
+    rows.push(["duplicate", "yes, notifications suppressed"]);
+  }
   if (h.notifications.length > 0) {
-    w(`  ${c.dim("notify:")}\n`);
-    for (const n of h.notifications) {
-      w(`    ${formatNotif(n)}\n`);
-    }
+    const room = termWidth() - (2 + KV_LABEL_WIDTH + 1);
+    rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
   if (h.headers && !isJsonMode()) {
-    w(`  ${c.dim("headers:")}\n`);
-    for (const [k, v] of Object.entries(h.headers)) {
-      w(`    ${c.dim(s(k) + ":")} ${s(v)}\n`);
-    }
+    const lines = Object.entries(h.headers).map(
+      ([k, v]) => `${c.dim(`${s(k)}:`)} ${s(v)}`,
+    );
+    if (lines.length > 0) rows.push(["headers", lines]);
   }
-  w("\n");
-}
-
-function formatHostCtxShort(ctx: NonNullable<Hit["host_context"]>): string {
-  const parts: string[] = [];
-  const s = safeText;
-  if (ctx.source) parts.push(c.green(s(ctx.source)));
-  if (ctx.user) parts.push(c.cyan(s(ctx.user)));
-  if (ctx.host) parts.push("@ " + s(ctx.host));
-  if (ctx.ssh_client_ip)
-    parts.push(c.yellow(`${glyph("←", "<-")} ` + s(ctx.ssh_client_ip)));
-  if (ctx.sudo_cmd) parts.push(c.yellow("sudo " + s(ctx.sudo_cmd)));
-  if (ctx.network_interface) parts.push("iface=" + s(ctx.network_interface));
-  if (ctx.event) parts.push(c.green(s(ctx.event)));
-  if (ctx.device) parts.push(c.cyan(s(ctx.device)));
-  if (ctx.entity_id) parts.push(s(ctx.entity_id));
-  if (ctx.iot_mac) parts.push(s(ctx.iot_mac));
-  return parts.join(` ${glyph("·", "|")} `);
-}
-
-function formatUaShort(h: Hit): string {
-  if (h.ua_browser) {
-    const ver = h.ua_browser_version ? ` ${safeText(h.ua_browser_version)}` : "";
-    const os = h.ua_os ? ` ${glyph("·", "|")} ${safeText(h.ua_os)}` : "";
-    return `${safeText(h.ua_browser)}${ver}${os}`;
-  }
-  return truncate(safeText(h.user_agent), 50);
-}
-
-function formatUaLong(h: Hit): string {
-  if (h.ua_browser) {
-    return `${safeText(h.ua_browser)} ${safeText(h.ua_browser_version)} on ${safeText(h.ua_os ?? "?")} (${safeText(h.ua_device ?? "?")})`;
-  }
-  return safeText(h.user_agent ?? "-");
-}
-
-function botCell(h: Hit): string {
-  if (h.bot_label) return c.yellow(safeText(h.bot_label));
-  if (h.is_duplicate) return c.dim("dup");
-  return "";
-}
-
-function notifyCell(h: Hit): string {
-  if (h.is_duplicate) return c.dim("suppressed");
-  if (h.notifications.length === 0) return c.dim("-");
-  const succeeded = h.notifications.filter((n) => n.status === "succeeded").length;
-  const failed = h.notifications.filter((n) => n.status === "failed").length;
-  const pending = h.notifications.filter(
-    (n) => n.status === "pending" || n.status === "in_flight",
-  ).length;
-  const parts: string[] = [];
-  if (succeeded) parts.push(c.green(`✓${succeeded}`));
-  if (pending) parts.push(c.yellow(`⏳${pending}`));
-  if (failed) parts.push(c.red(`⚠${failed}`));
-  return parts.join(" ");
-}
-
-function formatNotif(n: NotificationSummary): string {
-  const status = safeText(n.status);
-  let color = c.dim;
-  if (n.status === "succeeded") color = c.green;
-  else if (n.status === "failed") color = c.red;
-  else if (n.status === "pending" || n.status === "in_flight") color = c.yellow;
-  const attempts =
-    n.attempts > 0
-      ? c.dim(` (${safeText(n.attempts)}/${safeText(n.max_attempts)})`)
-      : "";
-  // Escape before cutting, so the 80 columns are counted in visible text.
-  const err = n.last_error
-    ? `\n      ${c.red(safeText(n.last_error).slice(0, 80))}`
-    : "";
-  const target =
-    n.target != null
-      ? safeText(n.target)
-      : n.destination_scope === "global"
-        ? "(global destination)"
-        : "(destination removed)";
-  return `${color(status.padEnd(10))} ${safeText(n.channel).padEnd(8)} ${c.dim(target)}${attempts}${err}`;
+  w(kv(rows));
 }

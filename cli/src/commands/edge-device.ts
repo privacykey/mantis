@@ -26,7 +26,7 @@ import {
   assertBundleInstallableHere,
   writeBundleTo,
 } from "../lib/device-install.js";
-import { c, emit, ExitCode, fail } from "../lib/out.js";
+import { c, emit, ExitCode, fail, mark } from "../lib/out.js";
 import { URL_RE } from "../lib/wizard.js";
 import {
   decodeKey,
@@ -195,14 +195,14 @@ export async function edgeDeviceCmd(opts: EdgeDeviceOpts): Promise<void> {
   emit(
     () => {
       process.stderr.write(
-        `${c.green("✓")} ${c.bold(device)} ${installed ? "armed" : "minted"} (edge) — ${minted.length} alarm(s)\n`,
+        `${mark("ok")} ${c.bold(device)} ${installed ? "armed" : "minted"} (edge) — ${minted.length} alarm(s)\n`,
       );
       for (const m of minted) {
         process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.cyan(m.url)}\n`);
       }
       if (bundleDir) {
         process.stderr.write(
-          `\n${c.green("✓")} bundle → ${c.cyan(bundleDir)}\n`,
+          `\n${mark("ok")} bundle → ${c.cyan(bundleDir)}\n`,
         );
       }
       process.stderr.write(

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command, Option } from "commander";
+import { Command, Help, Option } from "commander";
 import {
   cloudflareLoginCmd,
   cloudflareLogoutCmd,
@@ -44,10 +44,15 @@ import { CLI_VERSION } from "./version.js";
 import { type CliDefaults, getDefaults, readConfig } from "./lib/config.js";
 import { listEdgeKeyWorkers } from "./lib/edge-key.js";
 import {
+  arrow,
   c,
+  cmd,
   type ColorMode,
+  colorOn,
   fail,
+  hintLines,
   isDebug,
+  prose,
   safeBlock,
   safeText,
   setColorMode,
@@ -89,6 +94,55 @@ function collect(value: string, prev?: string[]): string[] {
 }
 
 const program = new Command();
+
+// Help is laid out once, here, and every subcommand inherits it: bold section
+// titles, command names without the "[options]" noise, and on the root help
+// the commands before the global options, because the commands are what a
+// reader came for.
+program.configureHelp({
+  styleTitle: (title) => c.bold(title),
+  subcommandTerm: (sub) => {
+    const args = sub.registeredArguments
+      .map((arg) => {
+        const name = arg.name() + (arg.variadic ? "..." : "");
+        return arg.required ? `<${name}>` : `[${name}]`;
+      })
+      .join(" ");
+    return args ? `${sub.name()} ${args}` : sub.name();
+  },
+  formatHelp(command, helper) {
+    const text = Help.prototype.formatHelp.call(helper, command, helper);
+    if (command.parent) return text;
+    const blocks = text.trimEnd().split("\n\n");
+    const isOptions = (block: string) =>
+      block.replace(/\x1b\[[0-9;]*m/g, "").startsWith("Options:");
+    return (
+      [...blocks.filter((b) => !isOptions(b)), ...blocks.filter(isOptions)].join(
+        "\n\n",
+      ) + "\n"
+    );
+  },
+});
+program.configureOutput({
+  getOutHasColors: () => colorOn(),
+  getErrHasColors: () => colorOn(),
+});
+
+/** Aligned `command   what it does` rows for the first screens. */
+function commandRows(rows: [command: string, what: string][]): string {
+  const width = Math.max(...rows.map(([command]) => command.length));
+  return rows
+    .map(
+      ([command, what]) =>
+        `  ${cmd(command)}${" ".repeat(width - command.length)}   ${c.dim(what)}\n`,
+    )
+    .join("");
+}
+
+/** The line every first screen opens with: the name, version and what it is. */
+function banner(): string {
+  return `${c.bold(c.green("mantis"))} ${c.dim(`${CLI_VERSION}  self-hostable tripwires`)}\n`;
+}
 
 program
   .name("mantis")
@@ -135,84 +189,83 @@ program
     const edgeWorkers = await listEdgeKeyWorkers();
     const hasEdge = edgeWorkers.length > 0;
 
+    const out = process.stdout.write.bind(process.stdout);
+    const helpPointer = () =>
+      process.stdout.write(
+        "\n" +
+          prose(
+            "`mantis --help` lists every command; `mantis <command> --help` explains one.",
+            c.dim,
+          ) +
+          "\n",
+      );
+
     // Case 1: brand-new — neither stateful login nor an edge key.
     if (!hasProfile && !hasEdge) {
-      process.stdout.write(
-        `${c.bold("Welcome to mantis.")} ${c.dim("Self-hostable tripwires for the terminal.")}
-
-${c.dim("Fastest:")} ${c.cyan("mantis init")} ${c.dim("— guided setup (asks server or edge, does the rest)")}
-
-Or set up by hand — two ways to use mantis, pick whichever fits, or both:
-
-  ${c.dim("1. Stateful server")} ${c.dim("(dashboard, hit history, multi-destination keys)")}
-       ${c.cyan("mantis login")}                       ${c.dim("# interactive: server URL + API key")}
-
-  ${c.dim("2. Cloudflare Worker edge")} ${c.dim("(no server, sub-50ms response, self-contained URLs)")}
-       ${c.cyan("mantis edge keygen")}                 ${c.dim("# generate an AES key")}
-       ${c.cyan("mantis edge set-key <worker-url>")}   ${c.dim("# store it locally")}
-
-Then explore: ${c.dim("mantis --help")}
-`,
+      out(banner());
+      out("Not set up yet. There are two ways to use mantis; pick one, or both.\n");
+      out(`\n${c.bold("Guided setup")}\n`);
+      out(commandRows([["mantis init", "asks server or edge, then does the rest"]]));
+      out(`\n${c.bold("A mantis server")} ${c.dim("(dashboard, hit history, many destinations per key)")}\n`);
+      out(commandRows([["mantis login", "asks for the server URL and an API key"]]));
+      out(`\n${c.bold("A Cloudflare Worker edge")} ${c.dim("(no server, self-contained URLs)")}\n`);
+      out(
+        commandRows([
+          ["mantis edge keygen", "generate an AES key"],
+          ["mantis edge set-key <worker-url>", "store it on this machine"],
+        ]),
       );
+      helpPointer();
       return;
     }
 
     // Case 2: edge-only — no stateful profile yet, but an edge key is set up.
     if (!hasProfile && hasEdge) {
-      const workerList = edgeWorkers
-        .slice(0, 3)
-        .map((w) => `  ${c.cyan(safeText(w))}`)
-        .join("\n");
-      const more =
-        edgeWorkers.length > 3
-          ? `\n  ${c.dim(`(+${edgeWorkers.length - 3} more)`)}`
-          : "";
-      process.stdout.write(
-        `${c.dim("Edge keys configured for:")}
-${workerList}${more}
-
-You're set up for ${c.bold("mantis-edge")} but haven't logged into a stateful server. That's expected — most edge use cases don't need one.
-
-${c.dim("Quick start (edge):")}
-  ${c.cyan("mantis edge mint")}                              ${c.dim("# interactive wizard")}
-  ${c.cyan("mantis edge mint --webhook <url> --channel discord")}
-  ${c.cyan("mantis edge install <url> --type shell")}        ${c.dim("# host snippet for a minted URL")}
-
-${c.dim("If you also want a stateful server (dashboard, hit history, multi-destination keys):")}
-  ${c.cyan("mantis login")}
-
-`,
+      out(banner());
+      const shown = edgeWorkers.slice(0, 3).map((w) => c.cyan(safeText(w)));
+      const more = edgeWorkers.length > 3 ? c.dim(` and ${edgeWorkers.length - 3} more`) : "";
+      out(`${c.dim("Edge keys for")} ${shown.join(c.dim(", "))}${more}\n`);
+      out(`\n${c.bold("Start here")}\n`);
+      out(
+        commandRows([
+          ["mantis edge mint", "create an edge URL, step by step"],
+          ["mantis edge mint --webhook <url> --channel discord", "create one in a single line"],
+          ["mantis edge install <url> --type shell", "host snippet for a minted URL"],
+        ]),
       );
-      program.outputHelp();
+      out(
+        "\n" +
+          hintLines(
+            "No mantis server is set up, which most edge use does not need. For a dashboard and hit history, run `mantis login`.",
+          ),
+      );
+      helpPointer();
       return;
     }
 
     // Case 3 + 4: stateful profile present (with or without edge).
     const profileName = stored!.currentProfile;
     const entry = stored!.profiles[profileName];
-    process.stdout.write(
-      `${c.dim("Logged in as")} ${c.bold(safeText(profileName))} ${c.dim("→")} ${safeText(entry?.baseUrl ?? "?")}\n`,
+    out(banner());
+    out(
+      `${c.dim("Logged in as")} ${c.bold(safeText(profileName))} ${c.dim(arrow.right())} ${safeText(entry?.baseUrl ?? "?")}\n`,
     );
     if (hasEdge) {
-      process.stdout.write(
-        `${c.dim("Edge keys:  ")} ${edgeWorkers.length === 1 ? c.cyan(safeText(edgeWorkers[0]!)) : `${edgeWorkers.length} workers`}\n`,
+      out(
+        `${c.dim("Edge keys for")} ${edgeWorkers.length === 1 ? c.cyan(safeText(edgeWorkers[0]!)) : `${edgeWorkers.length} workers`}\n`,
       );
     }
-    process.stdout.write(
-      `
-${c.dim("Quick start:")}
-  ${c.cyan('mantis new "my first key"')}    ${c.dim("# create a key")}
-  ${c.cyan("mantis list")}                   ${c.dim("# see all keys")}
-  ${c.cyan("mantis hits last --follow")}     ${c.dim("# tail hits live")}` +
-        (hasEdge
-          ? `
-  ${c.cyan("mantis edge mint")}              ${c.dim("# stateless edge URL")}`
-          : "") +
-        `
-
-`,
-    );
-    program.outputHelp();
+    out(`\n${c.bold("Start here")}\n`);
+    const rows: [string, string][] = [
+      ["mantis status", "which keys have tripped"],
+      ["mantis list", "every key"],
+      ["mantis hits last --follow", "hits on your newest key, as they arrive"],
+      ['mantis new "my first key"', "create a key"],
+    ];
+    if (hasEdge) rows.push(["mantis edge mint", "create a stateless edge URL"]);
+    rows.push(["mantis doctor", "check the server and your login"]);
+    out(commandRows(rows));
+    helpPointer();
   });
 
 program
@@ -1280,44 +1333,73 @@ plugin
     await pluginUpgradeCmd(name);
   });
 
+// Short lines for the command list. A command's own --help keeps its full
+// description, caveats included.
+const SUMMARIES: Record<string, string> = {
+  init: "guided first-time setup, for a server or an edge worker",
+  login: "store an API key for a profile",
+  logout: "remove a profile and its stored credentials",
+  backup: "export every profile to a passphrase-encrypted file",
+  restore: "restore profiles and plugins from a backup file",
+  whoami: "show the current profile, server and key",
+  doctor: "check config, server health, auth and hosts",
+  detect: "scan this machine for mantis-style installer artifacts",
+  profile: "manage profiles for several servers and edge workers",
+  cloudflare: "manage Cloudflare Access auth for the API",
+  device: "mint and install every host alarm for one machine",
+  edge: "manage stateless mantis-edge (Cloudflare Worker) keys",
+  new: "create a key",
+  "bulk-create": "create keys from a CSV",
+  download: "download generated canary files for a key",
+  monitor: "set a key's monitor mode for uptime tools",
+  reset: "clear a key's tripped state (latch mode)",
+  status: "show which monitored keys have tripped, and why",
+  last: "print the id of the key you created most recently",
+  open: "open a key's dashboard page in the browser",
+  install: "generate a host-install or web-embed snippet for a key",
+  list: "list keys",
+  show: "show one key",
+  rm: "delete keys and their hits",
+  destinations: "manage a key's notification destinations",
+  audit: "read the audit log (admin keys only)",
+  hits: "show recent hits for a key",
+  watch: "print new hits as they arrive",
+  completion: "print a shell completion script",
+};
+
+// The command list in --help, most used first.
+const HELP_GROUPS: [heading: string, names: string[]][] = [
+  ["Keys:", ["new", "list", "show", "hits", "watch", "install", "download", "open", "destinations", "disable", "enable", "rm", "bulk-create", "last"]],
+  ["Monitoring:", ["status", "monitor", "reset"]],
+  ["Hosts and edge:", ["device", "edge", "detect"]],
+  ["Setup and account:", ["init", "login", "logout", "whoami", "doctor", "profile", "cloudflare", "config", "plugin", "backup", "restore", "audit", "completion"]],
+];
+{
+  const order = new Map<string, number>();
+  for (const [heading, names] of HELP_GROUPS) {
+    for (const name of names) {
+      order.set(name, order.size);
+      program.commands.find((sub) => sub.name() === name)?.helpGroup(heading);
+    }
+  }
+  for (const sub of program.commands) {
+    const summary = SUMMARIES[sub.name()];
+    if (summary) sub.summary(summary);
+  }
+  // Groups print in the order their first command was registered.
+  (program.commands as Command[]).sort(
+    (x, y) => (order.get(x.name()) ?? 999) - (order.get(y.name()) ?? 999),
+  );
+}
+
 program.addHelpText(
   "after",
-  `
-${c.bold("Common commands, grouped:")}
-
-  ${c.dim("Getting started")}
-    init, login, doctor, completion
-
-  ${c.dim("Auth & profiles")}
-    login, logout, whoami, profile (list|use|show|rm|set-edge), cloudflare ...
-
-  ${c.dim("Keys (create / inspect / lifecycle)")}
-    new, bulk-create, list, show, last, open, disable, enable, rm
-
-  ${c.dim("Hits & monitoring")}
-    hits [--follow --since --ip --bot-only], watch,
-    status [--watch --tripped-only], monitor, reset
-
-  ${c.dim("Notifications")}
-    destinations (list|add|rm|test|rotate-secret)  ${c.dim("(alias: dest)")}
-
-  ${c.dim("Audit")}
-    audit log [--since --type --actor]
-
-  ${c.dim("File artifacts (drop-in canaries)")}
-    download <id> --docx|xlsx|pptx|pdf|folder|svg|html|md|eml|ics|vcf|nfc-label|apple-wallet <path>
-
-  ${c.dim("Host-event installers")}
-    install <id> --type shell|*-login|*-boot|*-wake|*-network|css-background|js-clone-detector|nfc-ndef|homeassistant|scrypted
-
-  ${c.dim("mantis-edge (stateless Cloudflare Worker)")}
-    edge keygen, edge set-key, edge mint, edge delete-key
-
+  () => `
 ${c.bold("Tips:")}
-  - Any <id> accepts a prefix (≥4 hex) or the literal ${c.cyan("last")} (the key this API key created most recently).
-    Example: ${c.dim("mantis hits last --follow")}
-  - Use ${c.cyan("--profile <name>")} (or env ${c.cyan("MANTIS_PROFILE")}) to target a non-current profile.
-  - Use ${c.cyan("--output json|table|wide")}, ${c.cyan("--quiet")}, ${c.cyan("--no-headers")}, or id/url-only flags for scripts.
+  Any <id> takes a full key id, its first 4 or more characters, or ${cmd("last")}
+  (the key this API key created most recently): ${cmd("mantis hits last --follow")}
+  ${cmd("--profile <name>")} targets another profile. For scripts, use ${cmd("--json")},
+  ${cmd("--quiet")}, ${cmd("--no-headers")} or a command's --id-only and --url-only.
 `,
 );
 

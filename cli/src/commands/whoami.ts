@@ -4,7 +4,7 @@ import {
   getKey,
   getProfile,
 } from "../lib/config.js";
-import { c, emit, fail, safeText } from "../lib/out.js";
+import { c, emit, fail, heading, kv, type KvRow, mark, safeText } from "../lib/out.js";
 
 export async function whoamiCmd(opts: { profile?: string } = {}): Promise<void> {
   const profileName = opts.profile ?? (await getCurrentProfileName());
@@ -31,29 +31,28 @@ export async function whoamiCmd(opts: { profile?: string } = {}): Promise<void> 
 
   emit(
     () => {
-      process.stdout.write(`${c.dim("profile:   ")} ${c.bold(safeText(profileName))}\n`);
-      process.stdout.write(`${c.dim("server:    ")} ${safeText(entry.baseUrl)}\n`);
-      process.stdout.write(
-        `${c.dim("key:       ")} ${safeText(keyPrefix ?? "(missing)")}${key ? "" : c.red(" (no keychain entry)")}${stalePrefix ? c.yellow(` (this profile recorded ${safeText(entry.keyPrefix)}; the key stored for this server has been replaced since)`) : ""}\n`,
-      );
+      const rows: KvRow[] = [["server", safeText(entry.baseUrl)]];
+      const keyLines = [
+        key ? safeText(keyPrefix ?? "") : `${mark("fail")} ${c.red("no keychain entry")}${keyPrefix ? c.dim(` for ${safeText(keyPrefix)}`) : ""}`,
+      ];
+      if (stalePrefix) {
+        keyLines.push(
+          `${mark("warn")} ${c.yellow(`this profile recorded ${safeText(entry.keyPrefix)}; the key stored for this server has been replaced since`)}`,
+        );
+      }
+      rows.push(["key", keyLines]);
       if (cfMode === "sso") {
-        process.stdout.write(
-          `${c.dim("cloudflare:")} ${c.cyan("sso")} (app: ${safeText(cfApp ?? entry.baseUrl)})\n`,
-        );
+        rows.push(["cloudflare", `sso ${c.dim(`(app ${safeText(cfApp ?? entry.baseUrl)})`)}`]);
       } else if (cfMode === "service-auth") {
-        process.stdout.write(
-          `${c.dim("cloudflare:")} ${c.cyan("service-auth")}${
-            sa ? "" : c.red(" (keychain entry missing)")
-          }\n`,
-        );
+        rows.push([
+          "cloudflare",
+          sa ? "service-auth" : `service-auth ${mark("fail")} ${c.red("keychain entry missing")}`,
+        ]);
       } else {
-        process.stdout.write(`${c.dim("cloudflare:")} ${c.dim("off")}\n`);
+        rows.push(["cloudflare", c.dim("off")]);
       }
-      if (entry.edgeWorkerUrl) {
-        process.stdout.write(
-          `${c.dim("edge:      ")} ${safeText(entry.edgeWorkerUrl)}\n`,
-        );
-      }
+      if (entry.edgeWorkerUrl) rows.push(["edge", safeText(entry.edgeWorkerUrl)]);
+      process.stdout.write(`${heading(safeText(profileName), "profile")}\n${kv(rows)}`);
     },
     {
       profile: profileName,

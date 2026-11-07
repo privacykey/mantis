@@ -34,6 +34,7 @@ import {
   isJsonMode,
   safeBlock,
   safeText,
+  mark,
 } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 import {
@@ -135,7 +136,7 @@ export async function setKeyCmd(opts: {
   emit(
     () => {
       process.stderr.write(
-        `${c.green("✓")} stored edge key for ${c.cyan(workerUrl)}\n`,
+        `${mark("ok")} stored edge key for ${c.cyan(workerUrl)}\n`,
       );
     },
     { worker: workerUrl, stored: true },
@@ -152,7 +153,7 @@ export function deleteKeyCmd(opts: { worker?: string }): void {
   emit(
     () => {
       process.stderr.write(
-        `${c.green("✓")} cleared edge key for ${c.cyan(workerUrl)}\n`,
+        `${mark("ok")} cleared edge key for ${c.cyan(workerUrl)}\n`,
       );
     },
     { worker: workerUrl, deleted: true },
@@ -210,7 +211,7 @@ export async function deployCmd(opts: {
   }
   if (!existsSync(join(workerDir, "node_modules"))) {
     process.stderr.write(
-      `${c.yellow("⚠")} ${workerDir}/node_modules is missing — wrangler isn't installed there yet.\n` +
+      `${mark("warn")} ${workerDir}/node_modules is missing — wrangler isn't installed there yet.\n` +
         `  If deploy fails, run ${c.cyan("npm install")} in that directory first.\n`,
     );
   }
@@ -243,7 +244,7 @@ export async function deployCmd(opts: {
       });
     } catch (err) {
       process.stderr.write(
-        `${c.red("✗")} couldn't launch wrangler (${err instanceof Error ? err.message : String(err)}).\n` +
+        `${mark("fail")} couldn't launch wrangler (${err instanceof Error ? err.message : String(err)}).\n` +
           `  Deploy manually: cd ${workerDir} && npx wrangler deploy\n`,
       );
       resolveExit(-1);
@@ -259,7 +260,7 @@ export async function deployCmd(opts: {
     });
     child.on("error", (err) => {
       process.stderr.write(
-        `${c.red("✗")} couldn't launch wrangler (${err.message}).\n` +
+        `${mark("fail")} couldn't launch wrangler (${err.message}).\n` +
           `  Deploy manually: cd ${workerDir} && npx wrangler deploy\n`,
       );
       resolveExit(-1);
@@ -280,7 +281,7 @@ export async function deployCmd(opts: {
     emit(
       () =>
         process.stderr.write(
-          `\n${c.green("✓")} deploy finished, but I couldn't detect the worker URL from wrangler's output.\n` +
+          `\n${mark("ok")} deploy finished, but I couldn't detect the worker URL from wrangler's output.\n` +
             `  Copy it from above, then run ${c.cyan("mantis edge set-key <worker-url>")}.\n`,
         ),
       { deployed: true, worker: null },
@@ -292,7 +293,7 @@ export async function deployCmd(opts: {
   if (opts.setKey) {
     if (!isJsonMode()) {
       process.stderr.write(
-        `\n${c.green("✓")} deployed: ${c.cyan(workerUrl)}\n` +
+        `\n${mark("ok")} deployed: ${c.cyan(workerUrl)}\n` +
           `${c.dim("The worker also needs the key as a secret:")} ${c.cyan("npx wrangler secret put MANTIS_EDGE_KEY")}\n` +
           `${c.dim("Storing the key locally so the CLI can mint against it:")}\n`,
       );
@@ -304,7 +305,7 @@ export async function deployCmd(opts: {
   emit(
     () =>
       process.stderr.write(
-        `\n${c.green("✓")} deployed: ${c.cyan(workerUrl)}\n\n` +
+        `\n${mark("ok")} deployed: ${c.cyan(workerUrl)}\n\n` +
           `${c.dim("Next:")}\n` +
           `  ${c.cyan("npx wrangler secret put MANTIS_EDGE_KEY")}   ${c.dim("# set the AES key ON the worker")}\n` +
           `  ${c.cyan(`mantis edge set-key ${workerUrl}`)}   ${c.dim("# store it locally for minting")}\n` +
@@ -487,7 +488,7 @@ async function renderInstaller(
     () => {
       if (writtenTo) {
         process.stderr.write(
-          `${c.green("✓")} wrote ${c.bold(installer.type)} installer to ${c.cyan(writtenTo)}\n`,
+          `${mark("ok")} wrote ${c.bold(installer.type)} installer to ${c.cyan(writtenTo)}\n`,
         );
         for (const line of installer.install) {
           process.stderr.write(`  ${c.dim(line)}\n`);
@@ -763,7 +764,7 @@ async function askWorker(rl: Interface, opts: Wizardish): Promise<void> {
         return;
       }
       process.stderr.write(
-        `  ${c.red("!")} must start with https:// — try again.\n`,
+        `  ${mark("fail")} ${c.red(`Must start with https://.`)}\n`,
       );
     }
   }
@@ -780,7 +781,7 @@ async function askWorker(rl: Interface, opts: Wizardish): Promise<void> {
         return;
       }
       process.stderr.write(
-        `  ${c.red("!")} must start with https:// — try again.\n`,
+        `  ${mark("fail")} ${c.red(`Must start with https://.`)}\n`,
       );
     }
   }
@@ -812,7 +813,7 @@ async function askWorker(rl: Interface, opts: Wizardish): Promise<void> {
       return;
     }
     process.stderr.write(
-      `  ${c.red("!")} pick 1–${known.length} or paste an https:// URL\n`,
+      `  ${mark("fail")} ${c.red(`Pick 1–${known.length} or paste an https:// URL`)}\n`,
     );
   }
 }
@@ -862,7 +863,7 @@ async function askInstallerSubtree(
       break;
     }
     process.stderr.write(
-      `    ${c.red("!")} not a valid choice. Pick a number 1–${ordered.length} or one of: ${ordered.join(", ")}\n`,
+      `    ${mark("fail")} ${c.red(`Not a valid choice. Pick a number 1–${ordered.length} or one of: ${ordered.join(", ")}`)}\n`,
     );
   }
 
@@ -887,7 +888,7 @@ async function askInstallerSubtree(
         break;
       }
       process.stderr.write(
-        `    ${c.red("!")} hostname is required for js-clone-detector.\n`,
+        `    ${mark("fail")} ${c.red(`Hostname is required for js-clone-detector.`)}\n`,
       );
     }
   }
@@ -923,7 +924,7 @@ async function askResponseKind(rl: Interface, opts: Wizardish): Promise<void> {
       return;
     }
     process.stderr.write(
-      `  ${c.red("!")} must be one of ${RESPONSE_KINDS.join(", ")}.\n`,
+      `  ${mark("fail")} ${c.red(`Must be one of ${RESPONSE_KINDS.join(", ")}.`)}\n`,
     );
   }
 }
@@ -947,7 +948,7 @@ async function askChannelAndWebhook(
         break;
       }
       process.stderr.write(
-        `  ${c.red("!")} must be one of ${CHANNELS.join(", ")}.\n`,
+        `  ${mark("fail")} ${c.red(`Must be one of ${CHANNELS.join(", ")}.`)}\n`,
       );
     }
   }
@@ -961,7 +962,7 @@ async function askChannelAndWebhook(
       ).trim();
       if (!URL_RE.test(ans)) {
         process.stderr.write(
-          `  ${c.red("!")} must start with https:// — try again.\n`,
+          `  ${mark("fail")} ${c.red(`Must start with https://.`)}\n`,
         );
         continue;
       }
@@ -977,7 +978,7 @@ async function askChannelAndWebhook(
       } else if (inferred && inferred !== opts.channel) {
         const fix = (
           await rl.question(
-            `  ${c.yellow("!")} that looks like a ${inferred} URL but you picked --channel ${opts.channel}. ` +
+            `  ${mark("warn")} That looks like a ${inferred} URL but you picked --channel ${opts.channel}. ` +
               `Switch to ${inferred}? [Y/n]: `,
           )
         ).trim().toLowerCase();
@@ -1023,7 +1024,7 @@ async function confirmLoop(rl: Interface, opts: Wizardish): Promise<void> {
       continue;
     }
     process.stderr.write(
-      `  ${c.red("!")} answer y, n, or edit.\n`,
+      `  ${mark("fail")} ${c.red(`Answer y, n, or edit.`)}\n`,
     );
   }
 }
@@ -1071,7 +1072,7 @@ async function editLoop(rl: Interface, opts: Wizardish): Promise<void> {
     if (!ans) return;
     if (!EDITABLE_FIELDS.includes(ans as never)) {
       process.stderr.write(
-        `  ${c.red("!")} unknown field. Pick one of: ${EDITABLE_FIELDS.join(", ")}.\n`,
+        `  ${mark("fail")} ${c.red(`Unknown field. Pick one of: ${EDITABLE_FIELDS.join(", ")}.`)}\n`,
       );
       continue;
     }
@@ -1155,20 +1156,20 @@ async function testFire(url: string, responseKind: string): Promise<TestResult> 
 function writeTestResult(result: TestResult, channel: string): void {
   if (result.ok) {
     process.stderr.write(
-      `${c.green("✓")} ${c.dim("test:")} worker accepted the URL (HTTP ${result.status}) and queued the webhook. ` +
+      `${mark("ok")} ${c.dim("test:")} worker accepted the URL (HTTP ${result.status}) and queued the webhook. ` +
         `Check your ${c.bold(channel)} destination — the worker fires asynchronously and can't observe its delivery.\n`,
     );
     return;
   }
   if (result.status === 0) {
     process.stderr.write(
-      `${c.red("✗")} ${c.dim("test:")} could not reach worker — ${"error" in result ? safeText(result.error) : "unknown"}\n`,
+      `${mark("fail")} ${c.dim("test:")} could not reach worker — ${"error" in result ? safeText(result.error) : "unknown"}\n`,
     );
     return;
   }
   if (result.status === 404) {
     process.stderr.write(
-      `${c.red("✗")} ${c.dim("test:")} worker returned 404. Likely causes:\n` +
+      `${mark("fail")} ${c.dim("test:")} worker returned 404. Likely causes:\n` +
         `    • webhook host not in MANTIS_EDGE_WEBHOOK_ALLOWLIST (run \`npx wrangler secret list\`)\n` +
         `    • stored edge key differs from the deployed MANTIS_EDGE_KEY secret\n` +
         `    • URL was truncated in transit (try with --copy)\n`,
@@ -1179,7 +1180,7 @@ function writeTestResult(result: TestResult, channel: string): void {
     return;
   }
   process.stderr.write(
-    `${c.yellow("!")} ${c.dim("test:")} unexpected worker status ${result.status}.` +
+    `${mark("warn")} ${c.dim("test:")} unexpected worker status ${result.status}.` +
       ("body" in result && result.body ? ` body: ${safeBlock(result.body)}` : "") +
       "\n",
   );

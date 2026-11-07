@@ -1,5 +1,15 @@
 import type { Destination, NotificationChannel } from "../lib/api.js";
-import { c, emit, fail, safeText, table, truncate } from "../lib/out.js";
+import {
+  c,
+  emit,
+  fail,
+  hintLines,
+  mark,
+  safeText,
+  table,
+  truncate,
+} from "../lib/out.js";
+import { deliveryLines } from "../lib/hit-format.js";
 import { resolveKeyRef, resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import { ALL_CHANNELS } from "../lib/channels.js";
@@ -19,9 +29,10 @@ export async function listDestinationsCmd(
           // Empty-state guidance goes to stderr so `dest list | wc -l` stays
           // honest; mirrors the dest-add error phrasing.
           process.stderr.write(
-            c.dim(
-              `no destinations configured. Add one with \`mantis dest add ${keyId} webhook https://example.com/hook\` (channels: ${VALID_CHANNELS.join(", ")}).\n`,
-            ),
+            "No destinations yet, so hits on this key are only logged.\n" +
+              hintLines(
+                `Add one with \`mantis dest add ${safeText(keyId)} webhook https://example.com/hook\`. Channels: ${VALID_CHANNELS.join(", ")}.`,
+              ),
           );
           return;
         }
@@ -76,7 +87,7 @@ export async function addDestinationCmd(
         }
         const ok = added.last_activation_status === "ok";
         process.stdout.write(
-          `${ok ? c.green("✓") : c.yellow("⚠")} added ${safeText(added.channel)}: ${safeText(added.target)}\n`,
+          `${ok ? mark("ok") : mark("warn")} Added ${safeText(added.channel)}: ${safeText(added.target)}\n`,
         );
         if (!ok && added.last_activation_error) {
           process.stdout.write(
@@ -122,7 +133,7 @@ export async function rmDestinationCmd(
     emit(
       () => {
         process.stdout.write(
-          `${c.green("✓")} removed ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}\n`,
+          `${mark("ok")} Removed ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}\n`,
         );
       },
       { removed: target },
@@ -150,9 +161,7 @@ export async function testDestinationCmd(
 
     if (!opts.yes) {
       process.stderr.write(
-        c.yellow(
-          `⚠ this will trigger the key URL and fire all ${key.destinations.length} configured destination(s).\n`,
-        ),
+        `${mark("warn")} ${c.yellow(`This will trigger the key URL and fire all ${key.destinations.length} configured destination(s).`)}\n`,
       );
       // The test is indistinguishable from a real fire on the server side.
       process.stderr.write(
@@ -211,31 +220,18 @@ export async function testDestinationCmd(
     emit(
       () => {
         const w = process.stdout.write.bind(process.stdout);
-        w(`${c.green("✓")} test triggered hit ${safeText(newHit.id).slice(0, 8)} ${c.dim(`(${formatRelative(newHit.occurred_at)})`)}\n`);
+        w(`${mark("ok")} Test hit ${c.bold(safeText(newHit.id).slice(0, 8))} recorded ${c.dim(formatRelative(newHit.occurred_at))}\n`);
         if (newHit.notifications.length === 0) {
-          w(c.dim("  (notifications still pending — re-run `mantis hits " + fullId.slice(0, 8) + " -v` to follow up)\n"));
+          w(
+            hintLines(
+              `Notifications are still pending. \`mantis hits ${fullId.slice(0, 8)} --verbose\` shows them once they land.`,
+              "  ",
+            ),
+          );
           return;
         }
-        for (const n of newHit.notifications) {
-          const status = n.status;
-          const color =
-            status === "succeeded" ? c.green :
-            status === "failed" ? c.red :
-            c.yellow;
-          w(
-            `  ${color(safeText(status).padEnd(10))} ${safeText(n.channel).padEnd(8)} ${c.dim(
-              truncate(
-                n.target != null
-                  ? safeText(n.target)
-                  : n.destination_scope === "global"
-                    ? "(global destination)"
-                    : "(destination removed)",
-                60,
-              ),
-            )}` +
-              (n.last_error ? `\n      ${c.red(safeText(n.last_error).slice(0, 80))}` : "") +
-              "\n",
-          );
+        for (const line of deliveryLines(newHit.notifications, (process.stdout.columns ?? 80) - 2)) {
+          w(`  ${line}\n`);
         }
       },
       {
@@ -286,9 +282,7 @@ export async function rotateDestinationSecretCmd(
 
     if (!opts.yes) {
       process.stderr.write(
-        c.yellow(
-          `⚠ this rotates the HMAC signing secret on ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}.\n`,
-        ),
+        `${mark("warn")} ${c.yellow(`This rotates the HMAC signing secret on ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}.`)}\n`,
       );
       process.stderr.write(
         c.dim(
@@ -302,7 +296,7 @@ export async function rotateDestinationSecretCmd(
     emit(
       () => {
         process.stdout.write(
-          `${c.green("✓")} rotated signing secret for ${safeText(target.channel)}: ${safeText(target.target)}\n`,
+          `${mark("ok")} Rotated signing secret for ${safeText(target.channel)}: ${safeText(target.target)}\n`,
         );
         if (updated.signing_secret) {
           process.stdout.write(`\n${c.bold("new signing secret (save it now):")}\n`);
@@ -320,7 +314,7 @@ export async function rotateDestinationSecretCmd(
 }
 
 function statusIcon(status: Destination["last_activation_status"]): string {
-  if (status === "ok") return c.green("✓");
-  if (status === "failed") return c.red("⚠");
-  return c.dim("·");
+  if (status === "ok") return `${mark("ok")} ok`;
+  if (status === "failed") return `${mark("fail")} ${c.red("failed")}`;
+  return `${mark("pending")} ${c.dim("not activated yet")}`;
 }

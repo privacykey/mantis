@@ -1,5 +1,19 @@
 import QRCode from "qrcode";
-import { c, emit, fail, formatTime, isJsonMode, safeText } from "../lib/out.js";
+import {
+  c,
+  dot,
+  emit,
+  fail,
+  formatAgo,
+  formatStamp,
+  heading,
+  isJsonMode,
+  kv,
+  type KvRow,
+  mark,
+  safeText,
+} from "../lib/out.js";
+import { destinationLines } from "../lib/destination-format.js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { resolveKeyRef, resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
@@ -43,40 +57,34 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
           return;
         }
         const w = process.stdout.write.bind(process.stdout);
-        w(`${c.bold(s(key.id))}\n`);
-        w(`${c.dim("public:    ")} ${s(key.public_id)}\n`);
-        w(`${c.dim("url:       ")} ${c.cyan(s(key.url))}\n`);
+        w(`${heading(s(key.memo), s(key.id).slice(0, 8))}\n`);
+        const stamp = (iso: string) =>
+          `${formatStamp(iso)} ${c.dim(`${dot()} ${formatAgo(iso)}`)}`;
+        const rows: KvRow[] = [
+          ["url", c.cyan(s(key.url))],
+          ["status", key.disabled ? `${mark("none")} disabled` : `${mark("ok")} active`],
+          ["created", stamp(key.created_at)],
+        ];
+        if (key.expires_at) rows.push(["expires", stamp(key.expires_at)]);
+        rows.push(["response", s(key.response_kind)]);
+        rows.push(["kind", s(key.kind)]);
+        rows.push(["id", s(key.id)]);
+        rows.push(["public id", s(key.public_id)]);
         if (copied !== null) {
-          w(
+          rows.push([
+            "clipboard",
             copied
-              ? `${c.dim("copy:      ")} copied URL to clipboard\n`
-              : `${c.yellow("copy:      ")} clipboard command not available\n`,
-          );
+              ? `${mark("ok")} URL copied`
+              : `${mark("warn")} ${c.yellow("no clipboard command available")}`,
+          ]);
         }
-        w(`${c.dim("memo:      ")} ${s(key.memo)}\n`);
-        w(`${c.dim("kind:      ")} ${s(key.kind)}\n`);
-        w(`${c.dim("response:  ")} ${s(key.response_kind)}\n`);
-        w(`${c.dim("status:    ")} ${key.disabled ? c.red("disabled") : c.green("active")}\n`);
-        w(`${c.dim("created:   ")} ${s(key.created_at)} (${formatTime(key.created_at)})\n`);
-        if (key.expires_at) w(`${c.dim("expires:   ")} ${s(key.expires_at)}\n`);
-        if (key.destinations.length > 0) {
-          w(`${c.dim("destinations:")}\n`);
-          for (const d of key.destinations) {
-            const icon =
-              d.last_activation_status === "ok"
-                ? c.green("✓")
-                : d.last_activation_status === "failed"
-                ? c.red("⚠")
-                : c.dim("·");
-            w(`  ${icon} ${c.dim(s(d.channel).padEnd(7))} ${s(d.target)}\n`);
-            if (
-              d.last_activation_status === "failed" &&
-              d.last_activation_error
-            ) {
-              w(`    ${c.dim("activation failed:")} ${s(d.last_activation_error)}\n`);
-            }
-          }
-        }
+        rows.push([
+          "destinations",
+          key.destinations.length > 0
+            ? destinationLines(key.destinations)
+            : c.dim("none, hits are logged only"),
+        ]);
+        w(kv(rows));
         if (qr) w("\n" + qr);
       },
       copied === null ? key : { ...key, copied },

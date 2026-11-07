@@ -7,6 +7,7 @@ import {
   safeBlock,
   safeText,
   stdoutPayload,
+  mark,
 } from "../lib/out.js";
 import type { InstallerMeta, MantisClient } from "../lib/api.js";
 import { applySshOnlyGuard } from "@mantis/core/installers";
@@ -140,7 +141,7 @@ export async function runInstaller(
   if (opts.silent) {
     if (writtenTo && !isJsonMode()) {
       process.stderr.write(
-        `${c.green("✓")} wrote ${c.bold(safeText(meta.type))} installer to ${c.cyan(writtenTo)}\n`,
+        `${mark("ok")} wrote ${c.bold(safeText(meta.type))} installer to ${c.cyan(writtenTo)}\n`,
       );
       for (const step of meta.install) {
         process.stderr.write(`  ${c.dim(safeText(step))}\n`);
@@ -156,7 +157,7 @@ export async function runInstaller(
     () => {
       if (writtenTo) {
         process.stderr.write(
-          `${c.green("✓")} wrote ${safeText(meta.filename)} → ${writtenTo}\n`,
+          `${mark("ok")} wrote ${safeText(meta.filename)} → ${writtenTo}\n`,
         );
       } else {
         process.stdout.write(stdoutPayload(meta.content));

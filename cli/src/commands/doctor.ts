@@ -11,7 +11,14 @@ import {
   getProfile,
   resolveAuth,
 } from "../lib/config.js";
-import { c, emit, safeText } from "../lib/out.js";
+import {
+  arrow,
+  c,
+  emit,
+  hintLines,
+  mark,
+  safeText,
+} from "../lib/out.js";
 import type { GlobalOpts } from "../lib/runner.js";
 import { CLI_VERSION } from "../version.js";
 
@@ -26,14 +33,18 @@ type Check = {
   hint?: string;
 };
 
+/** A check plus wording that only the terminal view uses; --json omits it. */
+type ShownCheck = Check & { shown?: string };
+
 export async function doctorCmd(opts: DoctorOpts): Promise<void> {
-  const checks: Check[] = [];
+  const checks: ShownCheck[] = [];
   const add = (
     status: Check["status"],
     name: string,
     detail: string,
     hint?: string,
-  ) => checks.push({ status, name, detail, hint });
+    shown?: string,
+  ) => checks.push({ status, name, detail, hint, shown });
 
   const selectedProfile = opts.baseUrl
     ? undefined
@@ -42,7 +53,13 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   const baseUrl = normalizeUrl(opts.baseUrl ?? profile?.baseUrl);
 
   if (selectedProfile && profile) {
-    add("ok", "profile", `${selectedProfile} -> ${profile.baseUrl}`);
+    add(
+      "ok",
+      "profile",
+      `${selectedProfile} -> ${profile.baseUrl}`,
+      undefined,
+      `${selectedProfile} ${arrow.right()} ${profile.baseUrl}`,
+    );
   } else if (opts.baseUrl) {
     add("ok", "profile", "using --base-url override");
   } else {
@@ -184,20 +201,41 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   const ok = !checks.some((check) => check.status === "fail");
   emit(
     () => {
-      process.stdout.write(c.bold("mantis doctor\n"));
-      for (const check of checks) {
-        const label =
-          check.status === "ok"
-            ? c.green("ok")
-            : check.status === "warn"
-            ? c.yellow("warn")
-            : c.red("fail");
+      const w = process.stdout.write.bind(process.stdout);
+      const nameWidth = Math.max(...checks.map((ch) => ch.name.length));
+      const under = " ".repeat(2 + nameWidth + 2);
+      checks.forEach((check, i) => {
+        const kind = check.status === "ok" ? "ok" : check.status;
         // Details quote the server (health fields, error strings) and config.
-        process.stdout.write(`${label.padEnd(9)} ${c.bold(safeText(check.name))}: ${safeText(check.detail)}\n`);
-        if (check.hint) process.stdout.write(`          ${c.dim(safeText(check.hint))}\n`);
-      }
+        const detail = safeText(check.shown ?? check.detail);
+        const name = safeText(check.name).padEnd(nameWidth);
+        w(`${mark(kind)} ${check.status === "ok" ? name : c.bold(name)}  ${detail}\n`);
+        // Checks that fail the same way share one hint, under the last of them.
+        if (check.hint && checks[i + 1]?.hint !== check.hint) {
+          w(hintLines(`${arrow.right()} ${check.hint}`, under));
+        }
+      });
+      const count = (status: Check["status"]) =>
+        checks.filter((ch) => ch.status === status).length;
+      const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+      const failed = count("fail");
+      const warned = count("warn");
+      const parts = [`${count("ok")} passed`];
+      if (warned) parts.push(plural(warned, "warning"));
+      if (failed) parts.push(`${failed} failed`);
+      const verdict = parts.join(", ");
+      const color = failed ? c.red : warned ? c.yellow : c.green;
+      w(`\n${mark(failed ? "fail" : warned ? "warn" : "ok")} ${c.bold(color(verdict))}\n`);
     },
-    { ok, checks },
+    {
+      ok,
+      checks: checks.map(({ name, status, detail, hint }) => ({
+        status,
+        name,
+        detail,
+        hint,
+      })),
+    },
   );
   process.exitCode = ok ? 0 : 1;
 }
@@ -209,14 +247,15 @@ async function checkPublicSplit(
     name: string,
     detail: string,
     hint?: string,
+    shown?: string,
   ) => number,
   timeoutMs: number | undefined,
 ): Promise<void> {
   const login = await fetchPublic(publicOrigin, "/login", timeoutMs);
-  addPublicOnlyCheck(add, "public /login", login);
+  addPublicOnlyCheck(add, "public /login", login, `${publicOrigin}/login`);
 
   const api = await fetchPublic(publicOrigin, "/api/keys", timeoutMs);
-  addPublicOnlyCheck(add, "public /api", api);
+  addPublicOnlyCheck(add, "public /api", api, `${publicOrigin}/api/keys`);
 
   // No probe of the public status route: a status URL only answers with the
   // per-key capability the server puts in monitor_status_url, and anything
@@ -230,12 +269,20 @@ function addPublicOnlyCheck(
     name: string,
     detail: string,
     hint?: string,
+    shown?: string,
   ) => number,
   name: string,
   result: { ok: true; status: number } | { ok: false; message: string },
+  tried: string,
 ): void {
   if (!result.ok) {
-    add("warn", name, result.message, "Could not verify the public-only host");
+    add(
+      "warn",
+      name,
+      result.message,
+      "Could not verify the public-only host",
+      `no answer from ${tried} (${result.message})`,
+    );
     return;
   }
   if (result.status === 404) {

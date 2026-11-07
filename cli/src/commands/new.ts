@@ -9,13 +9,19 @@ import {
   type InstallType,
 } from "@mantis/core/installers";
 import {
+  arrow,
   c,
   emit,
   fail,
+  heading,
   isJsonMode,
+  kv,
+  type KvRow,
+  mark,
   safeText,
   stdoutPayload,
 } from "../lib/out.js";
+import { destinationLines } from "../lib/destination-format.js";
 import { canPrompt, createPrompter, type Prompter } from "../lib/prompt.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import { runInstaller } from "./install.js";
@@ -26,7 +32,9 @@ import {
   askYesNo,
   confirmLoop,
   inferChannelFromWebhook,
+  note,
   printSummary,
+  warn,
   webhookPromptLabel,
   type SummaryRow,
 } from "../lib/wizard.js";
@@ -264,56 +272,57 @@ export async function newCmd(
             process.stdout.write(safeText(key.url) + "\n");
             return;
           }
-          process.stdout.write(`${c.green("✓")} created ${c.bold(safeText(key.id))}\n`);
-          process.stdout.write(`  ${c.dim("memo:")}  ${safeText(key.memo)}\n`);
-          process.stdout.write(`  ${c.dim("url: ")} ${c.cyan(safeText(key.url))}\n`);
+          process.stdout.write(
+            `${mark("ok")} Created ${heading(safeText(key.memo), safeText(key.id).slice(0, 8))}\n`,
+          );
+          const rows: KvRow[] = [
+            ["url", c.cyan(safeText(key.url))],
+            ["id", safeText(key.id)],
+          ];
           if (copied !== null) {
-            process.stdout.write(
+            rows.push([
+              "clipboard",
               copied
-                ? `  ${c.dim("copy:")} copied URL to clipboard\n`
-                : `  ${c.yellow("copy:")} clipboard command not available\n`,
-            );
+                ? `${mark("ok")} URL copied`
+                : `${mark("warn")} ${c.yellow("no clipboard command available")}`,
+            ]);
           }
-          if (key.destinations.length === 0) {
-            process.stdout.write(
-              `  ${c.yellow("warning:")} no notification destinations configured; hits will be logged only\n`,
-            );
-          }
-          for (const d of key.destinations) {
-            const activation = d.activation ?? {
-              ok: d.last_activation_status === "ok",
-              error:
-                d.last_activation_status === "failed"
-                  ? d.last_activation_error ?? undefined
-                  : undefined,
-            };
-            const marker = activation.ok ? c.green("✓") : c.yellow("⚠");
-            process.stdout.write(
-              `  ${marker} ${c.dim(safeText(d.channel).padEnd(7))} ${safeText(d.target)}\n`,
-            );
-            if (!activation.ok && activation.error) {
-              process.stdout.write(
-                `    ${c.dim("activation failed:")} ${safeText(activation.error)}\n`,
-              );
-            }
-          }
-          if (qrAbsPath) {
-            process.stdout.write(`  ${c.dim("qr:  ")} ${qrAbsPath}\n`);
-          }
-          for (const out of fileOutputs) {
-            process.stdout.write(
-              `  ${c.dim(out.format.padEnd(4) + ":")} ${out.path}\n`,
-            );
-          }
+          rows.push([
+            "destinations",
+            key.destinations.length === 0
+              ? `${mark("warn")} ${c.yellow("none, so hits will only be logged")}`
+              : destinationLines(
+                  key.destinations.map((d) => {
+                    // The create call reports each activation as it happens.
+                    const ok = d.activation
+                      ? d.activation.ok
+                      : d.last_activation_status === "ok";
+                    const error =
+                      d.activation?.error ?? d.last_activation_error ?? null;
+                    return {
+                      channel: d.channel,
+                      target: d.target,
+                      last_activation_status: ok
+                        ? ("ok" as const)
+                        : error
+                          ? ("failed" as const)
+                          : null,
+                      last_activation_error: ok ? null : error,
+                    };
+                  }),
+                ),
+          ]);
+          if (qrAbsPath) rows.push(["qr", qrAbsPath]);
+          for (const out of fileOutputs) rows.push([out.format, out.path]);
           if (installerResult?.writtenTo) {
-            process.stdout.write(
-              `  ${c.dim("inst:")} ${effectiveOpts.install} → ${installerResult.writtenTo}\n`,
-            );
+            rows.push([
+              "installer",
+              `${effectiveOpts.install} ${arrow.right()} ${installerResult.writtenTo}`,
+            ]);
           } else if (installerResult && !installerResult.writtenTo) {
-            process.stdout.write(
-              `  ${c.dim("inst:")} ${effectiveOpts.install} (snippet on stdout below)\n`,
-            );
+            rows.push(["installer", `${effectiveOpts.install}, snippet below`]);
           }
+          process.stdout.write(kv(rows));
           if (qrTerminal) {
             process.stdout.write("\n" + qrTerminal);
           }
@@ -403,7 +412,7 @@ async function runWizard(opts: NewOpts): Promise<WizardResult> {
     await confirmLoop(
       p,
       () => printNewSummary(state),
-      ["memo", "installer", "response", "destinations", "expiry", "copy"],
+      ["memo", "installer", "response", "destinations", "expires", "clipboard"],
       (field) => editField(p, state, opts, field),
     );
 
@@ -422,7 +431,7 @@ async function askMemo(p: Prompter, state: WizardResult): Promise<void> {
       state.memo = ans;
       return;
     }
-    process.stderr.write(`  ${c.red("!")} memo is required.\n`);
+    warn("A memo is required.");
   }
 }
 
@@ -460,7 +469,7 @@ async function askInstallerSubtree(
       break;
     }
     process.stderr.write(
-      `    ${c.red("!")} unknown type. Available:\n` +
+      `    ${mark("fail")} ${c.red(`Unknown type. Available:`)}\n` +
         `    ${ALL_INSTALL_TYPES.join(", ")}\n`,
     );
   }
@@ -483,22 +492,23 @@ async function askInstallerSubtree(
         break;
       }
       process.stderr.write(
-        `    ${c.red("!")} hostname is required for js-clone-detector.\n`,
+        `    ${mark("fail")} ${c.red(`Hostname is required for js-clone-detector.`)}\n`,
       );
     }
   }
 
   if (state.out === undefined) {
     const ans = (
-      await askText(p, "  Write to file (blank = print to stdout)")
+      await askText(p, "  Write to file", { blank: "stdout" })
     ).trim();
     if (ans) state.out = ans;
   }
 
   if (!state.responseKind && isInstallType(state.install)) {
     state.responseKind = RESPONSE_FOR_INSTALL[state.install];
-    process.stderr.write(
-      `  ${c.dim(`→ trigger response defaulting to \`${state.responseKind}\` (suitable for ${state.install}); edit later if you need something else.`)}\n`,
+    note(
+      `${arrow.right()} Response set to ${state.responseKind}, which suits ${state.install}. Edit the key later to change it.`,
+      "  ",
     );
   }
 }
@@ -546,14 +556,14 @@ async function askOneDestination(
     for (;;) {
       const ans = (await askText(p, "  Email address")).trim();
       if (!ans) {
-        process.stderr.write(`    ${c.red("!")} address is required.\n`);
+        process.stderr.write(`    ${mark("fail")} ${c.red(`Address is required.`)}\n`);
         continue;
       }
       // Light syntactic check; the server does the real validation on
       // activation.
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ans)) {
         process.stderr.write(
-          `    ${c.red("!")} doesn't look like an email address — try again.\n`,
+          `    ${mark("fail")} ${c.red(`Doesn't look like an email address.`)}\n`,
         );
         continue;
       }
@@ -568,15 +578,16 @@ async function askOneDestination(
     if (!ans) continue;
     const inferred = inferChannelFromWebhook(ans);
     if (inferred && inferred !== channel && channel === "webhook") {
-      process.stderr.write(
-        `    ${c.dim(`→ detected ${inferred} webhook host — switching channel to ${inferred}. Re-edit to override.`)}\n`,
+      note(
+        `${arrow.right()} That is a ${inferred} webhook, so the channel is now ${inferred}. Edit the destination to override.`,
+        "    ",
       );
       return { channel: inferred as NotificationChannel, target: ans };
     }
     if (inferred && inferred !== channel && channel !== "webhook") {
       const fix = await askYesNo(
         p,
-        `    ${c.yellow("!")} that looks like a ${inferred} URL but you picked ${channel}. Switch to ${inferred}?`,
+        `    ${mark("warn")} That looks like a ${inferred} URL but you picked ${channel}. Switch to ${inferred}?`,
         true,
       );
       if (fix) {
@@ -593,7 +604,7 @@ async function askExpiry(
 ): Promise<void> {
   if (state.expiresAt !== undefined) return;
   const ans = (
-    await askText(p, "Expires at (ISO timestamp, blank = never)")
+    await askText(p, "Expires at, ISO timestamp", { blank: "never" })
   ).trim();
   if (ans) state.expiresAt = ans;
 }
@@ -608,24 +619,24 @@ function printNewSummary(state: WizardResult): void {
   if (state.install) {
     const bits: string[] = [state.install];
     if (state.sshOnly) bits.push("ssh-only");
-    if (state.hostname) bits.push(`hostname=${state.hostname}`);
-    bits.push(state.out ? `→ ${state.out}` : "→ stdout");
-    rows.push(["installer", bits.join(" ")]);
+    if (state.hostname) bits.push(`hostname ${state.hostname}`);
+    rows.push([
+      "installer",
+      `${bits.join(", ")} ${arrow.right()} ${state.out ?? "stdout"}`,
+    ]);
   }
   rows.push(["response", state.responseKind ?? "gif"]);
   if (state.destinations.length === 0) {
-    rows.push(["destinations", c.dim("(none)")]);
+    rows.push(["destinations", "none, so hits will only be logged"]);
   } else {
-    for (let i = 0; i < state.destinations.length; i++) {
-      const d = state.destinations[i]!;
-      rows.push([
-        i === 0 ? "destinations" : "",
-        `[${i + 1}] ${d.channel.padEnd(7)} ${d.target}`,
-      ]);
-    }
+    const width = Math.max(...state.destinations.map((d) => d.channel.length));
+    rows.push([
+      "destinations",
+      state.destinations.map((d) => `${d.channel.padEnd(width)}  ${d.target}`),
+    ]);
   }
-  rows.push(["expiry", state.expiresAt ?? c.dim("never")]);
-  rows.push(["copy", state.copy ? "yes" : "no"]);
+  rows.push(["expires", state.expiresAt ?? "never"]);
+  rows.push(["clipboard", state.copy ? "copy the URL" : "no"]);
   printSummary(rows);
 }
 
@@ -655,11 +666,11 @@ async function editField(
       state.destinations = [];
       await askDestinationsLoop(p, state, opts);
       break;
-    case "expiry":
+    case "expires":
       state.expiresAt = undefined;
       await askExpiry(p, state);
       break;
-    case "copy":
+    case "clipboard":
       state.copy = undefined;
       await askCopy(p, state);
       break;

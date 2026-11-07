@@ -1,5 +1,6 @@
 import type { MantisClient, RecentHit } from "../lib/api.js";
 import { c, formatTime, isJsonMode, jsonText, safeText } from "../lib/out.js";
+import { hitWho } from "../lib/hit-format.js";
 import { parseIntervalMs } from "../lib/parse.js";
 import { HitTail } from "../lib/hit-anchor.js";
 import { resolveKeyRef } from "../lib/resolve.js";
@@ -82,11 +83,8 @@ function print(h: RecentHit): void {
   // Memo, host context, IP and user agent are written by whoever created or
   // fired the key — not necessarily the operator reading this feed.
   const memo = safeText(h.key.memo) || safeText(h.key.id).slice(0, 8);
-  const ctxParts = [h.host_context?.event, h.host_context?.device]
-    .filter(Boolean)
-    .map(safeText);
-  const context = ctxParts.length ? ` ${c.green(ctxParts.join(":"))}` : "";
+  const ip = h.ip == null ? c.dim("unknown") : safeText(h.ip);
   process.stdout.write(
-    `${c.dim(formatTime(h.occurred_at))} ${c.bold(memo)}${context} ${c.cyan(safeText(h.ip ?? "-"))} ${c.dim(safeText(h.user_agent))}\n`,
+    `${c.dim(formatTime(h.occurred_at))} ${c.bold(memo)} ${ip} ${hitWho(h)}\n`,
   );
 }

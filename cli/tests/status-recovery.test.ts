@@ -59,7 +59,8 @@ describe("monitor failure recovery", () => {
       : state("tripped", "2026-10-01T00:00:00Z"));
     await statusCmd(undefined, { ...auth, trippedOnly: true });
     expect(output.join("")).toContain("tripped");
-    expect(output.join("")).toContain("2026-10-01T00:00:00Z");
+    // The table says how long ago; the timestamp itself is in `status <id>`.
+    expect(output.join("")).toMatch(/tripped\s+\d+d ago/);
     expect(output.join("")).not.toContain("unavailable");
     expect(process.exitCode ?? 0).toBe(0);
   });
@@ -68,7 +69,7 @@ describe("monitor failure recovery", () => {
     vi.stubGlobal("fetch", async (url: URL) => url.pathname === "/api/keys"
       ? Response.json({ data: [key], next_cursor: null }) : state("off"));
     await statusCmd(undefined, auth);
-    expect(output.join("")).toContain("off / not monitored");
+    expect(output.join("")).toContain("not monitored");
     expect(process.exitCode ?? 0).toBe(0);
   });
 });

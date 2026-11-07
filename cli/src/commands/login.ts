@@ -9,7 +9,7 @@ import {
   setProfile,
   useProfile,
 } from "../lib/config.js";
-import { c, ExitCode, fail, isJsonMode } from "../lib/out.js";
+import { c, ExitCode, fail, isJsonMode, mark } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 
 const KEY_RE = /^mantis_live_[A-Za-z0-9_-]+$/;
@@ -108,7 +108,7 @@ export async function loginCmd(opts: {
     }
 
     process.stderr.write(
-      `${c.green("✓")} stored credentials for ${c.cyan(url)} as profile ${c.bold(profileName)}${opts.noSwitch ? c.dim(" (not switched to)") : ""}\n`,
+      `${mark("ok")} stored credentials for ${c.cyan(url)} as profile ${c.bold(profileName)}${opts.noSwitch ? c.dim(" (not switched to)") : ""}\n`,
     );
     process.stderr.write(
       `${c.dim("Next:")} ${c.cyan("mantis doctor")} ${c.dim("# verify server health & auth")}\n`,

@@ -21,7 +21,7 @@ import {
   type BackupPlugin,
   type BackupProfile,
 } from "../lib/backup.js";
-import { c, emit, fail, isJsonMode, safeText } from "../lib/out.js";
+import { c, emit, fail, isJsonMode, safeText, mark } from "../lib/out.js";
 import { pluginAddCmd } from "./plugin.js";
 
 export type BackupCmdOpts = {
@@ -71,7 +71,7 @@ export async function backupCmd(opts: BackupCmdOpts): Promise<void> {
   emit(
     () => {
       process.stderr.write(
-        `${c.green("✓")} wrote encrypted backup to ${c.cyan(outPath)}\n`,
+        `${mark("ok")} wrote encrypted backup to ${c.cyan(outPath)}\n`,
       );
       process.stderr.write(
         `  ${c.dim("profiles:")} ${payload.profiles.map((p) => p.name).join(", ")}\n`,
@@ -275,7 +275,7 @@ export async function restoreCmd(
     () => {
       if (restored.length > 0) {
         process.stderr.write(
-          `${c.green("✓")} restored ${restored.length} profile(s): ${list(restored)}\n`,
+          `${mark("ok")} restored ${restored.length} profile(s): ${list(restored)}\n`,
         );
       }
       const skippedByName = skipped.filter((n) => !skippedCredentials.includes(n));
@@ -292,21 +292,21 @@ export async function restoreCmd(
       }
       for (const e of errors) {
         process.stderr.write(
-          `${c.red("✗")} ${safeText(e.name)}: ${safeText(e.reason)}\n`,
+          `${mark("fail")} ${safeText(e.name)}: ${safeText(e.reason)}\n`,
         );
       }
-      if (edgeRestored.length > 0) process.stderr.write(`${c.green("✓")} restored edge keys: ${list(edgeRestored)}\n`);
+      if (edgeRestored.length > 0) process.stderr.write(`${mark("ok")} restored edge keys: ${list(edgeRestored)}\n`);
       if (edgeSkipped.length > 0) process.stderr.write(`${c.yellow("·")} kept existing edge keys (pass --overwrite to replace): ${list(edgeSkipped)}\n`);
-      for (const e of edgeErrors) process.stderr.write(`${c.red("✗")} edge ${safeText(e.worker)}: ${safeText(e.reason)}\n`);
+      for (const e of edgeErrors) process.stderr.write(`${mark("fail")} edge ${safeText(e.worker)}: ${safeText(e.reason)}\n`);
       if (!opts.skipPlugins) {
         if (pluginsRestored.length > 0) {
           process.stderr.write(
-            `${c.green("✓")} restored ${pluginsRestored.length} plugin(s): ${list(pluginsRestored)}\n`,
+            `${mark("ok")} restored ${pluginsRestored.length} plugin(s): ${list(pluginsRestored)}\n`,
           );
         }
         for (const f of pluginsFailed) {
           process.stderr.write(
-            `${c.red("✗")} plugin ${safeText(f.name)} (${safeText(pluginSpec(payload.plugins.find((x) => x.name === f.name)!))}): ${safeText(f.reason)}\n`,
+            `${mark("fail")} plugin ${safeText(f.name)} (${safeText(pluginSpec(payload.plugins.find((x) => x.name === f.name)!))}): ${safeText(f.reason)}\n`,
           );
         }
       } else if (payload.plugins.length > 0) {

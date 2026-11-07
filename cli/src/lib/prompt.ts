@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline/promises";
+import { c, colorOn, mark } from "./out.js";
 
 export type Prompter = {
   ask(question: string): Promise<string>;
@@ -15,7 +16,15 @@ export function createPrompter(): Prompter {
     output: process.stderr,
   });
   return {
-    ask: async (question: string) => (await rl.question(question)).trim(),
+    ask: async (question: string) => {
+      // What the operator types is the value, so it is the bold part of the
+      // line: the prompt ends by turning bold on, and it goes off again once
+      // the answer is in.
+      const styled = colorOn();
+      const answer = await rl.question(styled ? `${question}\x1b[1m` : question);
+      if (styled) process.stderr.write("\x1b[0m");
+      return answer.trim();
+    },
     close: () => rl.close(),
   };
 }
@@ -27,7 +36,7 @@ export async function askRequired(
   for (;;) {
     const value = await prompter.ask(question);
     if (value) return value;
-    process.stderr.write("Please enter a value.\n");
+    process.stderr.write(`${mark("fail")} ${c.red("A value is required.")}\n`);
   }
 }
 

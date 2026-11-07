@@ -4,7 +4,20 @@ import { c, isJsonMode, jsonText, safeText } from "./out.js";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PREFIX_RE = /^[0-9a-f]{4,}$/i;
 
-export class ResolveError extends Error {}
+/**
+ * A key reference that could not be resolved. `message` is the whole text
+ * (what --json reports); `short` and `hint` are the same thing split for the
+ * terminal, which prints the hint on its own line.
+ */
+export class ResolveError extends Error {
+  readonly short: string;
+  readonly hint?: string;
+  constructor(short: string, hint?: string) {
+    super(hint ? `${short}. ${hint}` : short);
+    this.short = short;
+    this.hint = hint;
+  }
+}
 
 export type ResolvedKeyRef = {
   id: string;
@@ -78,7 +91,8 @@ export async function resolveKeyRefDetailed(
     const page = await client.listKeys({ limit: 1, mine: 1 });
     if (page.data.length === 0) {
       throw new ResolveError(
-        "`last` — this API key has not created any keys yet (keys made in the dashboard or with another API key don't count). Run `mantis new \"memo\"`, or pass a key id or prefix from `mantis list`.",
+        "`last` — this API key has not created any keys yet (keys made in the dashboard or with another API key don't count)",
+        "Run `mantis new \"memo\"`, or pass a key id or prefix from `mantis list`.",
       );
     }
     const key = page.data[0]!;
@@ -108,7 +122,8 @@ export async function resolveKeyRefDetailed(
 
   if (matches.length === 0) {
     throw new ResolveError(
-      `no key matches prefix '${ref}'. Run \`mantis list\` to see configured keys.`,
+      `no key matches prefix '${ref}'`,
+      "Run `mantis list` to see configured keys.",
     );
   }
   if (matches.length > 1) {

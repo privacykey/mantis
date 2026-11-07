@@ -256,7 +256,9 @@ describe("hostile API strings stay inert in human output", () => {
     expectInert(out.replace(/\n/g, ""));
     expect(out).toContain("prod database");
     expect(out).toContain("prod db\\u001b[1A\\u001b[2K\\u000dall clear");
-    expect(out).toContain("curl/8.0\\u009b2K\\u202e");
+    // A host event is drawn as who@host and what ran, both attacker-chosen.
+    expect(out).toContain("root@web-01\\u009b2J");
+    expect(out).toContain("rm -rf /\\u001b[1A");
   }, 20_000);
 
   it("watch --json: the NDJSON stream carries no raw C1 and still parses", async () => {

@@ -6,7 +6,7 @@ import {
   listProfiles,
   removeProfile,
 } from "../lib/config.js";
-import { c, fail, safeText } from "../lib/out.js";
+import { c, fail, safeText, mark } from "../lib/out.js";
 
 export async function logoutCmd(opts: {
   profile?: string;
@@ -20,7 +20,7 @@ export async function logoutCmd(opts: {
     }
     await clearConfig();
     process.stderr.write(
-      `${c.green("✓")} logged out of ${profiles.length} profile(s)\n`,
+      `${mark("ok")} logged out of ${profiles.length} profile(s)\n`,
     );
     return;
   }
@@ -36,6 +36,6 @@ export async function logoutCmd(opts: {
       : ""
     : "";
   process.stderr.write(
-    `${c.green("✓")} removed profile ${c.bold(safeText(target))}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
+    `${mark("ok")} removed profile ${c.bold(safeText(target))}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
   );
 }

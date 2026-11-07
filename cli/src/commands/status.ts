@@ -1,13 +1,23 @@
 import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
 import {
   c,
+  dot,
   emit,
-  formatTime,
+  formatAgo,
+  formatDuration,
+  formatStamp,
+  heading,
+  hintLines,
   isJsonMode,
+  kv,
+  type KvRow,
+  mark,
+  prose,
   safeText,
   table,
-  truncate,
+  tripped,
 } from "../lib/out.js";
+import { deliveryLegend, hitsTable } from "../lib/hit-format.js";
 import { parseLimit } from "../lib/parse.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
@@ -78,7 +88,9 @@ async function watchLoop(
     // Clear screen + home cursor
     process.stdout.write("\x1b[2J\x1b[H");
     const ts = new Date().toISOString().slice(11, 19);
-    process.stderr.write(c.dim(`mantis status — ${ts} (every ${intervalMs / 1000}s, ctrl-c to stop)\n\n`));
+    process.stderr.write(
+      c.dim(`mantis status ${dot()} ${ts} UTC ${dot()} every ${intervalMs / 1000}s, ctrl-c to stop\n\n`),
+    );
     try {
       if (fullId) await detail(client, fullId, opts);
       else await listAll(client, opts);
@@ -113,35 +125,43 @@ async function detail(
   emit(
     () => {
       const w = process.stdout.write.bind(process.stdout);
-      w(`${c.bold(safeText(key.memo))} ${c.dim(`(${safeText(key.id)})`)}\n`);
-      w(`  ${c.dim("mode:       ")} ${formatMode(key)}\n`);
-      w(`  ${c.dim("state:      ")} ${formatState(status)}\n`);
+      const short = shortId(key.id);
+      w(`${heading(safeText(key.memo), short)}\n`);
+      const rows: KvRow[] = [
+        ["state", formatStateLong(status)],
+        ["mode", formatMode(key)],
+      ];
 
       if (status.status === "tripped" && key.monitor_mode === "window") {
         if (explained.windowExpiresAt) {
-          const inLabel = formatRelativeFuture(explained.windowExpiresAt);
-          w(
-            `  ${c.dim("window ends:")} ${explained.windowExpiresAt.toISOString()} ${c.dim(`(${inLabel} — oldest in-window hit ages out)`)}\n`,
-          );
+          const when = formatRelativeFuture(explained.windowExpiresAt);
+          const at = formatStamp(explained.windowExpiresAt.toISOString());
+          rows.push([
+            "clears",
+            `${when} ${c.dim(`${dot()} ${at}, when the oldest hit leaves the window`)}`,
+          ]);
         }
       }
-
       if (status.status === "tripped" && key.monitor_mode === "latch") {
-        w(
-          `  ${c.dim("clears:     ")} on manual reset ${c.dim(`(\`mantis reset ${shortId(key.id)}\`)`)}\n`,
-        );
+        rows.push(["clears", prose(`on manual reset: \`mantis reset ${short}\``)]);
       }
-
       if (key.monitor_reset_at) {
-        w(`  ${c.dim("reset_at:   ")} ${safeText(key.monitor_reset_at)} ${c.dim(`(${formatTime(key.monitor_reset_at)})`)}\n`);
+        rows.push([
+          "last reset",
+          `${formatAgo(key.monitor_reset_at)} ${c.dim(`${dot()} ${formatStamp(key.monitor_reset_at)}`)}`,
+        ]);
       }
       if (key.monitor_status_url) {
-        w(`  ${c.dim("status URL: ")} ${c.cyan(safeText(key.monitor_status_url))}\n`);
+        rows.push(["status URL", c.cyan(safeText(key.monitor_status_url))]);
       }
+      w(kv(rows));
 
       if (key.monitor_mode === "off") {
-        w(
-          `\n${c.dim(`not monitored — run \`mantis monitor ${shortId(key.id)} --mode latch\` (or --mode window) to enable.`)}\n`,
+        process.stderr.write(
+          "\n" +
+            hintLines(
+              `Not monitored. Turn it on with \`mantis monitor ${short} --mode latch\` (or \`--mode window\`).`,
+            ),
         );
         return;
       }
@@ -152,16 +172,14 @@ async function detail(
         return;
       }
 
-      w(`\n${c.bold(explained.hitsLabel)} (${inWindow.length}):\n`);
-      const rows = inWindow.map((h) => [
-        formatTime(h.occurred_at),
-        safeText(h.occurred_at),
-        safeText(h.ip ?? "-"),
-        truncate(safeText(h.user_agent), 36),
-        h.bot_label ? c.dim(`bot:${safeText(h.bot_label)}`) : "",
-      ]);
-      w(
-        table(["when", "occurred_at", "ip", "user-agent", "bot"], rows) + "\n",
+      const noun = inWindow.length === 1 ? "hit" : "hits";
+      w(`\n${c.bold(`${inWindow.length} ${noun} ${explained.hitsLabel}`)}\n`);
+      w(hitsTable(inWindow) + "\n");
+      const legend = deliveryLegend(inWindow);
+      process.stderr.write(
+        "\n" +
+          (legend ? `${legend}\n` : "") +
+          hintLines(`\`mantis hits ${short} --verbose\` shows each hit in full.`),
       );
     },
     {
@@ -205,9 +223,10 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
   if (monitored.length === 0) {
     emit(
       () => {
+        process.stdout.write("No monitored keys yet.\n");
         process.stderr.write(
-          c.dim(
-            `no keys with monitor_mode set. Run \`mantis monitor <id> --mode latch|window\` to enable.\n`,
+          hintLines(
+            "Turn monitoring on for a key with `mantis monitor <id> --mode latch` (or `--mode window`).",
           ),
         );
       },
@@ -233,8 +252,8 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
   if (filtered.length === 0 && opts.trippedOnly) {
     emit(
       () => {
-        process.stderr.write(
-          c.green(`✓ no monitored keys currently tripped\n`),
+        process.stdout.write(
+          `${mark("ok")} ${c.green("no monitored keys currently tripped")}\n`,
         );
       },
       { keys: [] },
@@ -244,32 +263,66 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
 
   emit(
     () => {
-      const rows = filtered.map(({ key, status }) => [
-        shortId(key.id),
-        truncate(safeText(key.memo), 32),
-        formatMode(key),
-        formatState(status),
-        status.status === "tripped" && status.tripped_at
-          ? formatTime(status.tripped_at)
-          : "",
-      ]);
+      // Tripped keys are why the command was run, so they come first and
+      // carry the weight; the JSON keeps the server's order.
+      const rank = (st: ResolvedStatus) =>
+        st.status === "tripped" ? 0 : st.status === "error" ? 1 : 2;
+      const ordered = [...filtered].sort(
+        (a, b) => rank(a.status) - rank(b.status),
+      );
+      const trippedCount = statuses.filter(
+        ({ status }) => status.status === "tripped",
+      ).length;
+      const total = statuses.length;
+      const keysWord = total === 1 ? "key" : "keys";
+      const verdict =
+        trippedCount > 0
+          ? tripped(`${trippedCount} of ${total} monitored ${keysWord} tripped`)
+          : failed.length === total
+            ? `${mark("warn")} ${c.yellow(`could not read the state of ${total} monitored ${keysWord}`)}`
+            : `${mark("ok")} ${c.green(total === 1 ? "the 1 monitored key is ok" : `all ${total} monitored keys are ok`)}`;
+      process.stdout.write(`${verdict}\n\n`);
+
+      const rows = ordered.map(({ key, status }) => {
+        const loud = status.status === "tripped";
+        const id = shortId(key.id);
+        const memo = safeText(key.memo);
+        return [
+          loud ? c.bold(id) : id,
+          loud ? c.bold(memo) : memo,
+          formatMode(key),
+          formatState(status),
+          status.status === "tripped" && status.tripped_at
+            ? formatAgo(status.tripped_at)
+            : "",
+        ];
+      });
       process.stdout.write(
-        table(["id", "memo", "mode", "state", "tripped"], rows) + "\n",
+        table(["id", "memo", "mode", "state", "since"], rows) + "\n",
       );
       const offCount = keys.length - monitored.length;
       const hiddenByFilter = opts.trippedOnly ? monitored.length - filtered.length : 0;
       const notes: string[] = [];
       if (hiddenByFilter > 0) {
-        notes.push(`${hiddenByFilter} ok key${hiddenByFilter === 1 ? "" : "s"} hidden by --tripped-only`);
+        notes.push(
+          `${hiddenByFilter} ok ${hiddenByFilter === 1 ? "key" : "keys"} hidden by --tripped-only.`,
+        );
       }
       if (offCount > 0) {
-        notes.push(`${offCount} key${offCount === 1 ? "" : "s"} with monitor_mode=off hidden`);
+        notes.push(
+          `${offCount} unmonitored ${offCount === 1 ? "key" : "keys"} not shown; \`mantis list\` shows every key.`,
+        );
+      }
+      if (trippedCount > 0) {
+        notes.push("`mantis status <id>` shows what tripped a key.");
       }
       if (notes.length > 0) {
-        process.stderr.write(c.dim(`\n(${notes.join("; ")})\n`));
+        process.stderr.write("\n" + notes.map((n) => hintLines(n)).join(""));
       }
       if (failed.length > 0) {
-        process.stderr.write(c.yellow(`\n${failed.length} monitor state(s) unavailable; check connectivity and retry.\n`));
+        process.stderr.write(
+          `\n${mark("warn")} ${c.yellow(`${failed.length} monitor ${failed.length === 1 ? "state is" : "states are"} unavailable.`)} ${c.dim("Check connectivity and retry.")}\n`,
+        );
       }
     },
     {
@@ -300,7 +353,7 @@ function explainTrip(
     return {
       relevantHits: [],
       hitsLabel: "",
-      emptyLabel: "not monitored",
+      emptyLabel: "Not monitored.",
       windowExpiresAt: null,
     };
   }
@@ -328,8 +381,8 @@ function explainTrip(
     }
     return {
       relevantHits: inWindow,
-      hitsLabel: `hits in window (${safeText(key.monitor_window_seconds)}s)`,
-      emptyLabel: "no hits in the current window",
+      hitsLabel: `in the last ${formatDuration(key.monitor_window_seconds)}`,
+      emptyLabel: `No hits in the last ${formatDuration(key.monitor_window_seconds)}.`,
       windowExpiresAt,
     };
   }
@@ -339,29 +392,38 @@ function explainTrip(
   const isTripped = status.status === "tripped";
   return {
     relevantHits: isTripped ? pool : [],
-    hitsLabel: "hits since last reset",
+    hitsLabel: key.monitor_reset_at ? "since the last reset" : "so far",
     emptyLabel: key.monitor_reset_at
-      ? "no hits since last reset"
-      : "no hits yet",
+      ? "No hits since the last reset."
+      : "No hits yet.",
     windowExpiresAt: null,
   };
 }
 
 function formatMode(key: Key): string {
   if (key.monitor_mode === "off") return c.dim("off");
-  if (key.monitor_mode === "latch") return c.cyan("latch");
-  return c.cyan(`window(${safeText(key.monitor_window_seconds)}s)`);
+  if (key.monitor_mode === "latch") return "latch";
+  return `window ${formatDuration(key.monitor_window_seconds)}`;
 }
 
+/** The state for a table cell: a mark and a word, nothing that can be cut. */
 function formatState(status: ResolvedStatus): string {
-  if (status.status === "tripped") {
-    const at = safeText(status.tripped_at);
-    return `${c.red("⚠ tripped")} ${c.dim(`at ${at} (${formatTime(at)})`)}`;
+  if (status.status === "tripped") return tripped();
+  if (status.status === "ok") return `${mark("ok")} ${c.green("ok")}`;
+  if (status.status === "off") return `${mark("none")} ${c.dim("not monitored")}`;
+  if (status.status === "error") {
+    return `${mark("warn")} ${c.yellow(`unavailable: ${safeText(status.error)}`)}`;
   }
-  if (status.status === "ok") return c.green("✓ ok");
-  if (status.status === "off") return c.dim("off / not monitored");
-  if (status.status === "error") return c.yellow(`? error: ${safeText(status.error)}`);
   return c.dim("?");
+}
+
+/** The state for a detail view, with when it tripped. */
+function formatStateLong(status: ResolvedStatus): string {
+  if (status.status !== "tripped" || !status.tripped_at) {
+    return formatState(status);
+  }
+  const at = status.tripped_at;
+  return `${tripped()} ${formatAgo(at)} ${c.dim(`${dot()} ${formatStamp(at)}`)}`;
 }
 
 function formatRelativeFuture(d: Date): string {

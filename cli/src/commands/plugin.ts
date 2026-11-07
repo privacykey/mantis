@@ -1,4 +1,4 @@
-import { c, emit, fail, isJsonMode, isQuiet, safeText } from "../lib/out.js";
+import { c, emit, fail, isJsonMode, isQuiet, safeText, mark } from "../lib/out.js";
 import {
   installPlugin,
   parseInstallSpec,
@@ -43,7 +43,7 @@ export async function pluginAddCmd(spec: string): Promise<void> {
     emit(
       () => {
         const w = process.stderr.write.bind(process.stderr);
-        w(`${c.green("✓")} installed ${c.bold(safeText(loaded.manifest.name))}@${safeText(entry.version)}\n`);
+        w(`${mark("ok")} installed ${c.bold(safeText(loaded.manifest.name))}@${safeText(entry.version)}\n`);
         if (entry.resolvedSha) {
           w(`  ${c.dim("commit:")}  ${safeText(entry.resolvedSha)}\n`);
         }
@@ -130,7 +130,7 @@ export async function pluginRemoveCmd(name: string): Promise<void> {
   }
   emit(
     () => {
-      process.stderr.write(`${c.green("✓")} removed ${c.bold(safeText(name))}\n`);
+      process.stderr.write(`${mark("ok")} removed ${c.bold(safeText(name))}\n`);
     },
     { name, removed: true },
   );
@@ -173,7 +173,7 @@ export async function pluginUpgradeCmd(name: string): Promise<void> {
       () => {
         const w = process.stderr.write.bind(process.stderr);
         if (moved) {
-          w(`${c.green("✓")} ${c.bold(safeText(name))}: ${c.dim(safeText(entry.resolvedSha).slice(0, 12) || "?")} → ${safeText(newEntry.resolvedSha).slice(0, 12) || "?"}\n`);
+          w(`${mark("ok")} ${c.bold(safeText(name))}: ${c.dim(safeText(entry.resolvedSha).slice(0, 12) || "?")} → ${safeText(newEntry.resolvedSha).slice(0, 12) || "?"}\n`);
         } else {
           w(`${c.dim("·")} ${safeText(name)} already at latest (${safeText(newEntry.resolvedSha).slice(0, 12) || "?"})\n`);
         }
