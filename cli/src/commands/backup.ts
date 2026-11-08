@@ -71,7 +71,7 @@ export async function backupCmd(opts: BackupCmdOpts): Promise<void> {
   emit(
     () => {
       process.stderr.write(
-        `${mark("ok")} wrote encrypted backup to ${c.cyan(outPath)}\n`,
+        `${mark("ok")} wrote encrypted backup to ${c.link(outPath)}\n`,
       );
       process.stderr.write(
         `  ${c.dim("profiles:")} ${payload.profiles.map((p) => p.name).join(", ")}\n`,

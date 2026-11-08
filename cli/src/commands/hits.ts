@@ -17,6 +17,7 @@ import {
   KV_LABEL_WIDTH,
   safeText,
   termWidth,
+  visibleLength,
 } from "../lib/out.js";
 import {
   agentLong,
@@ -187,8 +188,10 @@ function contextLine(count: number, ctx: RenderCtx): string {
 /** `8 hits · <memo>  <id>`: the same heading show and status use, after a plain prefix. */
 function titled(lead: string, ctx: RenderCtx): string {
   const shortId = safeText(ctx.keyId).slice(0, 8);
+  // The memo is cut in the middle so the line fits the window.
+  const before = `${lead} ${dot()} `;
   return ctx.key
-    ? `${lead} ${dot()} ${heading(safeText(ctx.key.memo), shortId)}`
+    ? `${before}${heading(safeText(ctx.key.memo), shortId, visibleLength(before))}`
     : `${lead} on ${c.bold(shortId)}`;
 }
 

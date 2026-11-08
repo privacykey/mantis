@@ -2,7 +2,7 @@ import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
 import {
   memoWidth,
   formatAge,
-  cap,
+  capMiddle,
   c,
   dot,
   emit,
@@ -82,9 +82,19 @@ async function watchLoop(
   const intervalMs = Math.max(2000, Number(opts.interval ?? "5") * 1000);
 
   let stop = false;
+  // A resize redraws at once (after the drag settles) instead of leaving the
+  // old frame wrapped in the new window until the next tick.
+  let wake: (() => void) | undefined;
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  const onResize = () => {
+    clearTimeout(settle);
+    settle = setTimeout(() => wake?.(), 150);
+  };
+  process.stdout.on("resize", onResize);
   process.on("SIGINT", () => {
     stop = true;
     process.stderr.write("\n");
+    wake?.();
   });
 
   while (!stop) {
@@ -103,8 +113,17 @@ async function watchLoop(
       );
     }
     if (stop) break;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    await new Promise<void>((resolve) => {
+      const tick = setTimeout(resolve, intervalMs);
+      wake = () => {
+        clearTimeout(tick);
+        resolve();
+      };
+    });
+    wake = undefined;
   }
+  process.stdout.off("resize", onResize);
+  clearTimeout(settle);
 }
 
 async function detail(
@@ -155,7 +174,7 @@ async function detail(
         ]);
       }
       if (key.monitor_status_url) {
-        rows.push(["status url", c.cyan(safeText(key.monitor_status_url))]);
+        rows.push(["status url", c.link(safeText(key.monitor_status_url))]);
       }
       w(kv(rows));
 
@@ -289,7 +308,8 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
       const rows = ordered.map(({ key, status }) => {
         const loud = status.status === "tripped";
         const id = shortId(key.id);
-        const memo = cap(safeText(key.memo), memoWidth(44));
+        // Cut in the middle: the end of a memo is often what tells two keys apart.
+        const memo = capMiddle(safeText(key.memo), memoWidth(44));
         return [
           loud ? c.bold(id) : id,
           loud ? c.bold(memo) : memo,
@@ -301,7 +321,11 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
         ];
       });
       process.stdout.write(
-        table(["id", "memo", "mode", "state", "since"], rows) + "\n",
+        table(["id", "memo", "mode", "state", "since"], rows, {
+          // Durations line up on the right, as age does in `mantis list`.
+          align: ["left", "left", "left", "left", "right"],
+          cut: ["end", "middle"],
+        }) + "\n",
       );
       const offCount = keys.length - monitored.length;
       const hiddenByFilter = opts.trippedOnly ? monitored.length - filtered.length : 0;

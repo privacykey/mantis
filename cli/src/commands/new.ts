@@ -276,7 +276,7 @@ export async function newCmd(
             `${mark("ok")} Created ${heading(safeText(key.memo), safeText(key.id).slice(0, 8))}\n`,
           );
           const rows: KvRow[] = [
-            ["url", c.cyan(safeText(key.url))],
+            ["url", c.link(safeText(key.url))],
             ["id", safeText(key.id)],
           ];
           if (copied !== null) {

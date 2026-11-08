@@ -141,7 +141,7 @@ export async function runInstaller(
   if (opts.silent) {
     if (writtenTo && !isJsonMode()) {
       process.stderr.write(
-        `${mark("ok")} wrote ${c.bold(safeText(meta.type))} installer to ${c.cyan(writtenTo)}\n`,
+        `${mark("ok")} wrote ${c.bold(safeText(meta.type))} installer to ${c.link(writtenTo)}\n`,
       );
       for (const step of meta.install) {
         process.stderr.write(`  ${c.dim(safeText(step))}\n`);

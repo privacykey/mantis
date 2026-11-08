@@ -198,11 +198,11 @@ export async function edgeDeviceCmd(opts: EdgeDeviceOpts): Promise<void> {
         `${mark("ok")} ${c.bold(device)} ${installed ? "armed" : "minted"} (edge) — ${minted.length} alarm(s)\n`,
       );
       for (const m of minted) {
-        process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.cyan(m.url)}\n`);
+        process.stderr.write(`  ${c.dim(m.memo)}\n    ${c.link(m.url)}\n`);
       }
       if (bundleDir) {
         process.stderr.write(
-          `\n${mark("ok")} bundle → ${c.cyan(bundleDir)}\n`,
+          `\n${mark("ok")} bundle → ${c.link(bundleDir)}\n`,
         );
       }
       process.stderr.write(

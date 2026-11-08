@@ -25,8 +25,9 @@ const wrap = (open: number | string) => (s: string) =>
 // Each color has one job across the CLI, so a glance at the color is a glance
 // at the meaning:
 //   red     tripped or failed          green   ok
-//   yellow  warning or pending         cyan    something to run or open
+//   yellow  warning or pending         cyan    a command to run
 //   bold    the thing to read first    dim     labels, hints, quiet rows
+//   underline  a place to open (a URL or a file), at the text colour
 // A style ends with a full reset, so never nest a longer string inside
 // another style — compose side by side, or use prose() for sentences.
 export const c = {
@@ -43,6 +44,8 @@ export const c = {
   warning: wrap("1;33"),
   /** Table headers: quiet and underlined, so the rows lead. */
   header: wrap("2;4"),
+  /** A URL or a file path: underlined, so it never reads as a command. */
+  link: wrap(4),
 };
 
 /** Whether styled output is on for this emission (flag, env, then TTY). */
@@ -254,9 +257,12 @@ export function formatError(message: string, hint?: string, styled = false): str
     else out += `${/^\s/.test(line) ? "" : pad}${text}\n`;
   });
   if (hint) {
-    for (const line of wrapProse(safeBlock(hint), width)) {
-      out += `${pad}${prose(line)}\n`;
-    }
+    // The next step reads the same everywhere: an indented arrow line.
+    const lead = `  ${arrow.right()} `;
+    const under = " ".repeat(visibleLength(lead));
+    wrapProse(safeBlock(hint), width).forEach((line, i) => {
+      out += `${i === 0 ? lead : under}${prose(line)}\n`;
+    });
   }
   return out;
 }
@@ -269,6 +275,13 @@ export type TableOpts = {
    * own cell colors are dropped so the style holds across the line.
    */
   rowStyle?: (rowIndex: number) => ((s: string) => string) | undefined;
+  /**
+   * Per-column cut when the table is narrowed to the terminal: "middle" keeps
+   * both ends (a memo's host, an identity's machine), "end" (the default)
+   * keeps the start, "never" keeps the whole value (an address, a count)
+   * and lets the other columns give up the room.
+   */
+  cut?: ("end" | "middle" | "never")[];
 };
 
 export function table(
@@ -281,18 +294,25 @@ export function table(
   const widths = columns.map((_, i) =>
     Math.max(...all.map((row) => visibleLength(row[i] ?? ""))),
   );
-  fitColumns(widths);
+  fitColumns(widths, new Set(columns.flatMap((_, i) => (opts.cut?.[i] === "never" ? [i] : []))));
   const last = columns.length - 1;
   const fmt = (row: string[]) =>
     row
       .map((cell, i) => {
         const right = opts.align?.[i] === "right";
-        const fitted = fitCell(cell, widths[i] ?? 0, right);
+        const fitted = fitCell(cell, widths[i] ?? 0, right, opts.cut?.[i] === "middle");
         // No trailing padding on the last column: nothing follows it.
         return i === last && !right ? fitted.trimEnd() : fitted;
       })
       .join("  ");
-  const header = headers ? fmt(columns.map((name) => c.header(name))) : "";
+  // A header indented by spaces (over a gutter of marks) is underlined from
+  // its first letter, so it sits over the values, not the gutter.
+  const header = headers
+    ? fmt(columns.map((name) => {
+        const [, gap, text] = /^(\s*)(.*)$/s.exec(name)!;
+        return text ? `${gap}${c.header(text)}` : name;
+      }))
+    : "";
   const body = bodyRows
     .map((row, i) => {
       const style = opts.rowStyle?.(i);
@@ -302,15 +322,15 @@ export function table(
   return [header, body].filter(Boolean).join("\n");
 }
 
-function fitCell(s: string, width: number, right = false): string {
-  if (visibleLength(s) > width) return truncate(s, width);
+function fitCell(s: string, width: number, right = false, middle = false): string {
+  if (visibleLength(s) > width) return middle ? cutMiddle(s, width) : truncate(s, width);
   return right ? padLeft(s, width) : padRight(s, width);
 }
 
 // Shrink the widest column(s) until the laid-out row fits the terminal — only
 // when stdout is a TTY. Piped/redirected output keeps full widths so data is
 // never silently truncated inside a pipeline.
-function fitColumns(widths: number[]): void {
+function fitColumns(widths: number[], keep: Set<number> = new Set()): void {
   if (!process.stdout.isTTY) return;
   const term = process.stdout.columns ?? 80;
   const gap = 2;
@@ -320,6 +340,7 @@ function fitColumns(widths: number[]): void {
   while (total() > term) {
     let idx = -1;
     for (let i = 0; i < widths.length; i++) {
+      if (keep.has(i)) continue;
       if (widths[i]! > MIN && (idx === -1 || widths[i]! > widths[idx]!)) idx = i;
     }
     if (idx === -1) break; // every column already at the floor
@@ -615,9 +636,15 @@ export function formatDuration(totalSeconds: number): string {
   return parts.join(" ") || "0s";
 }
 
-/** Heading of a detail view: the name to read first, then a quiet aside. */
-export function heading(main: string, aside?: string): string {
-  return aside ? `${c.bold(main)}  ${c.dim(aside)}` : c.bold(main);
+/**
+ * Heading of a detail view: the name to read first, then a quiet aside. On a
+ * terminal the name is cut in the middle so the line fits the window; `used`
+ * is what the caller prints before it on the same line.
+ */
+export function heading(main: string, aside?: string, used = 0): string {
+  const room = termWidth() - used - (aside ? visibleLength(aside) + 2 : 0);
+  const name = process.stdout.isTTY && room >= 16 ? cutMiddle(main, room) : main;
+  return aside ? `${c.bold(name)}  ${c.dim(aside)}` : c.bold(name);
 }
 
 export type KvRow = [label: string, value: string | string[]];
@@ -664,6 +691,52 @@ export function fitMiddle(s: string, max: number): string {
 }
 
 /**
+ * Cut text in the middle to a visible width, keeping both ends on word
+ * edges where that costs little: `AWS creds … ci-runner-07`. A cell styled
+ * as one span (bold, dim) keeps its style; anything else comes back plain.
+ */
+export function cutMiddle(s: string, max: number): string {
+  const text = keepOnlySgr(s);
+  if (visibleLength(text) <= max) return text;
+  const plain = stripAnsi(text);
+  const span = /^(\x1b\[[0-9;]*m)([^\x1b]*)\x1b\[0m$/.exec(text);
+  const restyle = (t: string) => (span ? `${span[1]}${t}\x1b[0m` : t);
+  const ell = unicodeEnabled() ? "…" : "...";
+  if (max <= ell.length + 2) return restyle(truncateVisible(plain, max));
+  const budget = max - ell.length;
+  let head = plain.slice(0, Math.ceil(budget / 2));
+  // Snap the head back to a word end, and the tail forward to a word start,
+  // when that drops at most four characters; the budget moves to the tail.
+  const atWordEnd = plain[head.length] === " ";
+  const headSpace = head.lastIndexOf(" ");
+  const headSnapped = atWordEnd || (headSpace > 0 && head.length - headSpace <= 4);
+  if (!atWordEnd && headSnapped) head = head.slice(0, headSpace);
+  head = head.trimEnd();
+  let tail = plain.slice(plain.length - (budget - head.length));
+  const tailSpace = tail.indexOf(" ");
+  const atWordStart = plain[plain.length - tail.length - 1] === " ";
+  const tailSnapped = atWordStart || (tailSpace >= 0 && tailSpace < 4 && tail.length - tailSpace - 1 > 0);
+  if (!atWordStart && tailSnapped) tail = tail.slice(tailSpace + 1);
+  tail = tail.trimStart();
+  // Word edges on both sides read best with the ellipsis spaced, when it fits.
+  const spaced = ` ${ell} `;
+  const joined =
+    headSnapped && tailSnapped && head.length + spaced.length + tail.length <= max
+      ? `${head}${spaced}${tail}`
+      : `${head}${ell}${tail}`;
+  return restyle(joined);
+}
+
+function truncateVisible(plain: string, max: number): string {
+  return plain.slice(0, Math.max(0, max));
+}
+
+/** cutMiddle() on a terminal; piped output keeps the whole value. */
+export function capMiddle(s: string, max: number): string {
+  return process.stdout.isTTY ? cutMiddle(s, max) : s;
+}
+
+/**
  * A destination target with its secret hidden, on a terminal: the host and
  * the last six characters of a path that carries a token
  * (`hooks.slack.com/…6Lw0Zs`). A target without a token-like path segment
@@ -705,6 +778,22 @@ export function withoutRepeat(reason: string, target: string): string {
     out = out.replace(new RegExp(`\\s(?:for|to|from|at)\\s${esc}(?=[\\s).,;:]|$)`), "");
   }
   return out;
+}
+
+/**
+ * A detail that belongs to the row above it (a failure's reason): a dim tree
+ * corner, then the text, wrapped under itself on a terminal and whole on a
+ * pipe. `room` is the width from `indent` to the edge.
+ */
+export function childLines(
+  text: string,
+  indent: string,
+  room: number,
+  style: (s: string) => string = (s) => s,
+): string[] {
+  const corner = glyph("└", "`");
+  const wrapped = process.stdout.isTTY ? wrapProse(text, Math.max(20, room - 2)) : [text];
+  return wrapped.map((line, i) => `${indent}${i === 0 ? `${c.dim(corner)} ` : "  "}${style(line)}`);
 }
 
 /**

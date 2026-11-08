@@ -131,11 +131,11 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
         );
         for (const m of minted) {
           process.stderr.write(
-            `  ${c.dim(safeText(m.memo))}\n    ${c.cyan(safeText(m.url))}\n`,
+            `  ${c.dim(safeText(m.memo))}\n    ${c.link(safeText(m.url))}\n`,
           );
         }
         if (bundlePath) {
-          process.stderr.write(`\n${mark("ok")} bundle → ${c.cyan(bundlePath)}\n`);
+          process.stderr.write(`\n${mark("ok")} bundle → ${c.link(bundlePath)}\n`);
         }
         if (!installed) {
           process.stderr.write(

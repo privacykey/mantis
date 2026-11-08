@@ -80,7 +80,7 @@ function failTarget(err: unknown): never {
 /** Name the profile and server a credential is about to be bound to. */
 function announceTarget(cfg: TargetProfile): void {
   process.stderr.write(
-    `${c.dim("target:")} profile ${c.bold(safeText(cfg.name))} ${c.dim("→")} ${c.cyan(safeText(cfg.baseUrl))}\n`,
+    `${c.dim("target:")} profile ${c.bold(safeText(cfg.name))} ${c.dim("→")} ${c.link(safeText(cfg.baseUrl))}\n`,
   );
 }
 
@@ -104,7 +104,7 @@ export async function cloudflareLoginCmd(opts: CfLoginOpts): Promise<void> {
   }
 
   process.stderr.write(
-    `${c.dim("opening browser to Cloudflare Access for")} ${c.cyan(safeText(appUrl))}\n`,
+    `${c.dim("opening browser to Cloudflare Access for")} ${c.link(safeText(appUrl))}\n`,
   );
   try {
     cloudflareInteractiveLogin(appUrl);

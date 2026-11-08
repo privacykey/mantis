@@ -3,7 +3,7 @@ import {
   mark,
   glyph,
   arrow,
-  cap,
+  capMiddle,
   c,
   emit,
   fail,
@@ -57,7 +57,8 @@ export async function listCmd(opts: ListOpts): Promise<void> {
         const rows = items.map((t) => {
           const row = [
             wide ? safeText(t.id) : safeText(t.id).slice(0, 8),
-            cap(safeText(t.memo), memoWidth(wide ? 80 : 40)),
+            // Cut in the middle: the end of a memo is often what tells two keys apart.
+            capMiddle(safeText(t.memo), memoWidth(wide ? 80 : 40)),
           ];
           if (wide) row.push(safeText(t.url));
           row.push(formatTime(t.created_at), dest(t.destinations.length), status(t.disabled));
@@ -73,6 +74,7 @@ export async function listCmd(opts: ListOpts): Promise<void> {
         process.stdout.write(
           table(columns, rows, {
             align,
+            cut: columns.map((name) => (name === "memo" ? "middle" : "end")),
             // A disabled key cannot trip, so its row steps back.
             rowStyle: (i) => (items[i]!.disabled ? c.dim : undefined),
           }) + "\n",

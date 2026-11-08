@@ -37,11 +37,11 @@ export async function openCmd(
       () => {
         if (launched) {
           process.stderr.write(
-            `${mark("ok")} opened ${description}: ${c.cyan(safeText(target))}\n`,
+            `${mark("ok")} opened ${description}: ${c.link(safeText(target))}\n`,
           );
         } else {
           process.stderr.write(
-            `${mark("warn")} couldn't launch a browser; visit manually:\n  ${c.cyan(safeText(target))}\n`,
+            `${mark("warn")} couldn't launch a browser; visit manually:\n  ${c.link(safeText(target))}\n`,
           );
         }
       },

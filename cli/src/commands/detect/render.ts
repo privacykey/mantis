@@ -42,7 +42,7 @@ export function renderHuman(
     lines.push(`    ${c.dim("path:    ")} ${formatPath(f.path)}${f.line ? `:${safeText(f.line)}` : ""}`);
     lines.push(`    ${c.dim("summary: ")} ${safeText(f.summary)}`);
     if (f.vendor) lines.push(`    ${c.dim("vendor:  ")} ${safeText(f.vendor)}`);
-    if (f.url) lines.push(`    ${c.dim("matched: ")} ${c.cyan(safeText(f.url))}`);
+    if (f.url) lines.push(`    ${c.dim("matched: ")} ${c.link(safeText(f.url))}`);
     if (f.source) lines.push(`    ${c.dim("source:  ")} ${safeText(f.source)}`);
     if (opts.verbose && f.match) {
       lines.push(`    ${c.dim("match:   ")} ${safeText(f.match)}`);

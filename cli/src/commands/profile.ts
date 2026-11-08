@@ -20,7 +20,7 @@ export async function profileListCmd(): Promise<void> {
       const w = process.stdout.write.bind(process.stdout);
       for (const { name, entry } of profiles) {
         const marker = name === current ? c.green("* ") : "  ";
-        w(`${marker}${c.bold(safeText(name).padEnd(16))} ${c.cyan(safeText(entry.baseUrl))}\n`);
+        w(`${marker}${c.bold(safeText(name).padEnd(16))} ${c.link(safeText(entry.baseUrl))}\n`);
         if (entry.keyPrefix) {
           w(`    ${c.dim("key:  ")} ${safeText(entry.keyPrefix)}…\n`);
         }
@@ -124,7 +124,7 @@ export async function profileSetEdgeCmd(
     return fail(err instanceof Error ? err.message : String(err));
   }
   process.stderr.write(
-    `${mark("ok")} profile ${c.bold(safeText(name))} default edge worker → ${c.cyan(safeText(worker))}\n`,
+    `${mark("ok")} profile ${c.bold(safeText(name))} default edge worker → ${c.link(safeText(worker))}\n`,
   );
 }
 

@@ -55,7 +55,7 @@ export async function monitorCmd(id: string, opts: MonitorOpts): Promise<void> {
             "\n",
         );
         if (key.monitor_status_url) {
-          w(`  ${c.dim("status URL:")} ${c.cyan(safeText(key.monitor_status_url))}\n`);
+          w(`  ${c.dim("status URL:")} ${c.link(safeText(key.monitor_status_url))}\n`);
           w(
             `  ${c.dim("current:   ")} ${
               currentState === "tripped"

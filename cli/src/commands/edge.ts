@@ -136,7 +136,7 @@ export async function setKeyCmd(opts: {
   emit(
     () => {
       process.stderr.write(
-        `${mark("ok")} stored edge key for ${c.cyan(workerUrl)}\n`,
+        `${mark("ok")} stored edge key for ${c.link(workerUrl)}\n`,
       );
     },
     { worker: workerUrl, stored: true },
@@ -153,7 +153,7 @@ export function deleteKeyCmd(opts: { worker?: string }): void {
   emit(
     () => {
       process.stderr.write(
-        `${mark("ok")} cleared edge key for ${c.cyan(workerUrl)}\n`,
+        `${mark("ok")} cleared edge key for ${c.link(workerUrl)}\n`,
       );
     },
     { worker: workerUrl, deleted: true },
@@ -293,7 +293,7 @@ export async function deployCmd(opts: {
   if (opts.setKey) {
     if (!isJsonMode()) {
       process.stderr.write(
-        `\n${mark("ok")} deployed: ${c.cyan(workerUrl)}\n` +
+        `\n${mark("ok")} deployed: ${c.link(workerUrl)}\n` +
           `${c.dim("The worker also needs the key as a secret:")} ${c.cyan("npx wrangler secret put MANTIS_EDGE_KEY")}\n` +
           `${c.dim("Storing the key locally so the CLI can mint against it:")}\n`,
       );
@@ -305,7 +305,7 @@ export async function deployCmd(opts: {
   emit(
     () =>
       process.stderr.write(
-        `\n${mark("ok")} deployed: ${c.cyan(workerUrl)}\n\n` +
+        `\n${mark("ok")} deployed: ${c.link(workerUrl)}\n\n` +
           `${c.dim("Next:")}\n` +
           `  ${c.cyan("npx wrangler secret put MANTIS_EDGE_KEY")}   ${c.dim("# set the AES key ON the worker")}\n` +
           `  ${c.cyan(`mantis edge set-key ${workerUrl}`)}   ${c.dim("# store it locally for minting")}\n` +
@@ -488,7 +488,7 @@ async function renderInstaller(
     () => {
       if (writtenTo) {
         process.stderr.write(
-          `${mark("ok")} wrote ${c.bold(installer.type)} installer to ${c.cyan(writtenTo)}\n`,
+          `${mark("ok")} wrote ${c.bold(installer.type)} installer to ${c.link(writtenTo)}\n`,
         );
         for (const line of installer.install) {
           process.stderr.write(`  ${c.dim(line)}\n`);

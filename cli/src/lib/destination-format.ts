@@ -5,6 +5,7 @@
 import type { Destination } from "./api.js";
 import {
   c,
+  childLines,
   fitMiddle,
   KV_LABEL_WIDTH,
   mark,
@@ -12,7 +13,6 @@ import {
   safeText,
   termWidth,
   withoutRepeat,
-  wrapProse,
 } from "./out.js";
 
 export type DestinationLine = Pick<
@@ -52,13 +52,12 @@ export function destinationLines(destinations: DestinationLine[]): string[] {
     const wordStyled = state === "fail" ? c.red(word) : word;
     lines.push(`${mark(state)} ${s(d.channel).padEnd(channelWidth)}  ${target}  ${wordStyled}`);
     if (state === "fail" && d.last_activation_error) {
-      // The reason wraps under the target on a terminal, whole on a pipe,
-      // and does not repeat the target the row above names.
+      // The reason hangs off its row under the target, and does not repeat
+      // the target the row names.
       const pad = " ".repeat(2 + channelWidth + 2);
       const reason = withoutRepeat(s(d.last_activation_error), d.target);
       const avail = termWidth() - (2 + KV_LABEL_WIDTH + 1) - pad.length;
-      const wrapped = process.stdout.isTTY ? wrapProse(reason, Math.max(20, avail)) : [reason];
-      for (const line of wrapped) lines.push(`${pad}${c.red(line)}`);
+      lines.push(...childLines(reason, pad, avail, c.red));
     }
   });
   return lines;

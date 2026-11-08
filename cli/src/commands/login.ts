@@ -108,7 +108,7 @@ export async function loginCmd(opts: {
     }
 
     process.stderr.write(
-      `${mark("ok")} stored credentials for ${c.cyan(url)} as profile ${c.bold(profileName)}${opts.noSwitch ? c.dim(" (not switched to)") : ""}\n`,
+      `${mark("ok")} stored credentials for ${c.link(url)} as profile ${c.bold(profileName)}${opts.noSwitch ? c.dim(" (not switched to)") : ""}\n`,
     );
     process.stderr.write(
       `${c.dim("Next:")} ${c.cyan("mantis doctor")} ${c.dim("# verify server health & auth")}\n`,

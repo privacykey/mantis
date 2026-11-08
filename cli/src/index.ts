@@ -223,7 +223,7 @@ program
     // Case 2: edge-only — no stateful profile yet, but an edge key is set up.
     if (!hasProfile && hasEdge) {
       out(banner());
-      const shown = edgeWorkers.slice(0, 3).map((w) => c.cyan(safeText(w)));
+      const shown = edgeWorkers.slice(0, 3).map((w) => c.link(safeText(w)));
       const more = edgeWorkers.length > 3 ? c.dim(` and ${edgeWorkers.length - 3} more`) : "";
       out(`${c.dim("Edge keys for")} ${shown.join(c.dim(", "))}${more}\n`);
       out(`\n${c.bold("Start here")}\n`);
@@ -253,7 +253,7 @@ program
     );
     if (hasEdge) {
       out(
-        `${c.dim("Edge keys for")} ${edgeWorkers.length === 1 ? c.cyan(safeText(edgeWorkers[0]!)) : `${edgeWorkers.length} workers`}\n`,
+        `${c.dim("Edge keys for")} ${edgeWorkers.length === 1 ? c.link(safeText(edgeWorkers[0]!)) : `${edgeWorkers.length} workers`}\n`,
       );
     }
     out(`\n${c.bold("Start here")}\n`);

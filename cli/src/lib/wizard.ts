@@ -71,22 +71,62 @@ export function webhookPromptLabel(channel: string): string {
 // Primitive prompts
 // ---------------------------------------------------------------------------
 
-/** `Label [default]: ` with the default dimmed, so the question leads. */
+// On a terminal wide enough, the wizard reads as a form: questions on the
+// left, defaults in a dim column of their own, and every answer starting in
+// one column (44), so the answers can be read straight down. Narrower than 70
+// columns, or for a question too long for its column, it falls back to the
+// inline `Question [default]: answer`.
+const QUESTION_WIDTH = 33;
+const DEFAULT_WIDTH = 11;
+const ANSWER_COLUMN = QUESTION_WIDTH + DEFAULT_WIDTH;
+const MIN_FORM_COLUMNS = 70;
+
+function inForm(label: string): boolean {
+  return (
+    Boolean(process.stderr.isTTY) &&
+    (process.stderr.columns ?? 80) >= MIN_FORM_COLUMNS &&
+    label.length <= QUESTION_WIDTH - 2
+  );
+}
+
+/** Where a line that belongs to the answer (the choices, a rejection) starts. */
+function answerIndent(label: string): string | undefined {
+  return inForm(label) ? " ".repeat(ANSWER_COLUMN) : undefined;
+}
+
+/** The question, then its default dimmed, so the question leads. */
 function promptText(label: string, def?: string, sep = ":"): string {
+  if (inForm(label)) {
+    const shown = def ? `[${def}]` : "";
+    const gap = " ".repeat(Math.max(1, DEFAULT_WIDTH - shown.length));
+    return `${label.padEnd(QUESTION_WIDTH)}${def ? `${c.dim(shown)}${gap}` : " ".repeat(DEFAULT_WIDTH)}`;
+  }
   return def ? `${label} ${c.dim(`[${def}]`)}${sep} ` : `${label}${sep} `;
 }
 
 /**
- * After Enter on an empty line, write the accepted default where the answer
- * would be, so the transcript shows what was chosen. Terminal only, and only
- * when the prompt fits on one line (the line is redrawn in place).
+ * Rewrite the line just answered: the accepted default, a masked webhook, a
+ * rejected value dimmed. An answer as typed can wrap (a real webhook URL is
+ * longer than most windows), so every row it took is cleared, measured at the
+ * window's current width. Terminal only, and only when the new line fits on
+ * one row.
  */
-function echoAccepted(prompt: string, value: string): void {
-  if (!value || !colorOn() || !process.stderr.isTTY) return;
+function redraw(prompt: string, typed: string, shown: string): void {
+  if (!colorOn() || !process.stderr.isTTY) return;
   if (process.env.TERM === "dumb") return;
   const cols = process.stderr.columns ?? 80;
-  if (visibleLength(prompt) + value.length >= cols) return;
-  process.stderr.write(`\x1b[1A\r\x1b[2K${prompt}${c.dim(value)}\n`);
+  if (visibleLength(prompt) + visibleLength(shown) >= cols) return;
+  const rows = Math.max(1, Math.ceil((visibleLength(prompt) + [...typed].length) / cols));
+  process.stderr.write(`\x1b[${rows}A\r\x1b[J${prompt}${shown}\n`);
+}
+
+/**
+ * After Enter on an empty line, write the accepted default where the answer
+ * would be, in bold like a typed answer, so the transcript shows what was
+ * chosen and every answer reads the same.
+ */
+function echoAccepted(prompt: string, value: string): void {
+  if (value) redraw(prompt, "", c.bold(value));
 }
 
 /** Re-prompt loop for a value that must start with https:// (or http://). */
@@ -104,30 +144,18 @@ export async function askUrl(
     const v = ans || def;
     if (!v) {
       if (opts.allowEmpty) return undefined;
-      warn("A value is required.", indent);
+      warn("A value is required.", answerIndent(label) ?? indent);
       continue;
     }
     if (URL_RE.test(v)) {
       // The masked form keeps the scheme the line above asked for.
-      if (ans) echoMasked(prompt, c.bold(maskSecretUrl(v)));
+      if (ans) redraw(prompt, ans, c.bold(maskSecretUrl(v)));
       return v;
     }
     // A rejected answer steps back before the ✗ line explains why.
-    if (ans) echoMasked(prompt, c.dim(ans));
-    warn("The URL must start with https://", indent);
+    if (ans) redraw(prompt, ans, c.dim(ans));
+    warn("The URL must start with https://", answerIndent(label) ?? indent);
   }
-}
-
-/**
- * Redraw an accepted answer in a safer form (a masked webhook), at default
- * weight. Terminal only, and only when the line fits.
- */
-function echoMasked(prompt: string, shown: string): void {
-  if (!colorOn() || !process.stderr.isTTY) return;
-  if (process.env.TERM === "dumb") return;
-  const cols = process.stderr.columns ?? 80;
-  if (visibleLength(prompt) + shown.length >= cols) return;
-  process.stderr.write(`\x1b[1A\r\x1b[2K${prompt}${shown}\n`);
 }
 
 /** Yes/no with a typed default. `default: true` shows `[Y/n]`. */
@@ -160,14 +188,26 @@ export async function askChoice<T extends string>(
   const shown = (x: string) => x.replace(/_/g, "-");
   for (;;) {
     // The choices sit on their own dim line, so the prompt reads the same
-    // every time it is asked and never runs wide.
-    process.stderr.write(`${indent}${c.dim(`one of: ${choices.map(shown).join(", ")}`)}\n`);
+    // every time it is asked and never runs wide. In the form they sit in the
+    // answer column, above the answer they describe.
+    // A list that would take more than two lines there keeps its own line.
+    const list = `one of: ${choices.map(shown).join(", ")}`;
+    const col = answerIndent(label);
+    const room = (process.stderr.columns ?? 80) - (col?.length ?? 0) - 1;
+    const lines = col ? wrapProse(list, Math.max(20, room - 8)) : [];
+    if (col && lines.length <= 2) {
+      lines.forEach((line, i) => {
+        process.stderr.write(`${col}${i ? "        " : ""}${c.dim(line)}\n`);
+      });
+    } else {
+      process.stderr.write(`${indent}${c.dim(list)}\n`);
+    }
     const prompt = promptText(label, shown(def));
     const ans = (await p.ask(prompt)).toLowerCase().replace(/-/g, "_");
     if (!ans) echoAccepted(prompt, shown(def));
     const v = (ans || def) as T;
     if ((choices as readonly string[]).includes(v)) return v;
-    warn(`Pick one of: ${choices.map(shown).join(", ")}.`, indent);
+    warn(`Pick one of: ${choices.map(shown).join(", ")}.`, answerIndent(label) ?? indent);
   }
 }
 

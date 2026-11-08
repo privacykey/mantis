@@ -191,7 +191,7 @@ export async function applyBundleLocally(
   if (!isQuiet() && !isJsonMode()) {
     process.stderr.write(
       `\n${c.bold("About to change this machine.")}\n` +
-        `Staged at ${c.cyan(dir)} — read ${c.cyan(scriptName)} before continuing.\n`,
+        `Staged at ${c.link(dir)} — read ${c.link(scriptName)} before continuing.\n`,
     );
   }
 

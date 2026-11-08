@@ -11,6 +11,7 @@ import {
   stripAnsi,
   arrow,
   c,
+  childLines,
   dot,
   fitMiddle,
   formatAge,
@@ -21,8 +22,8 @@ import {
   safeText,
   table,
   termWidth,
+  visibleLength,
   withoutRepeat,
-  wrapProse,
 } from "./out.js";
 
 type HostCtx = NonNullable<Hit["host_context"]>;
@@ -159,38 +160,57 @@ function isQuiet(h: Hit): boolean {
   return Boolean(h.bot_label) || h.is_duplicate;
 }
 
+/** The client address of an ssh row, when it is not the reporting address. */
+function sshClient(h: Hit): string | null {
+  const from = h.host_context?.ssh_client_ip;
+  return from && from !== h.ip ? from : null;
+}
+
 /** The hits table: newest first, crawlers and duplicates dimmed. */
 export function hitsTable(hits: Hit[]): string {
   const tags = hits.map(tagCell);
   const showTag = tags.some(Boolean);
+  const failed = hits.map((h) => h.notifications.some((n) => n.status === "failed"));
+  // A failed delivery is flagged in a column of its own at the left edge, so
+  // the eye finds it first and the times line up whatever their width.
+  const showMarker = failed.some(Boolean);
+  // On an ssh row the ip column carries the client address behind the arrow
+  // the legend explains. The arrow hangs in a gutter every row reserves, so
+  // the addresses (and the header) start on one edge.
+  const gutter = hits.some((h) => sshClient(h)) ? visibleLength(arrow.left()) + 1 : 0;
   const rows = hits.map((h, i) => {
-    // A failed delivery is flagged at the row's left edge, mark and colour.
-    const failed = h.notifications.some((n) => n.status === "failed");
-    // On an ssh row the ip column carries the client address, marked with
-    // the arrow the legend explains, so the who cell stays short.
-    const sshFrom = h.host_context?.ssh_client_ip;
-    const ip =
-      sshFrom && sshFrom !== h.ip
-        ? `${arrow.left()} ${safeText(sshFrom)}`
-        : h.ip == null
-          ? mark("none")
-          : safeText(h.ip);
+    const from = sshClient(h);
+    const addr = from ? safeText(from) : h.ip == null ? mark("none") : safeText(h.ip);
+    const ip = gutter ? `${from ? `${arrow.left()} ` : " ".repeat(gutter)}${addr}` : addr;
+    const age = formatAge(h.occurred_at);
     const row = [
-      failed ? `${mark("fail")} ${c.red(formatAge(h.occurred_at))}` : formatAge(h.occurred_at),
+      failed[i] ? c.red(age) : age,
       ip,
-      hitWho(h, { omitFrom: sshFrom ?? h.ip, omitSource: true }),
+      hitWho(h, { omitFrom: h.host_context?.ssh_client_ip ?? h.ip, omitSource: true }),
     ];
     if (showTag) row.push(tags[i]!);
     // A crawler or a repeat steps back, except for what happened to its delivery.
-    const quiet = isQuiet(h);
-    const styled = quiet ? row.map((cell) => c.dim(stripAnsi(cell))) : row;
+    const styled = isQuiet(h) ? row.map((cell) => c.dim(stripAnsi(cell))) : row;
     styled.push(deliveryCell(h));
+    if (showMarker) styled.unshift(failed[i] ? mark("fail") : "");
     return styled;
   });
-  const columns = ["when", "ip", "who"];
+  const columns = ["when", `${" ".repeat(gutter)}ip`, "who"];
   if (showTag) columns.push("tag");
   columns.push("delivery");
-  return table(columns, rows, { align: ["right"] });
+  const align: ("left" | "right")[] = ["right"];
+  // In a narrow window the time and the address stay whole; the who column
+  // gives up room first and keeps both ends (the machine in an identity, the
+  // version in an agent).
+  const cut: ("end" | "middle" | "never")[] = ["never", "never", "middle"];
+  if (showTag) cut.push("end");
+  cut.push("never");
+  if (showMarker) {
+    columns.unshift("");
+    align.unshift("left");
+    cut.unshift("never");
+  }
+  return table(columns, rows, { align, cut });
 }
 
 /** What the delivery marks mean, for the marks that need saying. */
@@ -271,14 +291,11 @@ export function deliveryLines(
       : fitMiddle(targets[i]!, room - used);
     lines.push(`${lead}${target}  ${n.status === "failed" ? c.red(state) : state}`);
     if (n.last_error) {
-      // The reason wraps under the target on a terminal, whole on a pipe,
-      // and does not repeat the target the row above names.
+      // The reason hangs off its row under the target, and does not repeat
+      // the target the row names.
       const pad = " ".repeat(2 + channelWidth + 2);
       const reason = withoutRepeat(safeText(n.last_error), n.target ?? "");
-      const wrapped = process.stdout.isTTY
-        ? wrapProse(reason, Math.max(20, room - pad.length))
-        : [reason];
-      for (const line of wrapped) lines.push(`${pad}${c.red(line)}`);
+      lines.push(...childLines(reason, pad, room - pad.length, c.red));
     }
   });
   return lines;

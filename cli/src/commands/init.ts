@@ -87,7 +87,7 @@ export async function initCmd(): Promise<void> {
   }
   worker = worker.replace(/\/$/, "");
   setEdgeKey(worker, key);
-  w(`\n${mark("ok")} stored the edge key for ${c.cyan(worker)} locally.\n`);
+  w(`\n${mark("ok")} stored the edge key for ${c.link(worker)} locally.\n`);
   w(
     `\n${c.dim("Next:")} ${c.cyan("mantis edge mint")} ${c.dim("# mint a stateless tripwire URL")}\n`,
   );

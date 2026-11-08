@@ -61,7 +61,7 @@ export async function showCmd(id: string, opts: ShowOpts): Promise<void> {
         const stamp = (iso: string) =>
           `${formatStamp(iso)} ${c.dim(`${dot()} ${formatAgo(iso)}`)}`;
         const rows: KvRow[] = [
-          ["url", c.cyan(s(key.url))],
+          ["url", c.link(s(key.url))],
           ["status", key.disabled ? `${mark("none")} ${c.dim("disabled")}` : `${mark("ok")} active`],
           ["created", stamp(key.created_at)],
         ];
