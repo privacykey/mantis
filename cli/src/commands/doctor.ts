@@ -11,8 +11,19 @@ import {
   getProfile,
   resolveAuth,
 } from "../lib/config.js";
-import { c, emit, safeText } from "../lib/out.js";
-import type { GlobalOpts } from "../lib/runner.js";
+import {
+  hostOnly,
+  glyph,
+  dot,
+  arrow,
+  c,
+  emit,
+  hintLines,
+  mark,
+  safeText,
+} from "../lib/out.js";
+import { networkReason, type GlobalOpts } from "../lib/runner.js";
+import { fileURLToPath } from "node:url";
 import { CLI_VERSION } from "../version.js";
 
 export type DoctorOpts = GlobalOpts & {
@@ -26,14 +37,21 @@ type Check = {
   hint?: string;
 };
 
+/** A check plus wording that only the terminal view uses; --json omits it. */
+type ShownCheck = Check & { shown?: string; skipped?: boolean };
+
 export async function doctorCmd(opts: DoctorOpts): Promise<void> {
-  const checks: Check[] = [];
+  const checks: ShownCheck[] = [];
   const add = (
     status: Check["status"],
     name: string,
     detail: string,
     hint?: string,
-  ) => checks.push({ status, name, detail, hint });
+    shown?: string,
+  ) => checks.push({ status, name, detail, hint, shown });
+  // Nothing to check here: still "ok" to --json, drawn as skipped on a terminal.
+  const skip = (name: string, detail: string) =>
+    checks.push({ status: "ok", name, detail, skipped: true });
 
   const selectedProfile = opts.baseUrl
     ? undefined
@@ -42,7 +60,13 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   const baseUrl = normalizeUrl(opts.baseUrl ?? profile?.baseUrl);
 
   if (selectedProfile && profile) {
-    add("ok", "profile", `${selectedProfile} -> ${profile.baseUrl}`);
+    add(
+      "ok",
+      "profile",
+      `${selectedProfile} -> ${profile.baseUrl}`,
+      undefined,
+      `${selectedProfile} ${arrow.right()} ${hostOnly(profile.baseUrl)}`,
+    );
   } else if (opts.baseUrl) {
     add("ok", "profile", "using --base-url override");
   } else {
@@ -57,7 +81,13 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   if (baseUrl) {
     const storedKey = opts.key ?? getKey(baseUrl);
     if (storedKey) {
-      add("ok", "api key", `${storedKey.slice(0, 12)}...`);
+      add(
+        "ok",
+        "api key",
+        `${storedKey.slice(0, 12)}...`,
+        undefined,
+        `${storedKey.slice(0, 12)}${glyph("…", "...")}${storedKey.slice(-4)}`,
+      );
     } else {
       add(
         "fail",
@@ -98,7 +128,7 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
       }
     }
   } else {
-    add("ok", "cloudflare access", "not configured for this profile");
+    skip("cloudflare access", "not configured for this profile");
   }
 
   let samplePublicOrigin = normalizeUrl(opts.publicUrl);
@@ -128,7 +158,9 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
             `cli ${CLI_VERSION}, server ${health.version}`,
             health.version === CLI_VERSION
               ? undefined
-              : "Upgrade the older side when convenient",
+              : compareVersions(CLI_VERSION, health.version) < 0
+                ? `CLI is older: ${upgradeCommand()}`
+                : "Server is older: upgrade it when convenient",
           );
         }
       } catch (err) {
@@ -149,7 +181,13 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
           samplePublicOrigin = detected;
         }
         if (detected && detected !== client.baseUrl) {
-          add("ok", "split hosts", `${client.baseUrl} private, ${detected} public`);
+          add(
+            "ok",
+            "split hosts",
+            `${client.baseUrl} private, ${detected} public`,
+            undefined,
+            `private ${hostOnly(client.baseUrl)} ${dot()} public ${hostOnly(detected)}`,
+          );
         } else if (page.data.length === 0 && !samplePublicOrigin) {
           add(
             "warn",
@@ -184,20 +222,46 @@ export async function doctorCmd(opts: DoctorOpts): Promise<void> {
   const ok = !checks.some((check) => check.status === "fail");
   emit(
     () => {
-      process.stdout.write(c.bold("mantis doctor\n"));
-      for (const check of checks) {
-        const label =
-          check.status === "ok"
-            ? c.green("ok")
-            : check.status === "warn"
-            ? c.yellow("warn")
-            : c.red("fail");
+      const w = process.stdout.write.bind(process.stdout);
+      const nameWidth = Math.max(...checks.map((ch) => ch.name.length));
+      const under = " ".repeat(2 + nameWidth + 2);
+      checks.forEach((check, i) => {
         // Details quote the server (health fields, error strings) and config.
-        process.stdout.write(`${label.padEnd(9)} ${c.bold(safeText(check.name))}: ${safeText(check.detail)}\n`);
-        if (check.hint) process.stdout.write(`          ${c.dim(safeText(check.hint))}\n`);
-      }
+        const detail = safeText(check.shown ?? check.detail);
+        const name = safeText(check.name).padEnd(nameWidth);
+        if (check.skipped) {
+          w(`${mark("none")} ${c.dim(name)}  ${c.dim(`skipped: ${detail}`)}\n`);
+          return;
+        }
+        const kind = check.status === "ok" ? "ok" : check.status;
+        w(`${mark(kind)} ${check.status === "ok" ? name : c.bold(name)}  ${detail}\n`);
+        // Checks that fail the same way share one hint, under the last of them.
+        if (check.hint && checks[i + 1]?.hint !== check.hint) {
+          w(hintLines(`${arrow.right()} ${check.hint}`, under));
+        }
+      });
+      const count = (status: Check["status"]) =>
+        checks.filter((ch) => ch.status === status && !ch.skipped).length;
+      const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+      const failed = count("fail");
+      const warned = count("warn");
+      const skipped = checks.filter((ch) => ch.skipped).length;
+      const parts = [`${count("ok")} passed`];
+      if (skipped) parts.push(`${skipped} skipped`);
+      // The counts that need acting on carry the colour; the rest stay quiet.
+      if (warned) parts.push(c.warning(plural(warned, "warning")));
+      if (failed) parts.push(c.alarm(`${failed} failed`));
+      w(`\n${mark(failed ? "fail" : warned ? "warn" : "ok")} ${parts.join(", ")}\n`);
     },
-    { ok, checks },
+    {
+      ok,
+      checks: checks.map(({ name, status, detail, hint }) => ({
+        status,
+        name,
+        detail,
+        hint,
+      })),
+    },
   );
   process.exitCode = ok ? 0 : 1;
 }
@@ -209,14 +273,15 @@ async function checkPublicSplit(
     name: string,
     detail: string,
     hint?: string,
+    shown?: string,
   ) => number,
   timeoutMs: number | undefined,
 ): Promise<void> {
   const login = await fetchPublic(publicOrigin, "/login", timeoutMs);
-  addPublicOnlyCheck(add, "public /login", login);
+  addPublicOnlyCheck(add, "public /login", login, `${publicOrigin}/login`);
 
   const api = await fetchPublic(publicOrigin, "/api/keys", timeoutMs);
-  addPublicOnlyCheck(add, "public /api", api);
+  addPublicOnlyCheck(add, "public /api", api, `${publicOrigin}/api/keys`);
 
   // No probe of the public status route: a status URL only answers with the
   // per-key capability the server puts in monitor_status_url, and anything
@@ -230,12 +295,20 @@ function addPublicOnlyCheck(
     name: string,
     detail: string,
     hint?: string,
+    shown?: string,
   ) => number,
   name: string,
-  result: { ok: true; status: number } | { ok: false; message: string },
+  result: { ok: true; status: number } | { ok: false; message: string; code?: string },
+  tried: string,
 ): void {
   if (!result.ok) {
-    add("warn", name, result.message, "Could not verify the public-only host");
+    add(
+      "warn",
+      name,
+      result.message,
+      `Both checks: fix DNS or the tunnel, rerun \`mantis doctor\``,
+      `${hostOnly(tried)}: ${networkReason(result.code, result.message)}`,
+    );
     return;
   }
   if (result.status === 404) {
@@ -254,7 +327,9 @@ async function fetchPublic(
   origin: string,
   path: string,
   timeoutMs = 5000,
-): Promise<{ ok: true; status: number } | { ok: false; message: string }> {
+): Promise<
+  { ok: true; status: number } | { ok: false; message: string; code?: string }
+> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -264,13 +339,40 @@ async function fetchPublic(
     });
     return { ok: true, status: res.status };
   } catch (err) {
+    const cause = (err as { cause?: { code?: unknown } }).cause;
+    const code =
+      err instanceof Error && err.name === "AbortError"
+        ? "ETIMEDOUT"
+        : typeof cause?.code === "string"
+          ? cause.code
+          : undefined;
     return {
       ok: false,
       message: err instanceof Error ? err.message : String(err),
+      code,
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The upgrade command for the way this CLI was installed (Homebrew or npm). */
+function upgradeCommand(): string {
+  const here = fileURLToPath(import.meta.url);
+  return /\/(Cellar|homebrew)\//.test(here)
+    ? "`brew upgrade mantis`"
+    : "`npm i -g @mantis/cli` or `brew upgrade mantis`";
+}
+
+/** Numeric compare of `x.y.z` strings: negative when a is older than b. */
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => v.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const [pa, pb] = [parse(a), parse(b)];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 function normalizeUrl(raw: string | undefined): string | undefined {

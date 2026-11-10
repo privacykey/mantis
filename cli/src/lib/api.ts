@@ -236,8 +236,11 @@ export class RequestTimeoutError extends Error {
 }
 
 export class RequestNetworkError extends Error {
-  constructor(message: string) {
+  /** The system error code behind a failed request (ECONNREFUSED, ENOTFOUND). */
+  readonly code?: string;
+  constructor(message: string, code?: string) {
     super(message);
+    this.code = code;
   }
 }
 
@@ -667,7 +670,11 @@ function isRetryableError(err: unknown): boolean {
 
 function normalizeFetchError(err: unknown): Error {
   if (err instanceof RequestTimeoutError) return err;
-  if (err instanceof Error) return new RequestNetworkError(err.message);
+  if (err instanceof Error) {
+    const cause = (err as { cause?: { code?: unknown } }).cause;
+    const code = typeof cause?.code === "string" ? cause.code : undefined;
+    return new RequestNetworkError(err.message, code);
+  }
   return new RequestNetworkError(String(err));
 }
 

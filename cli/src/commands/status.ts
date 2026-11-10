@@ -1,13 +1,27 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
 import {
+  memoWidth,
+  formatAge,
+  capMiddle,
   c,
+  dot,
   emit,
-  formatTime,
+  formatAgo,
+  formatDuration,
+  formatStamp,
+  heading,
+  hintLines,
   isJsonMode,
+  kv,
+  type KvRow,
+  mark,
+  prose,
   safeText,
   table,
-  truncate,
+  tripped,
 } from "../lib/out.js";
+import { deliveryLegend, hitsTable } from "../lib/hit-format.js";
 import { parseLimit } from "../lib/parse.js";
 import { resolveKeyRef } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
@@ -47,56 +61,78 @@ export async function statusCmd(
     const fullId = idOrUndefined
       ? await resolveKeyRef(client, idOrUndefined)
       : null;
-
+    const load = () => fullId ? loadDetail(client, fullId, opts) : loadList(client, opts);
     if (opts.watch && !isJsonMode()) {
-      await watchLoop(client, fullId, opts);
+      await watchLoop(load, opts);
       return;
     }
-
-    if (fullId) {
-      await detail(client, fullId, opts);
-    } else {
-      await listAll(client, opts);
-    }
+    (await load())();
   });
 }
 
 async function watchLoop(
-  client: MantisClient,
-  fullId: string | null,
+  load: () => Promise<() => void>,
   opts: StatusOpts,
 ): Promise<void> {
   const intervalMs = Math.max(2000, Number(opts.interval ?? "5") * 1000);
-
-  let stop = false;
-  process.on("SIGINT", () => {
-    stop = true;
-    process.stderr.write("\n");
-  });
-
-  while (!stop) {
-    // Clear screen + home cursor
+  const controller = new AbortController();
+  const { signal } = controller;
+  let render: (() => void) | undefined;
+  let fetchedAt = "";
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  const showError = (err: unknown) => {
+    const message = safeText(err instanceof Error ? err.message : String(err));
+    process.stderr.write(c.red(`watch error: ${message}\n`));
+  };
+  const draw = () => {
+    if (!render || signal.aborted) return;
     process.stdout.write("\x1b[2J\x1b[H");
-    const ts = new Date().toISOString().slice(11, 19);
-    process.stderr.write(c.dim(`mantis status — ${ts} (every ${intervalMs / 1000}s, ctrl-c to stop)\n\n`));
+    process.stderr.write(
+      c.dim(`mantis status ${dot()} ${fetchedAt} UTC ${dot()} every ${intervalMs / 1000}s, ctrl-c to stop\n\n`),
+    );
     try {
-      if (fullId) await detail(client, fullId, opts);
-      else await listAll(client, opts);
+      render();
     } catch (err) {
-      process.stderr.write(
-        c.red(`watch error: ${safeText(err instanceof Error ? err.message : String(err))}\n`),
-      );
+      showError(err);
     }
-    if (stop) break;
-    await new Promise((r) => setTimeout(r, intervalMs));
+  };
+  const onResize = () => {
+    clearTimeout(settle);
+    settle = setTimeout(draw, 150);
+  };
+  const onInterrupt = () => {
+    controller.abort();
+    process.stderr.write("\n");
+  };
+  process.stdout.on("resize", onResize);
+  process.on("SIGINT", onInterrupt);
+  try {
+    while (!signal.aborted) {
+      try {
+        render = await load();
+      } catch (err) {
+        render = () => showError(err);
+      }
+      fetchedAt = new Date().toISOString().slice(11, 19);
+      clearTimeout(settle);
+      draw();
+      if (signal.aborted) break;
+      await delay(intervalMs, undefined, { signal }).catch((err) => {
+        if (!signal.aborted) throw err;
+      });
+    }
+  } finally {
+    process.stdout.off("resize", onResize);
+    process.off("SIGINT", onInterrupt);
+    clearTimeout(settle);
   }
 }
 
-async function detail(
+async function loadDetail(
   client: MantisClient,
   id: string,
   opts: StatusOpts,
-): Promise<void> {
+): Promise<() => void> {
   const key = await client.getKey(id);
   const status = await fetchStatusSafe(client, key.id);
   if (status.status === "error") process.exitCode = 1;
@@ -110,38 +146,46 @@ async function detail(
 
   const explained = explainTrip(key, status, hitsResp.data);
 
-  emit(
+  return () => emit(
     () => {
       const w = process.stdout.write.bind(process.stdout);
-      w(`${c.bold(safeText(key.memo))} ${c.dim(`(${safeText(key.id)})`)}\n`);
-      w(`  ${c.dim("mode:       ")} ${formatMode(key)}\n`);
-      w(`  ${c.dim("state:      ")} ${formatState(status)}\n`);
+      const short = shortId(key.id);
+      w(`${heading(safeText(key.memo), short)}\n`);
+      const rows: KvRow[] = [
+        ["state", formatStateLong(status)],
+        ["mode", formatMode(key)],
+      ];
 
       if (status.status === "tripped" && key.monitor_mode === "window") {
         if (explained.windowExpiresAt) {
-          const inLabel = formatRelativeFuture(explained.windowExpiresAt);
-          w(
-            `  ${c.dim("window ends:")} ${explained.windowExpiresAt.toISOString()} ${c.dim(`(${inLabel} — oldest in-window hit ages out)`)}\n`,
-          );
+          const when = formatRelativeFuture(explained.windowExpiresAt);
+          const at = formatStamp(explained.windowExpiresAt.toISOString());
+          rows.push([
+            "clears",
+            `${when} ${c.dim(`${dot()} ${at}`)}`,
+          ]);
         }
       }
-
       if (status.status === "tripped" && key.monitor_mode === "latch") {
-        w(
-          `  ${c.dim("clears:     ")} on manual reset ${c.dim(`(\`mantis reset ${shortId(key.id)}\`)`)}\n`,
-        );
+        rows.push(["clears", prose(`on manual reset: \`mantis reset ${short}\``)]);
       }
-
       if (key.monitor_reset_at) {
-        w(`  ${c.dim("reset_at:   ")} ${safeText(key.monitor_reset_at)} ${c.dim(`(${formatTime(key.monitor_reset_at)})`)}\n`);
+        rows.push([
+          "last reset",
+          `${formatAgo(key.monitor_reset_at)} ${c.dim(`${dot()} ${formatStamp(key.monitor_reset_at)}`)}`,
+        ]);
       }
       if (key.monitor_status_url) {
-        w(`  ${c.dim("status URL: ")} ${c.cyan(safeText(key.monitor_status_url))}\n`);
+        rows.push(["status url", c.link(safeText(key.monitor_status_url))]);
       }
+      w(kv(rows));
 
       if (key.monitor_mode === "off") {
-        w(
-          `\n${c.dim(`not monitored — run \`mantis monitor ${shortId(key.id)} --mode latch\` (or --mode window) to enable.`)}\n`,
+        process.stderr.write(
+          "\n" +
+            hintLines(
+              `Not monitored. Turn it on with \`mantis monitor ${short} --mode latch\` (or \`--mode window\`).`,
+            ),
         );
         return;
       }
@@ -152,16 +196,14 @@ async function detail(
         return;
       }
 
-      w(`\n${c.bold(explained.hitsLabel)} (${inWindow.length}):\n`);
-      const rows = inWindow.map((h) => [
-        formatTime(h.occurred_at),
-        safeText(h.occurred_at),
-        safeText(h.ip ?? "-"),
-        truncate(safeText(h.user_agent), 36),
-        h.bot_label ? c.dim(`bot:${safeText(h.bot_label)}`) : "",
-      ]);
-      w(
-        table(["when", "occurred_at", "ip", "user-agent", "bot"], rows) + "\n",
+      const noun = inWindow.length === 1 ? "hit" : "hits";
+      w(`\n${c.bold(`${inWindow.length} ${noun} ${explained.hitsLabel}`)}\n`);
+      w(hitsTable(inWindow) + "\n");
+      const legend = deliveryLegend(inWindow);
+      process.stderr.write(
+        "\n" +
+          (legend ? `${legend}\n` : "") +
+          hintLines(`\`mantis hits ${short} --verbose\` shows each hit in full.`),
       );
     },
     {
@@ -191,7 +233,7 @@ async function detail(
   );
 }
 
-async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
+async function loadList(client: MantisClient, opts: StatusOpts): Promise<() => void> {
   const keys: Key[] = [];
   let cursor: string | undefined;
   do {
@@ -203,17 +245,17 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
   const monitored = keys.filter((k) => k.monitor_mode !== "off");
 
   if (monitored.length === 0) {
-    emit(
+    return () => emit(
       () => {
+        process.stdout.write("No monitored keys yet.\n");
         process.stderr.write(
-          c.dim(
-            `no keys with monitor_mode set. Run \`mantis monitor <id> --mode latch|window\` to enable.\n`,
+          hintLines(
+            "Turn monitoring on for a key with `mantis monitor <id> --mode latch` (or `--mode window`).",
           ),
         );
       },
       { keys: [] },
     );
-    return;
   }
 
   // Fetch status for each in parallel.
@@ -231,45 +273,89 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
     : statuses;
 
   if (filtered.length === 0 && opts.trippedOnly) {
-    emit(
+    return () => emit(
       () => {
-        process.stderr.write(
-          c.green(`✓ no monitored keys currently tripped\n`),
+        process.stdout.write(
+          `${mark("ok")} ${c.bold("no monitored keys currently tripped")}\n`,
         );
       },
       { keys: [] },
     );
-    return;
   }
 
-  emit(
+  return () => emit(
     () => {
-      const rows = filtered.map(({ key, status }) => [
-        shortId(key.id),
-        truncate(safeText(key.memo), 32),
-        formatMode(key),
-        formatState(status),
-        status.status === "tripped" && status.tripped_at
-          ? formatTime(status.tripped_at)
-          : "",
-      ]);
-      process.stdout.write(
-        table(["id", "memo", "mode", "state", "tripped"], rows) + "\n",
+      // Tripped keys are why the command was run, so they come first and
+      // carry the weight; the JSON keeps the server's order.
+      const rank = (st: ResolvedStatus) =>
+        st.status === "tripped" ? 0 : st.status === "error" ? 1 : 2;
+      const ordered = [...filtered].sort(
+        (a, b) => rank(a.status) - rank(b.status),
       );
-      const offCount = keys.length - monitored.length;
-      const hiddenByFilter = opts.trippedOnly ? monitored.length - filtered.length : 0;
+      const trippedCount = statuses.filter(
+        ({ status }) => status.status === "tripped",
+      ).length;
+      const total = statuses.length;
+      const keysWord = total === 1 ? "key" : "keys";
+      const okCount = statuses.filter(({ status }) => status.status === "ok").length;
+      const offCount = total - okCount - trippedCount - failed.length;
+      const incomplete = [
+        failed.length > 0 ? `${failed.length} unavailable` : "",
+        offCount > 0 ? `${offCount} not monitored` : "",
+      ].filter(Boolean);
+      const verdict =
+        trippedCount > 0
+          ? tripped(`${trippedCount} of ${total} monitored ${keysWord} tripped${incomplete.length ? ` ${dot()} ${incomplete.join(", ")}` : ""}`)
+          : incomplete.length
+            ? `${mark("warn")} ${c.yellow([`${okCount} ok`, ...incomplete].join(", "))}`
+            : `${mark("ok")} ${c.bold(total === 1 ? "the 1 monitored key is ok" : `all ${total} monitored keys are ok`)}`;
+      process.stdout.write(`${verdict}\n\n`);
+
+      const rows = ordered.map(({ key, status }) => {
+        const loud = status.status === "tripped";
+        const id = shortId(key.id);
+        // Cut in the middle: the end of a memo is often what tells two keys apart.
+        const memo = capMiddle(safeText(key.memo), memoWidth(44));
+        return [
+          loud ? c.bold(id) : id,
+          loud ? c.bold(memo) : memo,
+          formatMode(key),
+          formatState(status),
+          status.status === "tripped" && status.tripped_at
+            ? formatAge(status.tripped_at)
+            : "",
+        ];
+      });
+      process.stdout.write(
+        table(["id", "memo", "mode", "state", "since"], rows, {
+          // Durations line up on the right, as age does in `mantis list`.
+          align: ["left", "left", "left", "left", "right"],
+          cut: ["end", "middle"],
+        }) + "\n",
+      );
+      const unmonitoredCount = keys.length - monitored.length;
+      const hiddenByFilter = opts.trippedOnly ? okCount : 0;
       const notes: string[] = [];
       if (hiddenByFilter > 0) {
-        notes.push(`${hiddenByFilter} ok key${hiddenByFilter === 1 ? "" : "s"} hidden by --tripped-only`);
+        notes.push(
+          `${hiddenByFilter} ok ${hiddenByFilter === 1 ? "key" : "keys"} hidden by --tripped-only.`,
+        );
       }
-      if (offCount > 0) {
-        notes.push(`${offCount} key${offCount === 1 ? "" : "s"} with monitor_mode=off hidden`);
+      if (unmonitoredCount > 0) {
+        notes.push(
+          `${unmonitoredCount} unmonitored ${unmonitoredCount === 1 ? "key" : "keys"} not shown; \`mantis list\` shows every key.`,
+        );
+      }
+      if (trippedCount > 0) {
+        notes.push("`mantis status <id>` shows what tripped a key.");
       }
       if (notes.length > 0) {
-        process.stderr.write(c.dim(`\n(${notes.join("; ")})\n`));
+        process.stderr.write("\n" + notes.map((n) => hintLines(n)).join(""));
       }
       if (failed.length > 0) {
-        process.stderr.write(c.yellow(`\n${failed.length} monitor state(s) unavailable; check connectivity and retry.\n`));
+        process.stderr.write(
+          `\n${mark("warn")} ${c.yellow(`${failed.length} monitor ${failed.length === 1 ? "state is" : "states are"} unavailable.`)} ${c.dim("Check connectivity and retry.")}\n`,
+        );
       }
     },
     {
@@ -300,7 +386,7 @@ function explainTrip(
     return {
       relevantHits: [],
       hitsLabel: "",
-      emptyLabel: "not monitored",
+      emptyLabel: "Not monitored.",
       windowExpiresAt: null,
     };
   }
@@ -328,8 +414,8 @@ function explainTrip(
     }
     return {
       relevantHits: inWindow,
-      hitsLabel: `hits in window (${safeText(key.monitor_window_seconds)}s)`,
-      emptyLabel: "no hits in the current window",
+      hitsLabel: "in the window",
+      emptyLabel: `No hits in the last ${formatDuration(key.monitor_window_seconds)}.`,
       windowExpiresAt,
     };
   }
@@ -339,29 +425,38 @@ function explainTrip(
   const isTripped = status.status === "tripped";
   return {
     relevantHits: isTripped ? pool : [],
-    hitsLabel: "hits since last reset",
+    hitsLabel: key.monitor_reset_at ? "since the last reset" : "so far",
     emptyLabel: key.monitor_reset_at
-      ? "no hits since last reset"
-      : "no hits yet",
+      ? "No hits since the last reset."
+      : "No hits yet.",
     windowExpiresAt: null,
   };
 }
 
 function formatMode(key: Key): string {
   if (key.monitor_mode === "off") return c.dim("off");
-  if (key.monitor_mode === "latch") return c.cyan("latch");
-  return c.cyan(`window(${safeText(key.monitor_window_seconds)}s)`);
+  if (key.monitor_mode === "latch") return "latch";
+  return `window ${formatDuration(key.monitor_window_seconds)}`;
 }
 
+/** The state for a table cell: a mark and a word, nothing that can be cut. */
 function formatState(status: ResolvedStatus): string {
-  if (status.status === "tripped") {
-    const at = safeText(status.tripped_at);
-    return `${c.red("⚠ tripped")} ${c.dim(`at ${at} (${formatTime(at)})`)}`;
+  if (status.status === "tripped") return tripped();
+  if (status.status === "ok") return `${mark("ok")} ok`;
+  if (status.status === "off") return `${mark("none")} ${c.dim("not monitored")}`;
+  if (status.status === "error") {
+    return `${mark("warn")} ${c.yellow(`unavailable: ${safeText(status.error)}`)}`;
   }
-  if (status.status === "ok") return c.green("✓ ok");
-  if (status.status === "off") return c.dim("off / not monitored");
-  if (status.status === "error") return c.yellow(`? error: ${safeText(status.error)}`);
   return c.dim("?");
+}
+
+/** The state for a detail view, with when it tripped. */
+function formatStateLong(status: ResolvedStatus): string {
+  if (status.status !== "tripped" || !status.tripped_at) {
+    return formatState(status);
+  }
+  const at = status.tripped_at;
+  return `${tripped()} ${formatAgo(at)} ${c.dim(`${dot()} ${formatStamp(at)}`)}`;
 }
 
 function formatRelativeFuture(d: Date): string {

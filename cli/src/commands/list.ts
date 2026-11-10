@@ -1,12 +1,17 @@
 import {
+  memoWidth,
+  mark,
+  glyph,
+  arrow,
+  capMiddle,
   c,
   emit,
   fail,
   formatTime,
+  hintLines,
   isWideMode,
   safeText,
   table,
-  truncate,
 } from "../lib/out.js";
 import { parseLimit } from "../lib/parse.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
@@ -28,10 +33,9 @@ export async function listCmd(opts: ListOpts): Promise<void> {
     emit(
       () => {
         if (items.length === 0) {
+          process.stdout.write("No keys yet.\n");
           process.stderr.write(
-            c.dim(
-              "no keys yet. Run `mantis new \"first canary\"` to create one.\n",
-            ),
+            hintLines(`${arrow.right()} Create one with \`mantis new "first canary"\`.`, "  "),
           );
           return;
         }
@@ -45,33 +49,43 @@ export async function listCmd(opts: ListOpts): Promise<void> {
         }
         // The memo is whatever the key's creator typed — on an admin listing
         // that includes other API keys' holders — so escape it before cutting.
-        if (isWideMode()) {
-          const rows = items.map((t) => [
-            safeText(t.id),
-            truncate(safeText(t.memo), 80),
-            safeText(t.url),
-            formatTime(t.created_at),
-            t.disabled ? c.red("disabled") : c.green("active"),
-            t.destinations.length > 0
-              ? c.dim(String(t.destinations.length))
-              : "",
-          ]);
-          process.stdout.write(
-            table(["id", "memo", "url", "age", "status", "destinations"], rows) + "\n",
-          );
-          return;
-        }
-        const rows = items.map((t) => [
-          safeText(t.id).slice(0, 8),
-          truncate(safeText(t.memo), 40),
-          formatTime(t.created_at),
-          t.disabled ? c.red("disabled") : c.green("active"),
-          t.destinations.length > 0
-            ? c.dim(String(t.destinations.length))
-            : "",
-        ]);
+        // A key that notifies nobody only logs its hits, so its 0 is flagged.
+        const dest = (n: number) => (n > 0 ? String(n) : c.warning(`${glyph("⚠", "!")} 0`));
+        const status = (disabled: boolean) =>
+          disabled ? `${mark("none")} disabled` : `${mark("ok")} active`;
+        const wide = isWideMode();
+        const rows = items.map((t) => {
+          const row = [
+            wide ? safeText(t.id) : safeText(t.id).slice(0, 8),
+            // Cut in the middle: the end of a memo is often what tells two keys apart.
+            capMiddle(safeText(t.memo), memoWidth(wide ? 80 : 40)),
+          ];
+          if (wide) row.push(safeText(t.url));
+          row.push(formatTime(t.created_at), dest(t.destinations.length), status(t.disabled));
+          return row;
+        });
+        const columns = wide
+          ? ["id", "memo", "url", "age", "notify", "status"]
+          : ["id", "memo", "age", "notify", "status"];
+        const numeric = wide ? [3, 4] : [2, 3];
+        const align = columns.map((_, i) =>
+          numeric.includes(i) ? ("right" as const) : ("left" as const),
+        );
         process.stdout.write(
-          table(["id", "memo", "age", "status", "destinations"], rows) + "\n",
+          table(columns, rows, {
+            align,
+            cut: columns.map((name) => (name === "memo" ? "middle" : "end")),
+            // A disabled key cannot trip, so its row steps back.
+            rowStyle: (i) => (items[i]!.disabled ? c.dim : undefined),
+          }) + "\n",
+        );
+        const disabled = items.filter((t) => t.disabled).length;
+        const count = `${items.length} ${items.length === 1 ? "key" : "keys"}`;
+        process.stderr.write(
+          "\n" +
+            hintLines(
+              `${count}${disabled ? `, ${disabled} disabled` : ""}. \`mantis status\` shows which have tripped.`,
+            ),
         );
       },
       { data: items },

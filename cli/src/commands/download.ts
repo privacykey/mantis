@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { c } from "../lib/out.js";
+import { mark } from "../lib/out.js";
 import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -100,7 +100,7 @@ export async function downloadCmd(
       const { data } = await client.downloadFile(fullId, t.fmt);
       await writeFile(t.path, data);
       process.stderr.write(
-        `${c.green("✓")} saved ${data.length} bytes to ${t.path}\n`,
+        `${mark("ok")} saved ${data.length} bytes to ${t.path}\n`,
       );
     }
   });

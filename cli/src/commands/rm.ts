@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline/promises";
-import { c, emit, fail, isJsonMode, safeText } from "../lib/out.js";
+import { c, emit, fail, isJsonMode, safeText, mark } from "../lib/out.js";
 import { canPrompt } from "../lib/prompt.js";
 import { announceResolved, resolveKeyRefDetailed } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
@@ -59,7 +59,7 @@ export async function rmCmd(ids: string[], opts: RmOpts): Promise<void> {
         const error = err instanceof Error ? err.message : String(err);
         results.push({ ref, ok: false, error });
         if (!isJsonMode()) {
-          process.stderr.write(`${c.red("✗")} ${safeText(ref)}: ${safeText(error)}\n`);
+          process.stderr.write(`${mark("fail")} ${safeText(ref)}: ${safeText(error)}\n`);
         }
       }
     }
@@ -98,14 +98,14 @@ export async function rmCmd(ids: string[], opts: RmOpts): Promise<void> {
       try {
         await client.deleteKey(r.id!);
         if (!isJsonMode()) {
-          process.stderr.write(`${c.green("✓")} deleted ${safeText(r.id)}\n`);
+          process.stderr.write(`${mark("ok")} deleted ${safeText(r.id)}\n`);
         }
       } catch (err) {
         failed += 1;
         r.ok = false;
         r.error = err instanceof Error ? err.message : String(err);
         if (!isJsonMode()) {
-          process.stderr.write(`${c.red("✗")} ${safeText(r.ref)}: ${safeText(r.error)}\n`);
+          process.stderr.write(`${mark("fail")} ${safeText(r.ref)}: ${safeText(r.error)}\n`);
         }
       }
     }

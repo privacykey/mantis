@@ -1,4 +1,4 @@
-import { ApiError, RequestTimeoutError } from "./api.js";
+import { ApiError, RequestNetworkError, RequestTimeoutError } from "./api.js";
 import { MantisClient } from "./api.js";
 import { AuthError, listProfiles, resolveAuth } from "./config.js";
 import { listEdgeKeyWorkers } from "./edge-key.js";
@@ -24,12 +24,14 @@ export async function withClient<T>(
   globals: GlobalOpts,
   fn: (client: MantisClient) => Promise<T>,
 ): Promise<T> {
+  let server: string | undefined;
   try {
     const auth = await resolveAuth({
       baseUrl: globals.baseUrl,
       key: globals.key,
       profile: globals.profile,
     });
+    server = auth.baseUrl;
     const client = new MantisClient(auth, {
       timeoutMs: parseTimeoutMs(globals.timeout),
       retries: parseRetries(globals.retries),
@@ -58,40 +60,80 @@ export async function withClient<T>(
       // are real server-intent errors and edge isn't the answer.
       if (err.message.startsWith("no profile configured")) {
         const hint = await edgeSuggestion();
-        if (hint) return fail(`${err.message}\n        ${hint}`, ExitCode.Auth);
+        if (hint) {
+          return fail(err.message, ExitCode.Auth, {
+            hint,
+            json: `${err.message}\n        ${hint}`,
+          });
+        }
         // Nothing configured at all — not a server, not an edge worker. The
         // base message assumes a server already exists to log into, which is
         // exactly wrong for someone who just installed the CLI. Point them at
         // the guided setup instead of leaving them to infer it.
-        return fail(
-          `${err.message}\n        New here? Run \`mantis init\` — it asks whether you want a server or a stateless Cloudflare Worker, and sets it up.`,
-          ExitCode.Auth,
-        );
+        const newHere =
+          "New here? Run `mantis init` — it asks whether you want a server or a stateless Cloudflare Worker, and sets it up.";
+        return fail(err.message, ExitCode.Auth, {
+          hint: newHere,
+          json: `${err.message}\n        ${newHere}`,
+        });
       }
       return fail(err.message, ExitCode.Auth);
     }
-    if (err instanceof ResolveError) return fail(err.message, ExitCode.NotFound);
+    // The terminal gets the problem on one line and the way out on the next;
+    // --json keeps the single string it has always reported.
+    if (err instanceof ResolveError) {
+      return fail(err.short, ExitCode.NotFound, {
+        hint: err.hint,
+        json: err.message,
+        styled: err.styled,
+      });
+    }
     if (err instanceof RequestTimeoutError) {
-      return fail(
-        `${err.message}. Try --timeout with a larger value`,
-        ExitCode.Network,
-      );
+      return fail(err.message, ExitCode.Network, {
+        hint: "Try `--timeout` with a larger value.",
+        json: `${err.message}. Try --timeout with a larger value`,
+      });
     }
     if (err instanceof ApiError) {
-      return fail(
-        `${err.message} (HTTP ${err.status})${apiHint(err)}`,
-        apiExitCode(err.status),
-      );
+      const said = `${err.message} (HTTP ${err.status})`;
+      const hint = apiHint(err);
+      return fail(said, apiExitCode(err.status), {
+        hint: hint ? `${hint.slice(2)}.` : undefined,
+        json: `${said}${hint}`,
+      });
     }
     const message = err instanceof Error ? err.message : String(err);
     const isNetwork = /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET/i.test(
       message,
     );
+    const hint = genericHint(message);
     return fail(
-      `${message}${genericHint(message)}`,
+      isNetwork && server ? unreachable(server, err, message) : message,
       isNetwork ? ExitCode.Network : ExitCode.Generic,
+      {
+        hint: hint ? `${hint.slice(2).replace("--base-url", "\`--base-url\`")}.` : undefined,
+        json: `${message}${hint}`,
+      },
     );
   }
+}
+
+/** "fetch failed" in the operator's terms: which server, and why. */
+function unreachable(server: string, err: unknown, message: string): string {
+  const code = err instanceof RequestNetworkError ? err.code : undefined;
+  return `cannot reach ${server} (${networkReason(code, message)})`;
+}
+
+/** A system error code in the operator's words; the raw message otherwise. */
+export function networkReason(code: string | undefined, fallback: string): string {
+  const reasons: Record<string, string> = {
+    ECONNREFUSED: "connection refused",
+    ENOTFOUND: "host not found",
+    EAI_AGAIN: "host not found",
+    ETIMEDOUT: "timed out",
+    ECONNRESET: "connection reset",
+  };
+  return (code && reasons[code]) ?? code ?? fallback;
 }
 
 function apiExitCode(status: number): number {

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { b64urlEncode } from "../lib/edge-crypto.js";
 import { setEdgeKey } from "../lib/edge-key.js";
-import { c, fail, isJsonMode } from "../lib/out.js";
+import { c, fail, isJsonMode, mark } from "../lib/out.js";
 import { canPrompt, createPrompter } from "../lib/prompt.js";
 import { loginCmd } from "./login.js";
 import { newCmd } from "./new.js";
@@ -55,7 +55,7 @@ export async function initCmd(): Promise<void> {
 
   // Edge: generate a key, guide the user to deploy the worker, then store it.
   const key = b64urlEncode(new Uint8Array(randomBytes(32)));
-  w(`\n${c.green("✓")} generated an edge key.\n\n`);
+  w(`\n${mark("ok")} generated an edge key.\n\n`);
   w(`${c.dim("You'll deploy the Cloudflare Worker first — it doesn't exist yet,")}\n`);
   w(`${c.dim("and deploying is what gives you the *.workers.dev URL to paste below.")}\n`);
   w(`${c.dim("(The mantis-edge dir ships with the repo. If you installed via brew,")}\n`);
@@ -87,7 +87,7 @@ export async function initCmd(): Promise<void> {
   }
   worker = worker.replace(/\/$/, "");
   setEdgeKey(worker, key);
-  w(`\n${c.green("✓")} stored the edge key for ${c.cyan(worker)} locally.\n`);
+  w(`\n${mark("ok")} stored the edge key for ${c.link(worker)} locally.\n`);
   w(
     `\n${c.dim("Next:")} ${c.cyan("mantis edge mint")} ${c.dim("# mint a stateless tripwire URL")}\n`,
   );

@@ -11,7 +11,7 @@ import {
   applyBundleLocally,
   assertBundleInstallableHere,
 } from "../lib/device-install.js";
-import { c, emit, ExitCode, fail, safeText } from "../lib/out.js";
+import { c, emit, ExitCode, fail, safeText, mark } from "../lib/out.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
 export type DeviceNewOpts = GlobalOpts & {
@@ -127,15 +127,15 @@ export async function deviceNewCmd(opts: DeviceNewOpts): Promise<void> {
     emit(
       () => {
         process.stderr.write(
-          `${c.green("✓")} ${c.bold(safeText(device))} ${installed ? "armed" : "minted"} — ${minted.length} alarm(s)\n`,
+          `${mark("ok")} ${c.bold(safeText(device))} ${installed ? "armed" : "minted"} — ${minted.length} alarm(s)\n`,
         );
         for (const m of minted) {
           process.stderr.write(
-            `  ${c.dim(safeText(m.memo))}\n    ${c.cyan(safeText(m.url))}\n`,
+            `  ${c.dim(safeText(m.memo))}\n    ${c.link(safeText(m.url))}\n`,
           );
         }
         if (bundlePath) {
-          process.stderr.write(`\n${c.green("✓")} bundle → ${c.cyan(bundlePath)}\n`);
+          process.stderr.write(`\n${mark("ok")} bundle → ${c.link(bundlePath)}\n`);
         }
         if (!installed) {
           process.stderr.write(

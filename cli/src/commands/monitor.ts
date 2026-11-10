@@ -1,5 +1,5 @@
 import type { MonitorMode } from "../lib/api.js";
-import { c, emit, safeText } from "../lib/out.js";
+import { c, emit, safeText, mark } from "../lib/out.js";
 import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 
@@ -48,14 +48,14 @@ export async function monitorCmd(id: string, opts: MonitorOpts): Promise<void> {
       () => {
         const w = process.stdout.write.bind(process.stdout);
         w(
-          `${c.green("✓")} monitor set: ${c.bold(safeText(key.monitor_mode))}` +
+          `${mark("ok")} monitor set: ${c.bold(safeText(key.monitor_mode))}` +
             (key.monitor_mode === "window"
               ? ` (${safeText(key.monitor_window_seconds)}s)`
               : "") +
             "\n",
         );
         if (key.monitor_status_url) {
-          w(`  ${c.dim("status URL:")} ${c.cyan(safeText(key.monitor_status_url))}\n`);
+          w(`  ${c.dim("status URL:")} ${c.link(safeText(key.monitor_status_url))}\n`);
           w(
             `  ${c.dim("current:   ")} ${
               currentState === "tripped"

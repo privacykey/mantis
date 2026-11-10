@@ -5,7 +5,7 @@ import {
   removeProfile,
   useProfile,
 } from "../lib/config.js";
-import { c, emit, fail, safeText } from "../lib/out.js";
+import { c, emit, fail, safeText, mark } from "../lib/out.js";
 
 export async function profileListCmd(): Promise<void> {
   const { current, profiles } = await listProfiles();
@@ -20,7 +20,7 @@ export async function profileListCmd(): Promise<void> {
       const w = process.stdout.write.bind(process.stdout);
       for (const { name, entry } of profiles) {
         const marker = name === current ? c.green("* ") : "  ";
-        w(`${marker}${c.bold(safeText(name).padEnd(16))} ${c.cyan(safeText(entry.baseUrl))}\n`);
+        w(`${marker}${c.bold(safeText(name).padEnd(16))} ${c.link(safeText(entry.baseUrl))}\n`);
         if (entry.keyPrefix) {
           w(`    ${c.dim("key:  ")} ${safeText(entry.keyPrefix)}…\n`);
         }
@@ -70,7 +70,7 @@ export async function profileUseCmd(name: string): Promise<void> {
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err));
   }
-  process.stderr.write(`${c.green("✓")} switched to profile ${c.bold(safeText(name))}\n`);
+  process.stderr.write(`${mark("ok")} switched to profile ${c.bold(safeText(name))}\n`);
 }
 
 export async function profileRmCmd(
@@ -93,7 +93,7 @@ export async function profileRmCmd(
       : c.dim(" (was current; no profiles remain)")
     : "";
   process.stderr.write(
-    `${c.green("✓")} removed profile ${c.bold(safeText(name))}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
+    `${mark("ok")} removed profile ${c.bold(safeText(name))}${tail}${result.credentialsRetained ? c.dim(" (shared server credentials retained)") : ""}\n`,
   );
 }
 
@@ -105,7 +105,7 @@ export async function profileSetEdgeCmd(
     try {
       const updated = await patchProfile(name, { edgeWorkerUrl: undefined });
       process.stderr.write(
-        `${c.green("✓")} cleared default edge worker for ${c.bold(safeText(name))} ${c.dim(`(was: ${safeText(updated.edgeWorkerUrl ?? "—")})`)}\n`,
+        `${mark("ok")} cleared default edge worker for ${c.bold(safeText(name))} ${c.dim(`(was: ${safeText(updated.edgeWorkerUrl ?? "—")})`)}\n`,
       );
     } catch (err) {
       return fail(err instanceof Error ? err.message : String(err));
@@ -124,7 +124,7 @@ export async function profileSetEdgeCmd(
     return fail(err instanceof Error ? err.message : String(err));
   }
   process.stderr.write(
-    `${c.green("✓")} profile ${c.bold(safeText(name))} default edge worker → ${c.cyan(safeText(worker))}\n`,
+    `${mark("ok")} profile ${c.bold(safeText(name))} default edge worker → ${c.link(safeText(worker))}\n`,
   );
 }
 

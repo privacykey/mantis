@@ -1,4 +1,4 @@
-import { c, jsonText, safeText } from "../../lib/out.js";
+import { c, jsonText, safeText, mark } from "../../lib/out.js";
 import type { Finding, ScanSummary } from "./types.js";
 
 export function renderHuman(
@@ -7,7 +7,7 @@ export function renderHuman(
 ): string {
   if (summary.findings.length === 0) {
     const lines = [
-      `${c.green("✓")} no mantis-style artifacts detected on this machine.`,
+      `${mark("ok")} no mantis-style artifacts detected on this machine.`,
       "",
       `  ${c.dim("scanned:")} ${summary.scanned.join(", ") || "(none)"}`,
       `  ${c.dim("scope:  ")} ${summary.scope}`,
@@ -18,7 +18,7 @@ export function renderHuman(
 
   const lines: string[] = [];
   lines.push(
-    `${c.yellow("⚠")} ${summary.findings.length} mantis-style artifact${
+    `${mark("warn")} ${summary.findings.length} mantis-style artifact${
       summary.findings.length === 1 ? "" : "s"
     } found on this machine:`,
   );
@@ -34,15 +34,15 @@ export function renderHuman(
   for (const f of sorted) {
     const sev =
       f.severity === "confirmed"
-        ? c.red("✗ ") + c.dim("confirmed")
-        : c.yellow("? ") + c.dim("suspicious");
+        ? mark("fail") + " " + c.dim("confirmed")
+        : mark("warn") + " " + c.dim("suspicious");
     // Every field below can carry bytes from the scanned machine's files: a
     // path, a matched line, a URL lifted out of one. None of it is ours.
     lines.push(`  ${sev}  ${c.bold(safeText(f.kind))}`);
     lines.push(`    ${c.dim("path:    ")} ${formatPath(f.path)}${f.line ? `:${safeText(f.line)}` : ""}`);
     lines.push(`    ${c.dim("summary: ")} ${safeText(f.summary)}`);
     if (f.vendor) lines.push(`    ${c.dim("vendor:  ")} ${safeText(f.vendor)}`);
-    if (f.url) lines.push(`    ${c.dim("matched: ")} ${c.cyan(safeText(f.url))}`);
+    if (f.url) lines.push(`    ${c.dim("matched: ")} ${c.link(safeText(f.url))}`);
     if (f.source) lines.push(`    ${c.dim("source:  ")} ${safeText(f.source)}`);
     if (opts.verbose && f.match) {
       lines.push(`    ${c.dim("match:   ")} ${safeText(f.match)}`);

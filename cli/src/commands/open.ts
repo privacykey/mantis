@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { c, emit, safeText } from "../lib/out.js";
+import { c, emit, safeText, mark } from "../lib/out.js";
 import { resolveKeyRefForAction } from "../lib/resolve.js";
 import { withClient, type GlobalOpts } from "../lib/runner.js";
 import { systemExe } from "../lib/system-exe.js";
@@ -37,11 +37,11 @@ export async function openCmd(
       () => {
         if (launched) {
           process.stderr.write(
-            `${c.green("✓")} opened ${description}: ${c.cyan(safeText(target))}\n`,
+            `${mark("ok")} opened ${description}: ${c.link(safeText(target))}\n`,
           );
         } else {
           process.stderr.write(
-            `${c.yellow("⚠")} couldn't launch a browser; visit manually:\n  ${c.cyan(safeText(target))}\n`,
+            `${mark("warn")} couldn't launch a browser; visit manually:\n  ${c.link(safeText(target))}\n`,
           );
         }
       },

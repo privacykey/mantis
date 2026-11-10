@@ -4,7 +4,7 @@ import {
   getDefaults,
   setDefaults,
 } from "../lib/config.js";
-import { c, emit, fail } from "../lib/out.js";
+import { c, emit, fail, mark } from "../lib/out.js";
 
 // The settable default keys and their allowed values. Each maps to a field on
 // the config `defaults` block, applied below explicit flags at startup.
@@ -56,7 +56,7 @@ export async function configSetCmd(key: string, value: string): Promise<void> {
   }
   await setDefaults({ [k]: value } as CliDefaults);
   emit(
-    () => process.stderr.write(`${c.green("✓")} set ${k} = ${c.cyan(value)}\n`),
+    () => process.stderr.write(`${mark("ok")} set ${k} = ${c.cyan(value)}\n`),
     { [k]: value },
   );
 }
@@ -65,7 +65,7 @@ export async function configUnsetCmd(key: string): Promise<void> {
   const k = requireKey(key);
   await setDefaults({ [k]: undefined } as CliDefaults);
   emit(
-    () => process.stderr.write(`${c.green("✓")} unset ${k}\n`),
+    () => process.stderr.write(`${mark("ok")} unset ${k}\n`),
     { [k]: null },
   );
 }

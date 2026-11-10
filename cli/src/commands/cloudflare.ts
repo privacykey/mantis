@@ -14,7 +14,7 @@ import {
   patchProfile,
   setCloudflareServiceAuth,
 } from "../lib/config.js";
-import { c, emit, ExitCode, fail, isJsonMode, safeText } from "../lib/out.js";
+import { c, emit, ExitCode, fail, isJsonMode, safeText, mark } from "../lib/out.js";
 import { canPrompt, readStdin } from "../lib/prompt.js";
 
 /**
@@ -80,7 +80,7 @@ function failTarget(err: unknown): never {
 /** Name the profile and server a credential is about to be bound to. */
 function announceTarget(cfg: TargetProfile): void {
   process.stderr.write(
-    `${c.dim("target:")} profile ${c.bold(safeText(cfg.name))} ${c.dim("→")} ${c.cyan(safeText(cfg.baseUrl))}\n`,
+    `${c.dim("target:")} profile ${c.bold(safeText(cfg.name))} ${c.dim("→")} ${c.link(safeText(cfg.baseUrl))}\n`,
   );
 }
 
@@ -104,7 +104,7 @@ export async function cloudflareLoginCmd(opts: CfLoginOpts): Promise<void> {
   }
 
   process.stderr.write(
-    `${c.dim("opening browser to Cloudflare Access for")} ${c.cyan(safeText(appUrl))}\n`,
+    `${c.dim("opening browser to Cloudflare Access for")} ${c.link(safeText(appUrl))}\n`,
   );
   try {
     cloudflareInteractiveLogin(appUrl);
@@ -126,7 +126,7 @@ export async function cloudflareLoginCmd(opts: CfLoginOpts): Promise<void> {
   });
 
   process.stderr.write(
-    `${c.green("✓")} cloudflare access SSO configured for profile ${c.bold(safeText(cfg.name))} (mode: sso, app: ${safeText(appUrl)})\n`,
+    `${mark("ok")} cloudflare access SSO configured for profile ${c.bold(safeText(cfg.name))} (mode: sso, app: ${safeText(appUrl)})\n`,
   );
 }
 
@@ -151,7 +151,7 @@ export async function cloudflareLogoutCmd(opts: CfTargetOpts = {}): Promise<void
   });
 
   process.stderr.write(
-    `${c.green("✓")} cleared cloudflare access config for profile ${c.bold(safeText(cfg.name))} (${safeText(cfg.baseUrl)})\n`,
+    `${mark("ok")} cleared cloudflare access config for profile ${c.bold(safeText(cfg.name))} (${safeText(cfg.baseUrl)})\n`,
   );
 }
 
@@ -232,7 +232,7 @@ export async function cloudflareSetServiceAuthCmd(
   });
 
   process.stderr.write(
-    `${c.green("✓")} cloudflare access service-auth configured for profile ${c.bold(safeText(cfg.name))} (${safeText(cfg.baseUrl)})\n`,
+    `${mark("ok")} cloudflare access service-auth configured for profile ${c.bold(safeText(cfg.name))} (${safeText(cfg.baseUrl)})\n`,
   );
 }
 
