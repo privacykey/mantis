@@ -7,14 +7,18 @@ For a visual overview of every command and how they relate, see
 
 ## Install (from this repo)
 
+From the repository root, use the Node version in [`.nvmrc`](../.nvmrc)
+and the pnpm version pinned in [`package.json`](../package.json).
+
 ```bash
-cd cli
-npm install
-npm run build
-npm link            # exposes `mantis` on $PATH
+pnpm install --frozen-lockfile
+pnpm --filter @mantis/cli run build
+node cli/dist/index.js --help
 ```
 
-For one-off use without linking: `node cli/dist/index.js <command>`.
+For the published binary, run `brew install privacykey/tap/mantis`. This
+README follows the source tree, so terminal examples can differ from the
+version installed by Homebrew.
 
 ## Quickstart
 
@@ -38,6 +42,24 @@ Credentials are stored in:
 - OS keychain (`mantis-cli` service, account = base URL) — full API key
 - OS keychain (`mantis-cli-cf` service, account = base URL) — Cloudflare Access service-auth credentials (if configured)
 - `~/.cloudflared/` — short-lived JWTs cached by the `cloudflared` binary itself (managed externally; we don't touch them)
+
+## Reading the terminal output
+
+Run `mantis --help` for commands grouped by task, or
+`mantis <command> --help` for its options. Running `mantis` with no arguments
+shows next steps based on whether you have a server profile, an edge key, or
+both.
+
+- `mantis status` puts tripped keys first and reports unavailable monitor
+  states. Run `mantis status <id>` for the hits behind a trip, or
+  `mantis status --watch` for a live view.
+- `mantis hits <id>` shows recent hits. Use `--verbose` for full headers or
+  `--follow` to see new hits as they arrive.
+- `mantis doctor` lists passed, skipped, and failed checks with next steps
+  where available. Use it after setting up a profile or changing hosts.
+
+Use [machine-readable output](#scripting) when another program consumes the
+result.
 
 ## Commands
 

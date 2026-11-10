@@ -32,7 +32,7 @@ Components are versioned independently: the server, the CLI, and the edge worker
 
 ## What it does
 
-- **File keys** in 10 formats (`.docx` / `.xlsx` / `.pptx` / `.pdf` / `.svg` / `.html` / `.md` / `.eml` / `.ics` / `.vcf`) plus a honey-directory `.zip` and Apple Wallet `.pkpass` passes (install / uninstall / fetch callbacks each fire the key)
+- **File keys** in 11 formats (`.docx` / `.xlsx` / `.pptx` / `.pdf` / `.rtf` / `.svg` / `.html` / `.md` / `.eml` / `.ics` / `.vcf`) plus credential and connection-profile bait, a honey-directory `.zip`, and Apple Wallet `.pkpass` passes (install / uninstall / fetch callbacks each fire the key)
 - **Host-event installers** — shell, sudo, login, boot, wake, network — for macOS, Linux, and Windows, with parsed `X-Mantis-*` context including SSH client IP
 - **Web canaries** — CSS-background and JS clone-detector — plus NFC NDEF tag URLs and printable QR/NFC sticker labels
 - **Smart-home triggers** via Home Assistant, Scrypted, and an optional LAN watcher
@@ -85,6 +85,7 @@ The prose documentation lives at [docs.mantis.privacykey.org](https://docs.manti
 
 - [Getting started](https://docs.mantis.privacykey.org/getting-started) — five steps from `brew install` to first key
 - [Use cases](https://docs.mantis.privacykey.org/use-cases) — defensive, detective, operational and adversarial patterns
+- [CLI reference](https://docs.mantis.privacykey.org/cli/) and [command map](./cli/COMMAND_MAP.md) — setup, key management, monitoring, and scripting
 - [HTTP API](https://docs.mantis.privacykey.org/api) — endpoints, response kinds, webhook payload shape
 - [File keys](https://docs.mantis.privacykey.org/file-keys), [host-event keys](https://docs.mantis.privacykey.org/host-events), [deployment](https://docs.mantis.privacykey.org/deployment), [updating](https://docs.mantis.privacykey.org/updating)
 - [`CHANGELOG.md`](./CHANGELOG.md) — what changed in each release, with the upgrade steps (migrations, settings, artifacts to regenerate)
