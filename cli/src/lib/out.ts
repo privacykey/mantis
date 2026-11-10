@@ -1,3 +1,5 @@
+import stringWidth from "string-width";
+
 export type ColorMode = "auto" | "always" | "never";
 
 let colorMode: ColorMode = "auto";
@@ -323,7 +325,7 @@ export function table(
 }
 
 function fitCell(s: string, width: number, right = false, middle = false): string {
-  if (visibleLength(s) > width) return middle ? cutMiddle(s, width) : truncate(s, width);
+  if (visibleLength(s) > width) s = middle ? cutMiddle(s, width) : truncate(s, width);
   return right ? padLeft(s, width) : padRight(s, width);
 }
 
@@ -364,15 +366,29 @@ function padLeft(s: string, width: number): string {
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 export function stripAnsi(s: string): string {
-  // intentionally narrow: only strips the CSI sequences we emit. Any other
-  // control byte is counted as visible, which is what it becomes once
-  // truncate() / table() have escaped it.
+  // Intentionally narrow: only strips the SGR sequences we emit.
   return s.replace(ANSI_RE, "");
 }
 
-/** Visible (printable) length, ignoring the ANSI color codes we emit. */
+/** Terminal cells occupied by a string after removing our SGR codes. */
 export function visibleLength(s: string): number {
-  return stripAnsi(s).length;
+  return stringWidth(stripAnsi(s), { countAnsiEscapeCodes: true });
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function takeCells(text: string, max: number, fromEnd = false): string {
+  if (max <= 0) return "";
+  const segments = graphemes.segment(text);
+  const ordered = fromEnd ? Array.from(segments).reverse() : segments;
+  let used = 0;
+  let boundary = fromEnd ? text.length : 0;
+  for (const { segment, index } of ordered) {
+    used += visibleLength(segment);
+    if (used > max) break;
+    boundary = fromEnd ? index : index + segment.length;
+  }
+  return fromEnd ? text.slice(boundary) : text.slice(0, boundary);
 }
 
 /**
@@ -389,25 +405,21 @@ export function truncate(s: string, max: number): string {
   if (max <= 0) return "";
   s = keepOnlySgr(s);
   if (visibleLength(s) <= max) return s;
-  const ell = unicodeEnabled() ? "…" : "...";
-  const budget = Math.max(0, max - ell.length);
-  const codes = /\x1b\[[0-9;]*m/y;
+  const ell = glyph("…", "...").slice(0, max);
+  // Find the boundary in plain text first, then replay the original styles
+  // up to that point. A style change need not be a grapheme boundary.
+  let remaining = takeCells(stripAnsi(s), max - visibleLength(ell)).length;
   let out = "";
-  let visible = 0;
   let open = false;
-  for (let i = 0; i < s.length; ) {
-    codes.lastIndex = i;
-    const m = codes.exec(s);
-    if (m) {
-      out += m[0];
-      open = m[0] !== "\x1b[0m";
-      i += m[0].length;
-      continue;
+  for (const part of s.split(/(\x1b\[[0-9;]*m)/)) {
+    if (part.startsWith("\x1b")) {
+      out += part;
+      open = part !== "\x1b[0m";
+    } else {
+      out += part.slice(0, remaining);
+      if (part.length > remaining) break;
+      remaining -= part.length;
     }
-    if (visible >= budget) break;
-    out += s[i];
-    visible += 1;
-    i += 1;
   }
   out += ell;
   if (open) out += "\x1b[0m";
@@ -684,10 +696,10 @@ export function fitMiddle(s: string, max: number): string {
   const text = keepOnlySgr(s);
   if (max < 8 || visibleLength(text) <= max) return text;
   const plain = stripAnsi(text);
-  const ell = unicodeEnabled() ? "…" : "...";
-  const tail = Math.min(6, Math.floor((max - ell.length) / 3));
-  const head = max - ell.length - tail;
-  return `${plain.slice(0, head)}${ell}${plain.slice(plain.length - tail)}`;
+  const ell = glyph("…", "...");
+  const budget = max - visibleLength(ell);
+  const tail = Math.min(6, Math.floor(budget / 3));
+  return `${takeCells(plain, budget - tail)}${ell}${takeCells(plain, tail, true)}`;
 }
 
 /**
@@ -696,44 +708,62 @@ export function fitMiddle(s: string, max: number): string {
  * as one span (bold, dim) keeps its style; anything else comes back plain.
  */
 export function cutMiddle(s: string, max: number): string {
+  if (max <= 0) return "";
   const text = keepOnlySgr(s);
   if (visibleLength(text) <= max) return text;
   const plain = stripAnsi(text);
   const span = /^(\x1b\[[0-9;]*m)([^\x1b]*)\x1b\[0m$/.exec(text);
   const restyle = (t: string) => (span ? `${span[1]}${t}\x1b[0m` : t);
-  const ell = unicodeEnabled() ? "…" : "...";
-  if (max <= ell.length + 2) return restyle(truncateVisible(plain, max));
-  const budget = max - ell.length;
-  let head = plain.slice(0, Math.ceil(budget / 2));
+  const ell = glyph("…", "...");
+  const ellWidth = visibleLength(ell);
+  if (max <= ellWidth + 2) return restyle(takeCells(plain, max));
+  const budget = max - ellWidth;
+  let head = takeCells(plain, Math.ceil(budget / 2));
   // Snap the head back to a word end, and the tail forward to a word start,
   // when that drops at most four characters; the budget moves to the tail.
   const atWordEnd = plain[head.length] === " ";
   const headSpace = head.lastIndexOf(" ");
-  const headSnapped = atWordEnd || (headSpace > 0 && head.length - headSpace <= 4);
+  const headSnapped = atWordEnd || (
+    headSpace > 0 &&
+    visibleLength(head.slice(headSpace)) <= 4 &&
+    graphemes.segment(head).containing(headSpace)?.segment === " "
+  );
   if (!atWordEnd && headSnapped) head = head.slice(0, headSpace);
   head = head.trimEnd();
-  let tail = plain.slice(plain.length - (budget - head.length));
+  let tail = takeCells(plain, budget - visibleLength(head), true);
   const tailSpace = tail.indexOf(" ");
   const atWordStart = plain[plain.length - tail.length - 1] === " ";
-  const tailSnapped = atWordStart || (tailSpace >= 0 && tailSpace < 4 && tail.length - tailSpace - 1 > 0);
+  const tailSnapped = atWordStart || (
+    tailSpace >= 0 &&
+    visibleLength(tail.slice(0, tailSpace)) < 4 &&
+    tailSpace + 1 < tail.length &&
+    graphemes.segment(tail).containing(tailSpace)?.segment === " "
+  );
   if (!atWordStart && tailSnapped) tail = tail.slice(tailSpace + 1);
-  tail = tail.trimStart();
+  const trimmed = tail.trimStart();
+  if (!trimmed || graphemes.segment(tail).containing(tail.length - trimmed.length)?.index === tail.length - trimmed.length) {
+    tail = trimmed;
+  }
   // Word edges on both sides read best with the ellipsis spaced, when it fits.
   const spaced = ` ${ell} `;
   const joined =
-    headSnapped && tailSnapped && head.length + spaced.length + tail.length <= max
+    headSnapped && tailSnapped && visibleLength(`${head}${spaced}${tail}`) <= max
       ? `${head}${spaced}${tail}`
       : `${head}${ell}${tail}`;
   return restyle(joined);
 }
 
-function truncateVisible(plain: string, max: number): string {
-  return plain.slice(0, Math.max(0, max));
-}
-
 /** cutMiddle() on a terminal; piped output keeps the whole value. */
 export function capMiddle(s: string, max: number): string {
   return process.stdout.isTTY ? cutMiddle(s, max) : s;
+}
+
+/** Safe confirmation for a webhook entered in a wizard. */
+export function webhookPreview(target: string): string {
+  const url = URL.parse(target);
+  return url?.protocol === "https:" || url?.protocol === "http:"
+    ? `${safeText(url.origin)}/${glyph("…", "...")}`
+    : "(URL hidden)";
 }
 
 /**

@@ -22,7 +22,6 @@ import {
   safeText,
   table,
   termWidth,
-  visibleLength,
   withoutRepeat,
 } from "./out.js";
 
@@ -160,12 +159,6 @@ function isQuiet(h: Hit): boolean {
   return Boolean(h.bot_label) || h.is_duplicate;
 }
 
-/** The client address of an ssh row, when it is not the reporting address. */
-function sshClient(h: Hit): string | null {
-  const from = h.host_context?.ssh_client_ip;
-  return from && from !== h.ip ? from : null;
-}
-
 /** The hits table: newest first, crawlers and duplicates dimmed. */
 export function hitsTable(hits: Hit[]): string {
   const tags = hits.map(tagCell);
@@ -174,19 +167,12 @@ export function hitsTable(hits: Hit[]): string {
   // A failed delivery is flagged in a column of its own at the left edge, so
   // the eye finds it first and the times line up whatever their width.
   const showMarker = failed.some(Boolean);
-  // On an ssh row the ip column carries the client address behind the arrow
-  // the legend explains. The arrow hangs in a gutter every row reserves, so
-  // the addresses (and the header) start on one edge.
-  const gutter = hits.some((h) => sshClient(h)) ? visibleLength(arrow.left()) + 1 : 0;
   const rows = hits.map((h, i) => {
-    const from = sshClient(h);
-    const addr = from ? safeText(from) : h.ip == null ? mark("none") : safeText(h.ip);
-    const ip = gutter ? `${from ? `${arrow.left()} ` : " ".repeat(gutter)}${addr}` : addr;
     const age = formatAge(h.occurred_at);
     const row = [
       failed[i] ? c.red(age) : age,
-      ip,
-      hitWho(h, { omitFrom: h.host_context?.ssh_client_ip ?? h.ip, omitSource: true }),
+      h.ip == null ? mark("none") : safeText(h.ip),
+      hitWho(h, { omitFrom: h.ip, omitSource: true }),
     ];
     if (showTag) row.push(tags[i]!);
     // A crawler or a repeat steps back, except for what happened to its delivery.
@@ -195,7 +181,7 @@ export function hitsTable(hits: Hit[]): string {
     if (showMarker) styled.unshift(failed[i] ? mark("fail") : "");
     return styled;
   });
-  const columns = ["when", `${" ".repeat(gutter)}ip`, "who"];
+  const columns = ["when", "ip", "who"];
   if (showTag) columns.push("tag");
   columns.push("delivery");
   const align: ("left" | "right")[] = ["right"];
@@ -231,7 +217,7 @@ export function deliveryLegend(hits: Hit[]): string {
   const arrowShown = hits.some(
     (h) => h.host_context?.ssh_client_ip && h.host_context.ssh_client_ip !== h.ip,
   );
-  if (arrowShown) parts.push(`${arrow.left()} ${c.dim("ssh client address")}`);
+  if (arrowShown) parts.push(`${arrow.left()} ${c.dim("reported SSH client address")}`);
   return parts.join("  ");
 }
 

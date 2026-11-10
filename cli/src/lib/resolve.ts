@@ -125,7 +125,7 @@ export async function resolveKeyRefDetailed(
 
   if (matches.length === 0) {
     throw new ResolveError(
-      `no key matches prefix ${ref}`,
+      `no key matches prefix '${ref}'`,
       "Run `mantis list` to see configured keys.",
       `no key matches prefix ${c.bold(safeText(ref))}`,
     );

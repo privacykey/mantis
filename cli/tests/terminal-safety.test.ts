@@ -302,6 +302,36 @@ describe("hostile API strings stay inert in human output", () => {
     }
   });
 
+  it("hits keeps the recorded IP and identifies a distinct reported SSH client", async () => {
+    const base = hit("h1", "2026-09-01T10:00:01.000Z");
+    const fixture = { ...base, host_context: { ...base.host_context, ssh_client_ip: "192.0.2.15" } };
+    vi.stubGlobal("fetch", async () => Response.json({ data: [fixture], next_cursor: null }));
+    await hitsCmd(KEY_ID, auth);
+    const out = stdout.join("");
+    expect(out).toMatch(/203\.0\.113\.7\\u001b\[5m\s+root@/);
+    expect(out).toContain("192.0.2.15");
+    expect(stderr.join("")).toContain("reported SSH client address");
+  });
+
+  it("verbose hits retain headers without a matching rendered field", async () => {
+    const fixture = hit("h1", "2026-09-01T10:00:01.000Z");
+    const headers: Record<string, string> = {
+      ...fixture.headers,
+      "x-mantis-source": fixture.host_context.source,
+      "x-mantis-page-url": "https://clone.example/",
+      "x-mantis-page-referrer": "https://ref.example/",
+      "x-mantis-request-path": "/bucket/object",
+      "x-mantis-ssh-client": "192.0.2.15 54321 22",
+    };
+    vi.stubGlobal("fetch", async () => Response.json({ data: [{ ...fixture, headers }], next_cursor: null }));
+    await hitsCmd(KEY_ID, { ...auth, verbose: true });
+    const out = stdout.join("");
+    expect(out).not.toContain("x-mantis-source:");
+    for (const name of ["x-mantis-page-url", "x-mantis-page-referrer", "x-mantis-request-path", "x-mantis-ssh-client"]) {
+      expect(out).toContain(`${name}: ${headers[name]}`);
+    }
+  });
+
   it.each([
     ["table", "table"],
     ["wide", "wide"],
@@ -360,6 +390,21 @@ describe("hostile API strings stay inert in human output", () => {
     expectInert(err.replace(/\n/g, ""));
     // One line: the newline inside the server's message did not start another.
     expect(err.trimEnd().split("\n")).toHaveLength(1);
+  });
+
+  it.each([
+    ["deadbeef", 5, "no key matches prefix 'deadbeef'. Run `mantis list` to see configured keys."],
+    [KEY_ID, 6, "fetch failed. Check `mantis whoami`, pass --base-url, or verify the server is reachable"],
+  ] as const)("preserves JSON error text for %s", async (id, code, error) => {
+    setJsonMode(true);
+    vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exited"); });
+    vi.stubGlobal("fetch", async () => {
+      if (id === KEY_ID) throw new Error("fetch failed");
+      return Response.json({ data: [], next_cursor: null });
+    });
+    await expect(showCmd(id, auth)).rejects.toThrow("exited");
+    expect(process.exit).toHaveBeenCalledWith(code);
+    expect(JSON.parse(stderr.join(""))).toEqual({ error });
   });
 });
 

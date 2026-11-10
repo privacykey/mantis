@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { ApiError, type Hit, type Key, type MantisClient } from "../lib/api.js";
 import {
   memoWidth,
@@ -60,77 +61,78 @@ export async function statusCmd(
     const fullId = idOrUndefined
       ? await resolveKeyRef(client, idOrUndefined)
       : null;
-
+    const load = () => fullId ? loadDetail(client, fullId, opts) : loadList(client, opts);
     if (opts.watch && !isJsonMode()) {
-      await watchLoop(client, fullId, opts);
+      await watchLoop(load, opts);
       return;
     }
-
-    if (fullId) {
-      await detail(client, fullId, opts);
-    } else {
-      await listAll(client, opts);
-    }
+    (await load())();
   });
 }
 
 async function watchLoop(
-  client: MantisClient,
-  fullId: string | null,
+  load: () => Promise<() => void>,
   opts: StatusOpts,
 ): Promise<void> {
   const intervalMs = Math.max(2000, Number(opts.interval ?? "5") * 1000);
-
-  let stop = false;
-  // A resize redraws at once (after the drag settles) instead of leaving the
-  // old frame wrapped in the new window until the next tick.
-  let wake: (() => void) | undefined;
+  const controller = new AbortController();
+  const { signal } = controller;
+  let render: (() => void) | undefined;
+  let fetchedAt = "";
   let settle: ReturnType<typeof setTimeout> | undefined;
-  const onResize = () => {
-    clearTimeout(settle);
-    settle = setTimeout(() => wake?.(), 150);
+  const showError = (err: unknown) => {
+    const message = safeText(err instanceof Error ? err.message : String(err));
+    process.stderr.write(c.red(`watch error: ${message}\n`));
   };
-  process.stdout.on("resize", onResize);
-  process.on("SIGINT", () => {
-    stop = true;
-    process.stderr.write("\n");
-    wake?.();
-  });
-
-  while (!stop) {
-    // Clear screen + home cursor
+  const draw = () => {
+    if (!render || signal.aborted) return;
     process.stdout.write("\x1b[2J\x1b[H");
-    const ts = new Date().toISOString().slice(11, 19);
     process.stderr.write(
-      c.dim(`mantis status ${dot()} ${ts} UTC ${dot()} every ${intervalMs / 1000}s, ctrl-c to stop\n\n`),
+      c.dim(`mantis status ${dot()} ${fetchedAt} UTC ${dot()} every ${intervalMs / 1000}s, ctrl-c to stop\n\n`),
     );
     try {
-      if (fullId) await detail(client, fullId, opts);
-      else await listAll(client, opts);
+      render();
     } catch (err) {
-      process.stderr.write(
-        c.red(`watch error: ${safeText(err instanceof Error ? err.message : String(err))}\n`),
-      );
+      showError(err);
     }
-    if (stop) break;
-    await new Promise<void>((resolve) => {
-      const tick = setTimeout(resolve, intervalMs);
-      wake = () => {
-        clearTimeout(tick);
-        resolve();
-      };
-    });
-    wake = undefined;
+  };
+  const onResize = () => {
+    clearTimeout(settle);
+    settle = setTimeout(draw, 150);
+  };
+  const onInterrupt = () => {
+    controller.abort();
+    process.stderr.write("\n");
+  };
+  process.stdout.on("resize", onResize);
+  process.on("SIGINT", onInterrupt);
+  try {
+    while (!signal.aborted) {
+      try {
+        render = await load();
+      } catch (err) {
+        render = () => showError(err);
+      }
+      fetchedAt = new Date().toISOString().slice(11, 19);
+      clearTimeout(settle);
+      draw();
+      if (signal.aborted) break;
+      await delay(intervalMs, undefined, { signal }).catch((err) => {
+        if (!signal.aborted) throw err;
+      });
+    }
+  } finally {
+    process.stdout.off("resize", onResize);
+    process.off("SIGINT", onInterrupt);
+    clearTimeout(settle);
   }
-  process.stdout.off("resize", onResize);
-  clearTimeout(settle);
 }
 
-async function detail(
+async function loadDetail(
   client: MantisClient,
   id: string,
   opts: StatusOpts,
-): Promise<void> {
+): Promise<() => void> {
   const key = await client.getKey(id);
   const status = await fetchStatusSafe(client, key.id);
   if (status.status === "error") process.exitCode = 1;
@@ -144,7 +146,7 @@ async function detail(
 
   const explained = explainTrip(key, status, hitsResp.data);
 
-  emit(
+  return () => emit(
     () => {
       const w = process.stdout.write.bind(process.stdout);
       const short = shortId(key.id);
@@ -231,7 +233,7 @@ async function detail(
   );
 }
 
-async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
+async function loadList(client: MantisClient, opts: StatusOpts): Promise<() => void> {
   const keys: Key[] = [];
   let cursor: string | undefined;
   do {
@@ -243,7 +245,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
   const monitored = keys.filter((k) => k.monitor_mode !== "off");
 
   if (monitored.length === 0) {
-    emit(
+    return () => emit(
       () => {
         process.stdout.write("No monitored keys yet.\n");
         process.stderr.write(
@@ -254,7 +256,6 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
       },
       { keys: [] },
     );
-    return;
   }
 
   // Fetch status for each in parallel.
@@ -272,7 +273,7 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
     : statuses;
 
   if (filtered.length === 0 && opts.trippedOnly) {
-    emit(
+    return () => emit(
       () => {
         process.stdout.write(
           `${mark("ok")} ${c.bold("no monitored keys currently tripped")}\n`,
@@ -280,10 +281,9 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
       },
       { keys: [] },
     );
-    return;
   }
 
-  emit(
+  return () => emit(
     () => {
       // Tripped keys are why the command was run, so they come first and
       // carry the weight; the JSON keeps the server's order.
@@ -297,11 +297,17 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
       ).length;
       const total = statuses.length;
       const keysWord = total === 1 ? "key" : "keys";
+      const okCount = statuses.filter(({ status }) => status.status === "ok").length;
+      const offCount = total - okCount - trippedCount - failed.length;
+      const incomplete = [
+        failed.length > 0 ? `${failed.length} unavailable` : "",
+        offCount > 0 ? `${offCount} not monitored` : "",
+      ].filter(Boolean);
       const verdict =
         trippedCount > 0
-          ? tripped(`${trippedCount} of ${total} monitored ${keysWord} tripped`)
-          : failed.length === total
-            ? `${mark("warn")} ${c.yellow(`could not read the state of ${total} monitored ${keysWord}`)}`
+          ? tripped(`${trippedCount} of ${total} monitored ${keysWord} tripped${incomplete.length ? ` ${dot()} ${incomplete.join(", ")}` : ""}`)
+          : incomplete.length
+            ? `${mark("warn")} ${c.yellow([`${okCount} ok`, ...incomplete].join(", "))}`
             : `${mark("ok")} ${c.bold(total === 1 ? "the 1 monitored key is ok" : `all ${total} monitored keys are ok`)}`;
       process.stdout.write(`${verdict}\n\n`);
 
@@ -327,17 +333,17 @@ async function listAll(client: MantisClient, opts: StatusOpts): Promise<void> {
           cut: ["end", "middle"],
         }) + "\n",
       );
-      const offCount = keys.length - monitored.length;
-      const hiddenByFilter = opts.trippedOnly ? monitored.length - filtered.length : 0;
+      const unmonitoredCount = keys.length - monitored.length;
+      const hiddenByFilter = opts.trippedOnly ? okCount : 0;
       const notes: string[] = [];
       if (hiddenByFilter > 0) {
         notes.push(
           `${hiddenByFilter} ok ${hiddenByFilter === 1 ? "key" : "keys"} hidden by --tripped-only.`,
         );
       }
-      if (offCount > 0) {
+      if (unmonitoredCount > 0) {
         notes.push(
-          `${offCount} unmonitored ${offCount === 1 ? "key" : "keys"} not shown; \`mantis list\` shows every key.`,
+          `${unmonitoredCount} unmonitored ${unmonitoredCount === 1 ? "key" : "keys"} not shown; \`mantis list\` shows every key.`,
         );
       }
       if (trippedCount > 0) {

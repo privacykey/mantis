@@ -20,6 +20,7 @@ import {
   mark,
   safeText,
   stdoutPayload,
+  webhookPreview,
 } from "../lib/out.js";
 import { destinationLines } from "../lib/destination-format.js";
 import { canPrompt, createPrompter, type Prompter } from "../lib/prompt.js";
@@ -576,7 +577,6 @@ async function askOneDestination(
   const label = `  ${webhookPromptLabel(channel)}`;
   for (;;) {
     const ans = await askUrl(p, label);
-    if (!ans) continue;
     const inferred = inferChannelFromWebhook(ans);
     if (inferred && inferred !== channel && channel === "webhook") {
       note(
@@ -640,6 +640,7 @@ function printNewSummary(state: WizardResult): void {
           last_activation_status: null,
           last_activation_error: null,
         })),
+        (d) => d.channel === "email" ? safeText(d.target) : webhookPreview(d.target),
       ),
     ]);
   }

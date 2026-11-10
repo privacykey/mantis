@@ -111,7 +111,7 @@ export async function withClient<T>(
       isNetwork && server ? unreachable(server, err, message) : message,
       isNetwork ? ExitCode.Network : ExitCode.Generic,
       {
-        hint: hint ? `${hint.slice(2)}.` : undefined,
+        hint: hint ? `${hint.slice(2).replace("--base-url", "\`--base-url\`")}.` : undefined,
         json: `${message}${hint}`,
       },
     );
@@ -183,7 +183,7 @@ function apiHint(err: ApiError): string {
 
 function genericHint(message: string): string {
   if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET/i.test(message)) {
-    return ". Check `mantis whoami`, pass `--base-url`, or verify the server is reachable";
+    return ". Check `mantis whoami`, pass --base-url, or verify the server is reachable";
   }
   if (/cloudflared|Cloudflare Access/i.test(message)) {
     return ". Run `mantis cloudflare status` for auth details";

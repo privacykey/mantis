@@ -45,6 +45,17 @@ describe("monitor failure recovery", () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it("shows unavailable states in the headline alongside healthy monitors", async () => {
+    vi.stubGlobal("fetch", async (url: URL) => {
+      if (url.pathname === "/api/keys") return Response.json({ data: [key, { ...key, id: "other" }], next_cursor: null });
+      if (url.pathname === monitorPath(key.id)) return state("ok");
+      return Response.json({ error: "unavailable" }, { status: 503 });
+    });
+    await statusCmd(undefined, auth);
+    expect(output[0]).toContain("1 ok, 1 unavailable");
+    expect(process.exitCode).toBe(1);
+  });
+
   it("still shows an all-clear when every status was verified ok", async () => {
     vi.stubGlobal("fetch", async (url: URL) => url.pathname === "/api/keys"
       ? Response.json({ data: [key], next_cursor: null }) : state("ok"));
@@ -95,6 +106,28 @@ describe("monitor state is read by key id through the API", () => {
     await statusCmd(undefined, auth);
     expect(paths).toEqual(["/api/keys", monitorPath(key.id)]);
     noStatusCalls();
+  });
+
+  it("redraws the last snapshot on resize and cleans up on interrupt", async () => {
+    serve((url) => url.pathname === "/api/keys" ? Response.json({ data: [full], next_cursor: null }) : state("ok"));
+    const priorInterrupts = process.listeners("SIGINT");
+    const priorResizes = process.stdout.listeners("resize");
+    const frames = () => output.filter((line) => line === "\x1b[2J\x1b[H").length;
+    const run = statusCmd(undefined, { ...auth, watch: true, interval: "5" });
+    try {
+      await vi.waitFor(() => expect(frames()).toBe(1));
+      process.stdout.emit("resize");
+      process.stdout.emit("resize");
+      await vi.waitFor(() => expect(frames()).toBe(2));
+      expect(paths).toEqual(["/api/keys", monitorPath(key.id)]);
+    } finally {
+      for (const listener of process.listeners("SIGINT")) {
+        if (!priorInterrupts.includes(listener)) listener("SIGINT");
+      }
+      await run;
+    }
+    expect(process.listeners("SIGINT")).toEqual(priorInterrupts);
+    expect(process.stdout.listeners("resize")).toEqual(priorResizes);
   });
 
   it("status <id> (detail) shows the server's status URL as-is", async () => {

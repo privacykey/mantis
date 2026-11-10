@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { c, cutMiddle, formatError, formatTime, setColorMode, truncate } from "../src/lib/out.js";
+import { c, cutMiddle, formatError, formatTime, setColorMode, truncate, visibleLength } from "../src/lib/out.js";
 
 describe("formatTime", () => {
   it("returns - for null", () => {
@@ -46,6 +46,11 @@ describe("truncate", () => {
   it("uses an ASCII ellipsis when unicode is disabled", () => {
     vi.stubEnv("MANTIS_ASCII", "1");
     expect(truncate("hello world", 6)).toBe("hel...");
+    expect(truncate("hello world", 2)).toBe("..");
+  });
+
+  it("keeps a grapheme together across an SGR style boundary", () => {
+    expect(truncate("e\x1b[31m\u0301abc", 2)).toBe("e\x1b[31m\u0301…\x1b[0m");
   });
 });
 
@@ -80,6 +85,14 @@ describe("cutMiddle", () => {
     for (const s of ["ci@ci-runner-07", "Slackbot-LinkExpanding 1.0", "Cloned-site detector: login.acme-corp.example"]) {
       for (const n of [8, 12, 14, 20]) expect(cutMiddle(s, n).length).toBeLessThanOrEqual(n);
     }
+  });
+
+  it("fits wide text and preserves complete emoji in ASCII mode", () => {
+    vi.stubEnv("MANTIS_ASCII", "1");
+    expect(visibleLength(cutMiddle("界".repeat(20), 10))).toBeLessThanOrEqual(10);
+    expect(cutMiddle("a😀xx😀b", 6)).toBe("a...b");
+    const family = "👩‍👩‍👧‍👦";
+    expect(cutMiddle(`a${family}xxxxx${family}b`, 9)).toBe(`a${family}...${family}b`);
   });
 
   it("leaves text that fits alone, and keeps a one-span style", () => {

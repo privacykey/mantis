@@ -24,7 +24,10 @@ export type DestinationLine = Pick<
  * One line per destination: its activation mark, channel and target, with a
  * failure's reason underneath. Shared shape with a hit's delivery lines.
  */
-export function destinationLines(destinations: DestinationLine[]): string[] {
+export function destinationLines(
+  destinations: DestinationLine[],
+  displayTarget = (d: DestinationLine) => maskSecretUrl(safeText(d.target)),
+): string[] {
   const s = safeText;
   const channelWidth = Math.max(...destinations.map((d) => s(d.channel).length));
   const room = termWidth() - (2 + KV_LABEL_WIDTH + 1) - (2 + channelWidth + 2);
@@ -38,7 +41,7 @@ export function destinationLines(destinations: DestinationLine[]): string[] {
   // Every row ends in a state word, so the glyph never stands alone.
   const wordOf = (state: string) =>
     state === "ok" ? "activated" : state === "pending" ? "not activated yet" : "activation failed";
-  const targets = destinations.map((d) => maskSecretUrl(s(d.target)));
+  const targets = destinations.map(displayTarget);
   // Results line up in one column when the widest row still fits.
   const targetWidth = Math.max(...targets.map((t) => t.length));
   const wordWidth = Math.max(...destinations.map((d) => wordOf(stateOf(d)).length));

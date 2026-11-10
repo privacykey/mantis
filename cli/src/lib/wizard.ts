@@ -10,13 +10,13 @@ import {
   prose,
   wrapProse,
   proseWidth,
-  maskSecretUrl,
   c,
   colorOn,
   kv,
   type KvRow,
   mark,
   visibleLength,
+  webhookPreview,
 } from "./out.js";
 
 export const URL_RE = /^https?:\/\/.+/;
@@ -105,56 +105,28 @@ function promptText(label: string, def?: string, sep = ":"): string {
 }
 
 /**
- * Rewrite the line just answered: the accepted default, a masked webhook, a
- * rejected value dimmed. An answer as typed can wrap (a real webhook URL is
- * longer than most windows), so every row it took is cleared, measured at the
- * window's current width. Terminal only, and only when the new line fits on
- * one row.
- */
-function redraw(prompt: string, typed: string, shown: string): void {
-  if (!colorOn() || !process.stderr.isTTY) return;
-  if (process.env.TERM === "dumb") return;
-  const cols = process.stderr.columns ?? 80;
-  if (visibleLength(prompt) + visibleLength(shown) >= cols) return;
-  const rows = Math.max(1, Math.ceil((visibleLength(prompt) + [...typed].length) / cols));
-  process.stderr.write(`\x1b[${rows}A\r\x1b[J${prompt}${shown}\n`);
-}
-
-/**
  * After Enter on an empty line, write the accepted default where the answer
  * would be, in bold like a typed answer, so the transcript shows what was
  * chosen and every answer reads the same.
  */
 function echoAccepted(prompt: string, value: string): void {
-  if (value) redraw(prompt, "", c.bold(value));
+  if (!value || !colorOn() || !process.stderr.isTTY || process.env.TERM === "dumb") return;
+  const cols = process.stderr.columns ?? 80;
+  if (visibleLength(prompt) + visibleLength(value) >= cols) return;
+  process.stderr.write(`\x1b[1A\r\x1b[J${prompt}${c.bold(value)}\n`);
 }
 
 /** Re-prompt loop for a value that must start with https:// (or http://). */
-export async function askUrl(
-  p: Prompter,
-  label: string,
-  opts: { default?: string; allowEmpty?: boolean } = {},
-): Promise<string | undefined> {
+export async function askUrl(p: Prompter, label: string): Promise<string> {
   const indent = /^\s*/.exec(label)![0];
   for (;;) {
-    const def = opts.default ?? "";
-    const prompt = promptText(label, def);
-    const ans = await p.ask(prompt);
-    if (!ans) echoAccepted(prompt, def);
-    const v = ans || def;
-    if (!v) {
-      if (opts.allowEmpty) return undefined;
-      warn("A value is required.", answerIndent(label) ?? indent);
-      continue;
+    const ans = await p.askSecret(promptText(label, "hidden"));
+    const padding = answerIndent(label) ?? indent;
+    if (URL_RE.test(ans)) {
+      process.stderr.write(`${padding}${mark("ok")} ${c.bold(webhookPreview(ans))}\n`);
+      return ans;
     }
-    if (URL_RE.test(v)) {
-      // The masked form keeps the scheme the line above asked for.
-      if (ans) redraw(prompt, ans, c.bold(maskSecretUrl(v)));
-      return v;
-    }
-    // A rejected answer steps back before the ✗ line explains why.
-    if (ans) redraw(prompt, ans, c.dim(ans));
-    warn("The URL must start with https://", answerIndent(label) ?? indent);
+    warn(ans ? "The URL must start with https://" : "A value is required.", padding);
   }
 }
 

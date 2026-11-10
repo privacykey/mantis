@@ -255,22 +255,30 @@ function renderOne(h: Hit): void {
     rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
   if (ctx?.ssh_connection) rows.push(["connection", sshRoute(ctx.ssh_connection)]);
-  if (ctx?.source) rows.push(["source", s(ctx.source)]);
+  const shownHeaders = new Map<string, string>();
   if (ctx) {
-    if (ctx.tty) rows.push(["tty", s(ctx.tty)]);
-    if (ctx.sudo_cmd) rows.push(["sudo", s(ctx.sudo_cmd)]);
-    if (ctx.network_interface) rows.push(["interface", s(ctx.network_interface)]);
-    if (ctx.event) rows.push(["event", s(ctx.event)]);
-    if (ctx.device) rows.push(["device", s(ctx.device)]);
-    if (ctx.entity_id) rows.push(["entity", s(ctx.entity_id)]);
-    if (ctx.automation) rows.push(["automation", s(ctx.automation)]);
-    if (ctx.area) rows.push(["area", s(ctx.area)]);
-    if (ctx.iot_mac) rows.push(["mac", s(ctx.iot_mac)]);
-    if (ctx.iot_ip) rows.push(["device ip", s(ctx.iot_ip)]);
+    if (ctx.user) shownHeaders.set("x-mantis-user", ctx.user);
+    if (ctx.host) shownHeaders.set("x-mantis-host", ctx.host);
+    const fields = [
+      ["source", "source", ctx.source],
+      ["tty", "tty", ctx.tty],
+      ["sudo-cmd", "sudo", ctx.sudo_cmd],
+      ["network-interface", "interface", ctx.network_interface],
+      ["event", "event", ctx.event],
+      ["device", "device", ctx.device],
+      ["entity-id", "entity", ctx.entity_id],
+      ["automation", "automation", ctx.automation],
+      ["area", "area", ctx.area],
+      ["iot-mac", "mac", ctx.iot_mac],
+      ["iot-ip", "device ip", ctx.iot_ip],
+    ] as const;
+    for (const [header, label, value] of fields) {
+      if (!value) continue;
+      rows.push([label, s(value)]);
+      shownHeaders.set(`x-mantis-${header}`, value);
+    }
   }
-  // The request's address, unless the line above already says it.
-  if (h.ip != null && h.ip !== ctx?.ssh_client_ip) rows.push(["ip", s(h.ip)]);
-  if (h.ip == null && !ctx) rows.push(["ip", c.dim("unknown")]);
+  rows.push(["ip", h.ip == null ? c.dim("unknown") : s(h.ip)]);
   rows.push(["agent", agentLong(h)]);
   if (h.bot_label) rows.push(["bot", s(h.bot_label)]);
   if (h.referer != null) rows.push(["referer", s(h.referer)]);
@@ -279,11 +287,13 @@ function renderOne(h: Hit): void {
     rows.push(["delivery", deliveryLines(h.notifications, room)]);
   }
   if (h.headers && !isJsonMode()) {
-    // x-mantis-* headers are the host context, already drawn as fields above,
-    // and a bare `accept` says nothing; --json keeps every header.
+    // Skip exact duplicates of the fields above, while preserving raw SSH
+    // details and headers without a host-context field.
     const lines = Object.entries(h.headers)
-      .filter(([k]) => !(ctx && k.toLowerCase().startsWith("x-mantis-")))
-      .filter(([k]) => k.toLowerCase() !== "accept")
+      .filter(([k, value]) => {
+        const name = k.toLowerCase();
+        return name !== "accept" && shownHeaders.get(name) !== value;
+      })
       .map(([k, v]) => c.dim(`${s(k)}: ${s(v)}`));
     if (lines.length > 0) rows.push(["headers", lines]);
   }

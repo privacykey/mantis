@@ -1,8 +1,10 @@
 import { createInterface } from "node:readline/promises";
+import { Writable } from "node:stream";
 import { c, colorOn, mark } from "./out.js";
 
 export type Prompter = {
   ask(question: string): Promise<string>;
+  askSecret(question: string): Promise<string>;
   close(): void;
 };
 
@@ -10,20 +12,53 @@ export function canPrompt(): boolean {
   return Boolean(process.stdin.isTTY && process.stderr.isTTY);
 }
 
-export function createPrompter(): Prompter {
+export function createPrompter({ styleAnswer = true } = {}): Prompter {
+  let hidden = false;
+  const output = Object.assign(new Writable({
+    write(chunk, encoding, done) {
+      if (!hidden) process.stderr.write(chunk, encoding);
+      done();
+    },
+  }), { columns: process.stderr.columns });
+  const onResize = () => {
+    output.columns = process.stderr.columns;
+    output.emit("resize");
+  };
   const rl = createInterface({
     input: process.stdin,
-    output: process.stderr,
+    output,
+    terminal: Boolean(process.stderr.isTTY),
+  });
+  process.stderr.on("resize", onResize);
+  rl.once("close", () => process.stderr.off("resize", onResize));
+  rl.on("history", (history: string[]) => {
+    if (hidden) history.shift();
   });
   return {
     ask: async (question: string) => {
       // What the operator types is the value, so it is the bold part of the
       // line: the prompt ends by turning bold on, and it goes off again once
       // the answer is in.
-      const styled = colorOn();
+      const styled = styleAnswer && colorOn();
       const answer = await rl.question(styled ? `${question}\x1b[1m` : question);
       if (styled) process.stderr.write("\x1b[0m");
       return answer.trim();
+    },
+    askSecret: async (question: string) => {
+      // Readline still handles editing and paste in raw mode. Its writes,
+      // including redraws after a resize, stay muted for this question.
+      const controller = new AbortController();
+      const onClose = () => controller.abort();
+      rl.once("close", onClose);
+      process.stderr.write(question);
+      hidden = true;
+      try {
+        return (await rl.question("", { signal: controller.signal })).trim();
+      } finally {
+        hidden = false;
+        rl.off("close", onClose);
+        process.stderr.write("\n");
+      }
     },
     close: () => rl.close(),
   };
