@@ -16,7 +16,7 @@
 
 `mantis hits last --follow`
 
-- Create a key with a decoy PDF that fires when the file is opened:
+- Create a key and a decoy PDF that can fire in a compatible reader:
 
 `mantis new "{{memo}}" --pdf {{path/to/decoy.pdf}}`
 

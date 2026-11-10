@@ -1,8 +1,5 @@
 # Getting started
 
-Moved out of the top-level README so it stays short. Everything here was in the
-README before; nothing has been added.
-
 **Stateful server or stateless edge?** Run the full **server** (`docker compose`,
 Postgres-backed) when you want the web dashboard, notification queue,
 file/host-event keys, and history. Run the **edge**
@@ -41,8 +38,10 @@ Open <http://localhost:3000> and paste that same key to sign in to the web
 dashboard. Then log in the CLI and mint a key:
 
 ```bash
-mantis --key mantis_live_... login --url http://localhost:3000
-mantis new "first mantis" -w http://localhost:3000/inbox/demo
+mantis login --url http://localhost:3000   # paste the admin key when prompted
+key_id="$(mantis new "first mantis" --id-only)"
+curl -fsS -o /dev/null "$(mantis show "$key_id" --url-only)"
+mantis hits "$key_id"
 ```
 
 This is fine for evaluation but **don't rely on a laptop deploy for canaries

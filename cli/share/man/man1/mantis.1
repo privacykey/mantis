@@ -213,7 +213,7 @@ Poll across all keys (or one) and print new hits as they arrive.
 .B mantis status [id] [\-w] [\-\-tripped\-only] [\-i N]
 Show monitor state. Without
 .IR id :
-summary across all monitored keys. With
+summary across all monitored keys, with tripped keys first. With
 .IR id :
 detail (window: hits + expiry; latch: hits since reset).
 .BR \-w / \-\-watch
@@ -291,7 +291,8 @@ and vectors with a server-side dedupe window are chattier on edge.
 .TP
 .B mantis doctor [\-\-public\-url URL]
 Health-check CLI config, server health, auth, Cloudflare state, and split
-public/private hosts.
+public/private hosts. The report distinguishes failed and skipped checks
+and shows recovery steps where available.
 
 .TP
 .B mantis detect [\-\-scope user|system|all] [\-\-deep] [\-\-verbose]
@@ -462,6 +463,9 @@ mantis detect \-\-scope all \-\-deep
 .RE
 
 .SH SEE ALSO
+CLI reference at
+.UR https://docs.mantis.privacykey.org/cli/
+.UE .
 Project README at
 .UR https://github.com/privacykey/mantis
 .UE
