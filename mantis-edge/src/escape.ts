@@ -21,7 +21,7 @@ export function escapeMarkdown(s: string): string {
 
 /** Adaptive Card TextBlock also recognizes angle-bracket autolinks. */
 export function escapeTeams(s: string): string {
-  return escapeMarkdown(s).replace(/</g, "\\<");
+  return s.replace(/[\\`*_~|<>[\]()]/g, (c) => `\\${c}`);
 }
 
 /**

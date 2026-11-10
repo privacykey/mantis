@@ -29,6 +29,11 @@ describe("escapeTeams", () => {
   it("escapes both brackets to keep angle-bracket URLs as text", () => {
     expect(escapeTeams("<https://example.invalid>")).toBe("\\<https://example.invalid\\>");
   });
+  it("preserves literal backslashes before link and formatting delimiters", () => {
+    expect(escapeTeams(String.raw`\<https://example.invalid> \[link](url) \*text*`)).toBe(
+      String.raw`\\\<https://example.invalid\> \\\[link\]\(url\) \\\*text\*`,
+    );
+  });
 });
 
 describe("escapeCode", () => {
