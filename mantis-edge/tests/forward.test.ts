@@ -50,19 +50,25 @@ describe("forward header allowlist", () => {
     await forward({ w: "https://hooks.example.com/inbox", c: channel }, new Request("https://mantis-edge.example.workers.dev/c/blob", {
       headers: { "x-mantis-device": "camera <garage> *unit*", "x-mantis-event": "door <opened> *alarm*" },
     }));
-    let fields: Array<{ name?: string; title?: string; text?: string; value?: string }>;
     if (channel === "slack") {
-      fields = (capturedBody as { blocks: Array<{ fields?: typeof fields }> }).blocks.flatMap((block) => block.fields ?? []);
-      expect(fields).toContainEqual({ type: "mrkdwn", text: "*Device*\ncamera &lt;garage&gt; *unit*" });
-      expect(fields).toContainEqual({ type: "mrkdwn", text: "*Event*\ndoor &lt;opened&gt; *alarm*" });
+      const body = capturedBody as {
+        attachments: Array<{ fallback: string; blocks: Array<{ elements?: Array<{ elements?: unknown[] }> }> }>;
+      };
+      const spans = body.attachments[0]!.blocks.flatMap((block) =>
+        block.elements?.flatMap((section) => section.elements ?? []) ?? [],
+      );
+      expect(spans).toContainEqual({ type: "text", text: "camera <garage> *unit*", style: { bold: true } });
+      expect(spans).toContainEqual({ type: "text", text: "door <opened> *alarm*", style: { bold: true } });
+      expect(body.attachments[0]!.fallback).toContain("camera &lt;garage&gt; *unit*");
     } else if (channel === "discord") {
-      fields = (capturedBody as { embeds: Array<{ fields: typeof fields }> }).embeds[0]!.fields;
-      expect(fields).toContainEqual({ name: "Device", value: "camera <garage\\> \\*unit\\*", inline: true });
-      expect(fields).toContainEqual({ name: "Event", value: "door <opened\\> \\*alarm\\*", inline: true });
+      const { embeds } = capturedBody as { embeds: Array<{ description: string }> };
+      expect(embeds[0]!.description).toContain("Device: **camera <garage\\> \\*unit\\***");
+      expect(embeds[0]!.description).toContain("Event: **door <opened\\> \\*alarm\\***");
     } else {
-      fields = (capturedBody as { attachments: Array<{ content: { body: Array<{ facts?: typeof fields }> } }> }).attachments[0]!.content.body.flatMap((block) => block.facts ?? []);
-      expect(fields).toContainEqual({ title: "Device", value: "camera <garage\\> \\*unit\\*" });
-      expect(fields).toContainEqual({ title: "Event", value: "door <opened\\> \\*alarm\\*" });
+      const { attachments } = capturedBody as { attachments: Array<{ content: { body: Array<{ inlines?: unknown[] }> } }> };
+      const inlines = attachments[0]!.content.body.flatMap((block) => block.inlines ?? []);
+      expect(inlines).toContainEqual(expect.objectContaining({ type: "TextRun", text: "camera <garage> *unit*", weight: "Bolder" }));
+      expect(inlines).toContainEqual(expect.objectContaining({ type: "TextRun", text: "door <opened> *alarm*", weight: "Bolder" }));
     }
   });
 

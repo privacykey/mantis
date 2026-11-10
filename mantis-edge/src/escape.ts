@@ -19,6 +19,11 @@ export function escapeMarkdown(s: string): string {
   return s.replace(/[\\`*_~|>[\]()]/g, (c) => `\\${c}`);
 }
 
+/** Adaptive Card TextBlock also recognizes angle-bracket autolinks. */
+export function escapeTeams(s: string): string {
+  return escapeMarkdown(s).replace(/</g, "\\<");
+}
+
 /**
  * Which escaper produced the text being truncated:
  *   "slack"    — escapeSlack (entities &amp; &lt; &gt;)
@@ -84,17 +89,18 @@ export function safeDisplayUrl(rawUrl: string): string {
   }
 }
 
-const TRIGGER_ID_CHARS = 10;
+const TRIGGER_ID_CHARS = 6;
+const TRIGGER_SUFFIX_CHARS = 4;
 
 /**
  * Inert description of the edge URL that was hit, for chat alerts: the host
- * and the first few characters of the sealed blob.
+ * and a short prefix and suffix of the sealed blob.
  *
  * Chat alerts must never carry the URL itself. The URL IS the trigger, and
  * the Worker keeps no state to dedupe with — so a click on the alert, a link
  * preview, or a security scanner following the link would fire the canary
  * again and post another alert carrying the same link. The fragment
- * identifies which minted URL fired (compare it with the start of the blob
+ * identifies which minted URL fired (compare it with the ends of the blob
  * you minted) but is far too short to unseal, so nothing built from it can
  * fire anything.
  */
@@ -102,8 +108,12 @@ export function triggerLabel(rawUrl: string): { id: string; host: string } {
   try {
     const u = new URL(rawUrl);
     const blob = /^\/c\/([A-Za-z0-9_-]+)$/.exec(u.pathname)?.[1];
+    const prefix = blob?.slice(0, TRIGGER_ID_CHARS);
+    const suffix = blob && blob.length > 2 * TRIGGER_ID_CHARS
+      ? blob.slice(-TRIGGER_SUFFIX_CHARS)
+      : "";
     return {
-      id: blob ? `${blob.slice(0, TRIGGER_ID_CHARS)}…` : "unknown",
+      id: prefix ? `${prefix}…${suffix}` : "unknown",
       host: u.host || "unknown",
     };
   } catch {

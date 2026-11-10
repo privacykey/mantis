@@ -3,6 +3,7 @@ import {
   escapeCode,
   escapeMarkdown,
   escapeSlack,
+  escapeTeams,
   safeDisplayUrl,
   triggerLabel,
   truncateEscaped,
@@ -21,6 +22,12 @@ describe("escapeMarkdown", () => {
     expect(escapeMarkdown(")[VERIFY ACCOUNT](https://phish.example)")).toBe(
       "\\)\\[VERIFY ACCOUNT\\]\\(https://phish.example\\)",
     );
+  });
+});
+
+describe("escapeTeams", () => {
+  it("escapes both brackets to keep angle-bracket URLs as text", () => {
+    expect(escapeTeams("<https://example.invalid>")).toBe("\\<https://example.invalid\\>");
   });
 });
 
@@ -97,9 +104,9 @@ describe("truncateEscaped", () => {
 describe("triggerLabel", () => {
   const blob = `AQ${"k".repeat(60)}`;
 
-  it("keeps the host and only a short prefix of the sealed blob", () => {
+  it("keeps the host and only a short prefix and suffix of the sealed blob", () => {
     expect(triggerLabel(`https://edge.example/c/${blob}?x=1#y`)).toEqual({
-      id: "AQkkkkkkkk…",
+      id: "AQkkkk…kkkk",
       host: "edge.example",
     });
   });
