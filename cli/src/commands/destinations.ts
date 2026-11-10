@@ -1,4 +1,5 @@
 import type { Destination, NotificationChannel } from "../lib/api.js";
+import { destinationError, destinationTarget } from "../lib/destination-format.js";
 import {
   c,
   emit,
@@ -40,7 +41,7 @@ export async function listDestinationsCmd(
         const rows = key.destinations.map((d) => [
           safeText(d.id).slice(0, 8),
           safeText(d.channel),
-          truncate(safeText(d.target), 60),
+          truncate(destinationTarget(d.channel, d.target), 60),
           statusIcon(d.last_activation_status),
         ]);
         process.stdout.write(
@@ -87,11 +88,11 @@ export async function addDestinationCmd(
         }
         const ok = added.last_activation_status === "ok";
         process.stdout.write(
-          `${ok ? mark("ok") : mark("warn")} Added ${safeText(added.channel)}: ${safeText(added.target)}\n`,
+          `${ok ? mark("ok") : mark("warn")} Added ${safeText(added.channel)}: ${destinationTarget(added.channel, added.target)}\n`,
         );
         if (!ok && added.last_activation_error) {
           process.stdout.write(
-            `  ${c.dim("activation failed:")} ${safeText(added.last_activation_error)}\n`,
+            `  ${c.dim("activation failed:")} ${destinationError(added.channel, added.last_activation_error)}\n`,
           );
         }
         if (added.signing_secret) {
@@ -133,7 +134,7 @@ export async function rmDestinationCmd(
     emit(
       () => {
         process.stdout.write(
-          `${mark("ok")} Removed ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}\n`,
+          `${mark("ok")} Removed ${safeText(target.channel)}: ${truncate(destinationTarget(target.channel, target.target), 60)}\n`,
         );
       },
       { removed: target },
@@ -177,7 +178,7 @@ export async function testDestinationCmd(
       );
       for (const d of key.destinations) {
         process.stderr.write(
-          c.dim(`     → ${safeText(d.channel)}: ${safeText(d.target)}\n`),
+          c.dim(`     → ${safeText(d.channel)}: ${destinationTarget(d.channel, d.target)}\n`),
         );
       }
       process.stderr.write(c.dim(`\n   re-run with --yes to confirm.\n`));
@@ -282,7 +283,7 @@ export async function rotateDestinationSecretCmd(
 
     if (!opts.yes) {
       process.stderr.write(
-        `${mark("warn")} ${c.yellow(`This rotates the HMAC signing secret on ${safeText(target.channel)}: ${truncate(safeText(target.target), 60)}.`)}\n`,
+        `${mark("warn")} ${c.yellow(`This rotates the HMAC signing secret on ${safeText(target.channel)}: ${truncate(destinationTarget(target.channel, target.target), 60)}.`)}\n`,
       );
       process.stderr.write(
         c.dim(
@@ -296,7 +297,7 @@ export async function rotateDestinationSecretCmd(
     emit(
       () => {
         process.stdout.write(
-          `${mark("ok")} Rotated signing secret for ${safeText(target.channel)}: ${safeText(target.target)}\n`,
+          `${mark("ok")} Rotated signing secret for ${safeText(target.channel)}: ${destinationTarget(target.channel, target.target)}\n`,
         );
         if (updated.signing_secret) {
           process.stdout.write(`\n${c.bold("new signing secret (save it now):")}\n`);

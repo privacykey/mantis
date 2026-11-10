@@ -7,6 +7,7 @@
 // styled or cut.
 
 import type { Hit, NotificationSummary } from "./api.js";
+import { destinationError, destinationTarget } from "./destination-format.js";
 import {
   stripAnsi,
   arrow,
@@ -18,11 +19,9 @@ import {
   glyph,
   mark,
   type Mark,
-  maskSecretUrl,
   safeText,
   table,
   termWidth,
-  withoutRepeat,
 } from "./out.js";
 
 type HostCtx = NonNullable<Hit["host_context"]>;
@@ -258,7 +257,7 @@ export function deliveryLines(
   const lines: string[] = [];
   const targets = notifications.map((n) =>
     n.target != null
-      ? maskSecretUrl(safeText(n.target))
+      ? destinationTarget(n.channel, n.target, { maskOnTty: true })
       : n.destination_scope === "global"
         ? "(global destination)"
         : "(destination removed)",
@@ -280,7 +279,7 @@ export function deliveryLines(
       // The reason hangs off its row under the target, and does not repeat
       // the target the row names.
       const pad = " ".repeat(2 + channelWidth + 2);
-      const reason = withoutRepeat(safeText(n.last_error), n.target ?? "");
+      const reason = destinationError(n.channel, n.last_error, n.target ?? "");
       lines.push(...childLines(reason, pad, room - pad.length, c.red));
     }
   });

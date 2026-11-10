@@ -11,6 +11,7 @@ import { c, emit, fail, mark } from "../lib/out.js";
 const SETTINGS = {
   output: { values: ["table", "json", "wide"], desc: "default output mode" },
   color: { values: ["auto", "always", "never"], desc: "when to colorize output" },
+  "redact-webhooks": { values: ["on", "off"], desc: "hide webhook URL credentials in human output (default: off)" },
 } as const satisfies Record<string, { values: readonly string[]; desc: string }>;
 
 type SettingKey = keyof typeof SETTINGS;
@@ -32,10 +33,12 @@ export async function configListCmd(): Promise<void> {
   const defaults = await getDefaults();
   emit(() => {
     process.stdout.write(`${c.dim("config:")} ${CONFIG_PATH}\n`);
-    for (const key of Object.keys(SETTINGS) as SettingKey[]) {
+    const keys = Object.keys(SETTINGS) as SettingKey[];
+    const width = Math.max(...keys.map((key) => key.length));
+    for (const key of keys) {
       const value = defaults[key];
       process.stdout.write(
-        `  ${key.padEnd(8)} ${value ? c.cyan(value) : c.dim("(unset)")}  ${c.dim(SETTINGS[key].desc)}\n`,
+        `  ${key.padEnd(width)} ${value ? c.cyan(value) : c.dim("(unset)")}  ${c.dim(SETTINGS[key].desc)}\n`,
       );
     }
   }, { path: CONFIG_PATH, defaults });

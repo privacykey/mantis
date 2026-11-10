@@ -25,11 +25,11 @@ describe("CLI defaults (mantis config)", () => {
     await setDefaults({ output: "json" });
     expect(await getDefaults()).toEqual({ output: "json" });
 
-    await setDefaults({ color: "never" });
-    expect(await getDefaults()).toEqual({ output: "json", color: "never" });
+    await setDefaults({ color: "never", "redact-webhooks": "on" });
+    expect(await getDefaults()).toEqual({ output: "json", color: "never", "redact-webhooks": "on" });
 
     // undefined removes a key rather than storing it
-    await setDefaults({ output: undefined });
+    await setDefaults({ output: undefined, "redact-webhooks": undefined });
     expect(await getDefaults()).toEqual({ color: "never" });
   });
 });

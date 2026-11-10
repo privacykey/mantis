@@ -101,7 +101,7 @@ result.
 | `dest rotate-secret <id> <dest-id> [--yes]` | Rotate a webhook destination's HMAC signing secret (the new secret is shown once) |
 | `audit log [-n <n>] [--since DUR] [--type TYPE] [--actor ID]` | List append-only audit events, most recent first (admin keys only) |
 | `completion <bash\|zsh\|fish>` | Print shell completion script |
-| `config list` / `get <key>` / `set <key> <value>` / `unset <key>` / `path` | Get/set machine-wide defaults (`output`, `color`); applied below explicit flags |
+| `config list` / `get <key>` / `set <key> <value>` / `unset <key>` / `path` | Get/set machine-wide defaults (`output`, `color`, `redact-webhooks`); applied below explicit flags |
 | `cloudflare login [--app URL]` | Auth via Cloudflare Access SSO (opens browser; needs local `cloudflared`) |
 | `cloudflare logout` | Clear cached Cloudflare Access credentials |
 | `cloudflare set-service-auth [--client-id … --client-secret …]` | Configure headless Cloudflare Access Service Auth |
@@ -230,6 +230,17 @@ Persist defaults for `--output` and `--color` so scripts/sessions don't repeat
 them (explicit flags still win): `mantis config set output json` (see the
 `config` rows in [Commands](#commands)). Set `MANTIS_ASCII=1` to force ASCII
 glyphs on terminals that can't render `✓`/`…`/`·`.
+
+### Webhook redaction
+
+Run `mantis config set redact-webhooks on` to show only the origin of webhook
+destinations in human-readable output, including when that output is piped.
+The setting also hides free-form activation and delivery errors for those
+destinations, since providers can echo credentials in errors. It defaults to
+off. Run `mantis config set redact-webhooks off` to disable it.
+
+Use `mantis dest list <id> --json` to retrieve full destination URLs for copying.
+Email addresses and newly issued HMAC signing secrets are displayed normally.
 
 ### Short-id resolution
 

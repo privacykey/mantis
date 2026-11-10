@@ -11,12 +11,18 @@ vi.hoisted(() => {
 
 import { deepDetector } from "../src/commands/detect/detectors/deep.js";
 import { renderHuman } from "../src/commands/detect/render.js";
-import { testDestinationCmd } from "../src/commands/destinations.js";
+import {
+  addDestinationCmd,
+  listDestinationsCmd,
+  rotateDestinationSecretCmd,
+  testDestinationCmd,
+} from "../src/commands/destinations.js";
 import { hitsCmd } from "../src/commands/hits.js";
 import { lastCmd } from "../src/commands/last.js";
 import { listCmd } from "../src/commands/list.js";
 import { showCmd } from "../src/commands/show.js";
 import { watchCmd } from "../src/commands/watch.js";
+import { setRedactWebhooks } from "../src/lib/destination-format.js";
 import {
   jsonText,
   safeBlock,
@@ -160,6 +166,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   setColorMode("auto");
   setJsonMode(false);
+  setRedactWebhooks(false);
   process.exitCode = undefined;
 });
 
@@ -405,6 +412,73 @@ describe("hostile API strings stay inert in human output", () => {
     await expect(showCmd(id, auth)).rejects.toThrow("exited");
     expect(process.exit).toHaveBeenCalledWith(code);
     expect(JSON.parse(stderr.join(""))).toEqual({ error });
+  });
+});
+
+describe("opt-in webhook redaction", () => {
+  const credential = "fixture-only";
+  const webhook = {
+    ...key.destinations[0]!,
+    target: `https://hook.example/${credential}?token=${credential}`,
+    last_activation_error: `HTTP 403 rejected ${credential}`,
+  };
+  const email = { ...webhook, id: "other", channel: "email", target: "ops@example.com" };
+  const fixture = { ...key, destinations: [webhook, email] };
+
+  it("redacts text output when enabled and preserves the full target in JSON", async () => {
+    vi.stubGlobal("fetch", async () => Response.json(fixture));
+    await listDestinationsCmd(KEY_ID, auth);
+    expect(stdout.join("")).toContain(webhook.target);
+
+    stdout = [];
+    setRedactWebhooks(true);
+    await listDestinationsCmd(KEY_ID, auth);
+    const rendered = stdout.join("");
+    expect(rendered).toContain("https://hook.example/");
+    expect(rendered).toContain(email.target);
+    expect(rendered).not.toContain(credential);
+
+    stdout = [];
+    setJsonMode(true);
+    await listDestinationsCmd(KEY_ID, auth);
+    expect(JSON.parse(stdout.join("")).data[0].target).toBe(webhook.target);
+  });
+
+  it("redacts add confirmation and test and rotation previews", async () => {
+    setRedactWebhooks(true);
+    vi.stubGlobal("fetch", async (_url: URL, init: RequestInit) =>
+      Response.json(init.method === "PATCH" ? { ...key, destinations: [webhook] } : fixture),
+    );
+    await addDestinationCmd(KEY_ID, "webhook", webhook.target, auth);
+    await testDestinationCmd(KEY_ID, auth);
+    await rotateDestinationSecretCmd(KEY_ID, webhook.id, auth);
+
+    expect(stdout.join("")).toContain("HTTP 403 (details hidden)");
+    expect(stdout.join("")).not.toContain(credential);
+    const previews = stderr.join("");
+    expect(previews).toContain("https://hook.example/");
+    expect(previews).toContain(email.target);
+    expect(previews).not.toContain(credential);
+  });
+
+  it("hides credentials echoed in activation and delivery errors", async () => {
+    setRedactWebhooks(true);
+    vi.stubGlobal("fetch", async () => Response.json({ ...key, destinations: [webhook] }));
+    await showCmd(KEY_ID, auth);
+    const shown = stdout.join("");
+    expect(shown).toContain("activation failed");
+    expect(shown).toContain("HTTP 403 (details hidden)");
+    expect(shown).not.toContain(credential);
+
+    stdout = [];
+    const base = hit("h1", "2026-09-01T10:00:01.000Z");
+    const notification = { ...base.notifications[0]!, target: null, last_error: `provider refused ${credential}` };
+    vi.stubGlobal("fetch", async () =>
+      Response.json({ data: [{ ...base, notifications: [notification] }], next_cursor: null }),
+    );
+    await hitsCmd(KEY_ID, { ...auth, verbose: true });
+    expect(stdout.join("")).toContain("details hidden by redact-webhooks");
+    expect(stdout.join("")).not.toContain(credential);
   });
 });
 
