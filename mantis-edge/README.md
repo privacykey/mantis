@@ -173,15 +173,19 @@ curl -i https://mantis-edge.<sub>.workers.dev/c/<blob>
 | `--channel` | Payload shape | Use for |
 |---|---|---|
 | `webhook` *(default)* | Mantis `mantis.hit` JSON (same as stateful server, with `key.id`/`public_id` null) | Your own receiver / Pipedream / n8n / webhook.site |
-| `slack` | Slack `blocks` message with header + section + fields | Slack incoming webhooks (`hooks.slack.com/services/...`) |
-| `discord` | Discord embed with title, fields, timestamp | Discord webhooks (`discord.com/api/webhooks/...`) |
+| `slack` | Slack Block Kit alert with a red attachment and notification fallback | Slack incoming webhooks (`hooks.slack.com/services/...`) |
+| `discord` | Discord embed with a title, incident details, and metadata footer | Discord webhooks (`discord.com/api/webhooks/...`) |
 | `teams` | Microsoft Teams Adaptive Card (Power Automate workflow webhook) | Teams workflow webhooks |
 
 The channel is baked into the encrypted blob at mint time — the worker doesn't have to know in advance which channel a given URL targets, and the same worker can serve URLs minted for all four channels simultaneously.
 
-**Chat alerts never contain the edge URL.** Slack, Discord and Teams alerts identify the URL that fired as inert text — `Edge canary AQx1Yz-aB3… on mantis-edge.<sub>.workers.dev` — the worker's host plus the first 10 characters of the sealed blob, which you can match against the URLs you minted. There is deliberately no link: the URL *is* the trigger and the worker keeps no state, so a click on the alert, a link preview, or a mail/chat security scanner following the link would fire the canary again and post another alert with the same link. The fragment is far too short to decrypt, so nothing built from it can fire anything.
+**Chat alerts never contain the edge URL.** Slack, Discord and Teams lead with the canary memo and red `tripped` state, followed by the trigger time in UTC. Slack and Discord also show a relative age rendered by the client. The reported actor uses the CLI's `user@host` format, with a reported SSH client address and sudo command when present. A device event takes the same position. The request IP observed by the worker appears separately; self-reported SSH details are identified explicitly.
 
-Values the caller controls (`X-Mantis-*` host context, IP, User-Agent) are escaped and then cut to a short display budget, so an oversized header cannot push a field past Slack's or Discord's length limits and get the whole alert rejected. The raw `webhook` channel still carries the full values.
+The agent, worker host and reference sit in the footer. Missing details are stated explicitly. Long memos, commands and user agents retain both ends, with ellipses marking shortened values. Long actors retain the account, identifying machine text and domain. User agents containing URLs retain their beginning so the product remains visible. Chat formatting escapes caller-controlled text and keeps values within each platform's message limits. Address-shaped values use normal body text; other input in address fields keeps a literal code treatment.
+
+Match the worker host and the short reference against the URL you minted. A reference such as `AQx1Yz…Z-Q9` shows the first 6 and last 4 characters of the sealed blob. The full URL fires the canary on every request, including requests from link previews and scanners.
+
+Values the caller controls (`X-Mantis-*` host context, IP, User-Agent) are limited to a short display budget and escaped for the destination, so an oversized header cannot push a field past Slack's or Discord's length limits and get the whole alert rejected. The raw `webhook` channel still carries the full values.
 
 ## Raw webhook payload shape
 
