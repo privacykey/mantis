@@ -12,8 +12,35 @@ import {
   maskSecretUrl,
   safeText,
   termWidth,
+  webhookPreview,
   withoutRepeat,
 } from "./out.js";
+
+let redactWebhooks = false;
+
+export function setRedactWebhooks(on: boolean): void {
+  redactWebhooks = on;
+}
+
+export function destinationTarget(
+  channel: string,
+  target: string,
+  { maskOnTty = false } = {},
+): string {
+  if (redactWebhooks && channel !== "email") return webhookPreview(target);
+  const text = safeText(target);
+  return maskOnTty ? maskSecretUrl(text) : text;
+}
+
+export function destinationError(channel: string, reason: string, target?: string): string {
+  if (redactWebhooks && channel !== "email") {
+    // A provider can echo credentials without the rest of the URL.
+    const status = /^HTTP [1-5]\d{2}(?=\s|$)/.exec(reason)?.[0];
+    return status ? `${status} (details hidden)` : "details hidden by redact-webhooks";
+  }
+  const text = safeText(reason);
+  return target === undefined ? text : withoutRepeat(text, target);
+}
 
 export type DestinationLine = Pick<
   Destination,
@@ -26,7 +53,7 @@ export type DestinationLine = Pick<
  */
 export function destinationLines(
   destinations: DestinationLine[],
-  displayTarget = (d: DestinationLine) => maskSecretUrl(safeText(d.target)),
+  displayTarget = (d: DestinationLine) => destinationTarget(d.channel, d.target, { maskOnTty: true }),
 ): string[] {
   const s = safeText;
   const channelWidth = Math.max(...destinations.map((d) => s(d.channel).length));
@@ -58,7 +85,7 @@ export function destinationLines(
       // The reason hangs off its row under the target, and does not repeat
       // the target the row names.
       const pad = " ".repeat(2 + channelWidth + 2);
-      const reason = withoutRepeat(s(d.last_activation_error), d.target);
+      const reason = destinationError(d.channel, d.last_activation_error, d.target);
       const avail = termWidth() - (2 + KV_LABEL_WIDTH + 1) - pad.length;
       lines.push(...childLines(reason, pad, avail, c.red));
     }

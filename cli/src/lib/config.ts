@@ -33,6 +33,7 @@ export type ProfileEntry = {
 export type CliDefaults = {
   output?: OutputMode;
   color?: ColorMode;
+  "redact-webhooks"?: "on" | "off";
 };
 
 export type StoredConfig = {

@@ -42,6 +42,7 @@ import { watchCmd } from "./commands/watch.js";
 import { whoamiCmd } from "./commands/whoami.js";
 import { CLI_VERSION } from "./version.js";
 import { type CliDefaults, getDefaults, readConfig } from "./lib/config.js";
+import { setRedactWebhooks } from "./lib/destination-format.js";
 import { listEdgeKeyWorkers } from "./lib/edge-key.js";
 import {
   hostOnly,
@@ -180,6 +181,7 @@ program
     if (opts.json) setJsonMode(true);
     const color = opts.color ?? defaults.color;
     if (color) setColorMode(color);
+    setRedactWebhooks(defaults["redact-webhooks"] === "on");
     setDebug(!!opts.debug);
     setQuiet(!!opts.quiet);
     setNoHeaders(opts.headers === false);
@@ -1241,7 +1243,7 @@ program
 
 const config = program
   .command("config")
-  .description("get/set machine-wide CLI defaults (output mode, color)");
+  .description("get/set machine-wide CLI defaults (output, color, redact-webhooks)");
 
 config
   .command("list")
@@ -1255,7 +1257,7 @@ config
 config
   .command("get")
   .description("print one default value")
-  .argument("<key>", "output | color")
+  .argument("<key>", "output | color | redact-webhooks")
   .action(async (key: string) => {
     const { configGetCmd } = await import("./commands/config.js");
     await configGetCmd(key);
@@ -1264,8 +1266,8 @@ config
 config
   .command("set")
   .description("set a default value (applied below explicit flags)")
-  .argument("<key>", "output | color")
-  .argument("<value>", "output: table|json|wide; color: auto|always|never")
+  .argument("<key>", "output | color | redact-webhooks")
+  .argument("<value>", "output: table|json|wide; color: auto|always|never; redact-webhooks: on|off")
   .action(async (key: string, value: string) => {
     const { configSetCmd } = await import("./commands/config.js");
     await configSetCmd(key, value);
@@ -1274,7 +1276,7 @@ config
 config
   .command("unset")
   .description("clear a default value")
-  .argument("<key>", "output | color")
+  .argument("<key>", "output | color | redact-webhooks")
   .action(async (key: string) => {
     const { configUnsetCmd } = await import("./commands/config.js");
     await configUnsetCmd(key);

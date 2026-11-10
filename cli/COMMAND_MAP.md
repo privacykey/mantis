@@ -179,7 +179,7 @@ flowchart LR
 | Plugins | `plugin remove <name>` / `plugin rm` | Uninstall a plugin | Local plugin registry |
 | Plugins | `plugin upgrade <name>` | Refresh a plugin from its source when not SHA-pinned | Local plugin registry |
 | Shell | `completion <shell>` | Print shell completion script | Local stdout |
-| Config | `config list/get/set/unset/path` | Get/set machine-wide defaults (output, color) | Local config |
+| Config | `config list/get/set/unset/path` | Get/set machine-wide defaults (output, color, webhook redaction) | Local config |
 
 `<id>` values usually accept a full UUID, a unique prefix of at least four hex
 characters, or `last`.
