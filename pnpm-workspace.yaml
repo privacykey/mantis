@@ -85,7 +85,7 @@ allowBuilds:
 #                      attribute injection (GHSA-v3r7-h72x-cjcm) and blob `type` CRLF
 #                      injection (GHSA-m8rv-5g2x-5cg5). NOTE the `undici@7` key: the
 #                      app's own dependency is undici ^8, which these advisories cover
-#                      separately (the root spec floor is now ^8.12.2), so
+#                      separately (the root spec floor is now ^8.12.4), so
 #                      a bare `undici:` override would drag the app back onto the 7.x
 #                      line. Keying on the 7 range patches every 7.x consumer while
 #                      leaving 8.x alone — today that is miniflare's exact 7.28.0 pin
